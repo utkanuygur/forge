@@ -369,20 +369,35 @@ async def get_improvements(ctx: ToolContext, args: dict) -> ToolResult:
     link = [{"label": "Evaluations", "href": agent_path(slug, "evals")}]
     if args.get("improvement_id"):
         im = await ctx.api.get(f"/improvements/{args['improvement_id']}")
-        out = [f"{im['id']} ({im['kind']}) {im['status']}: v{im['base_version']} -> v{im['candidate_version']}",
+        cand = f"v{im['candidate_version']}" if im.get("candidate_version") is not None else "no candidate"
+        out = [f"{im['id']} ({im['kind']}) {im['status']}: v{im['base_version']} -> {cand}",
                f"base: train {im['base']['train']['passed']}/{im['base']['train']['total']}, held-out "
                f"{im['base']['holdout']['passed']}/{im['base']['holdout']['total']}",
                f"candidate: train {im['candidate']['train']['passed']}/{im['candidate']['train']['total']}, held-out "
                f"{im['candidate']['holdout']['passed']}/{im['candidate']['holdout']['total']}",
                f"error: {im.get('error') or '(none)'}", "lesson edits:"]
         out += [f"- {d['op']}: {clip(d['text'], 240)}" for d in im.get("lessons_diff") or []]
+        if im.get("message"):
+            out.append(f"message: {clip(im['message'], 300)}")
+        conflicts = im.get("instruction_conflicts") or []
+        if conflicts:
+            out.append("instruction conflicts (lessons may not override the author's instructions; the author must "
+                       "review these instructions in Configure):")
+            out += [f"- instruction: \"{clip(c.get('instruction_quote') or '(not quoted)', 200)}\"; problem: "
+                    f"{clip(c.get('problem') or '', 200)}"
+                    + (f"; suggested change: {clip(c['suggested_change'], 200)}" if c.get("suggested_change") else "")
+                    + (f"; evidence runs: {', '.join(c['evidence_run_ids'][:5])}" if c.get("evidence_run_ids") else "")
+                    for c in conflicts]
+            link = link + [{"label": "Review instructions", "href": agent_path(slug, "configure") + "?focus=instructions"}]
         out += ["cases:"] + [f"- {c['name']} [{c['split']}]: base {'PASS' if c['base'] and c['base']['passed'] else 'FAIL'}"
                              f", candidate {'PASS' if c.get('candidate') and c['candidate']['passed'] else 'FAIL'}"
                              for c in im.get("cases") or []]
         return ToolResult("\n".join(out), f"{im['status']}", link)
     ims = await ctx.api.get(f"/agents/{slug}/improvements")
     lines = [f"- {i['id']} ({i['kind']}) {i['status']}: v{i['base_version']} -> v{i['candidate_version']}"
-             + (f", error: {clip(i['error'], 120)}" if i.get("error") else "") for i in ims[:15]]
+             + (f", error: {clip(i['error'], 120)}" if i.get("error") else "")
+             + (f", {len(i['instruction_conflicts'])} instruction conflict(s)" if i.get("instruction_conflicts") else "")
+             for i in ims[:15]]
     return ToolResult("\n".join(lines) or "No improvement cycles yet.", f"{len(ims)} cycles", link)
 
 

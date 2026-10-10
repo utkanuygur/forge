@@ -25,7 +25,10 @@ strict majority of its k runs pass. Results are cached per version.
 - Improvement: evaluate prod, have the grader propose lesson edits from failing train cases and negative \
 feedback, create a candidate version, evaluate it. Promotion rule: the candidate is eligible only if it passes \
 more cases in total and every case that passed before still passes. Agents with auto promote are promoted \
-automatically when eligible. Pruning removes lessons that do not help.
+automatically when eligible. Pruning removes lessons that do not help. Lessons may only fill gaps and never \
+override the author's instructions: when evidence contradicts an instruction, the improvement reports \
+instruction_conflicts (quoted instruction, problem, evidence) and, if no lesson remains, ends needs_author with no \
+candidate. Explain the conflict and suggest the author edit the instruction in Configure; never work around it.
 - Governance: approval rules ask a human (or deny) before matching tool calls, such as bash commands matching a \
 pattern; a monthly budget blocks new runs once spent; a per-run cap stops an expensive run.
 - Triggers: schedules (cron), GitHub webhooks and Slack commands start runs. You may only create schedules.

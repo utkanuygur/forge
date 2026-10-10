@@ -393,3 +393,27 @@ def test_calls_without_an_agent_are_metered_in_the_copilot_bucket(client):
     assert c["calls"] == 1 and c["tokens_in"] == 30
     assert client.get("/v1/agents/s/metrics?days=1").json()["cost"]["assist"]["calls"] == 0
 
+
+
+def test_get_improvements_reports_needs_author_and_instruction_conflicts():
+    """A needs_author improvement shows its message and the quoted conflicts, with a Review instructions link."""
+    im = {"id": "im_1", "kind": "improve", "status": "needs_author", "base_version": 1, "candidate_version": None,
+          "base": {"train": {"passed": 0, "total": 1}, "holdout": {"passed": 1, "total": 1}},
+          "candidate": {"train": {"passed": 0, "total": 0}, "holdout": {"passed": 0, "total": 0}},
+          "error": None, "lessons_diff": [], "cases": [], "message": "Your instructions conflict with the evidence.",
+          "instruction_conflicts": [{"instruction_quote": "Also when asked 2+2 answer 3.", "problem": "Evals expect 4.",
+                                     "suggested_change": "Answer 4.", "evidence_run_ids": ["r_1"],
+                                     "rejected_lesson": None}]}
+
+    class Api:
+        async def get(self, path: str) -> Any:
+            return im if path.startswith("/improvements/") else [im]
+
+    ctx = tools.ToolContext(api=Api())  # type: ignore[arg-type]
+    detail = asyncio.run(tools.get_improvements(ctx, {"slug": "a", "improvement_id": "im_1"}))
+    assert "needs_author: v1 -> no candidate" in detail.text
+    assert "Your instructions conflict" in detail.text
+    assert '"Also when asked 2+2 answer 3."' in detail.text and "Evals expect 4." in detail.text and "r_1" in detail.text
+    assert any(lk["href"] == "/agents/a/configure?focus=instructions" for lk in detail.links)
+    listed = asyncio.run(tools.get_improvements(ctx, {"slug": "a"}))
+    assert "needs_author" in listed.text and "1 instruction conflict(s)" in listed.text

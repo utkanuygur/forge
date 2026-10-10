@@ -253,8 +253,8 @@ describe("ShareChat", () => {
   });
 
   it("maps every limit and budget error to plain copy", () => {
-    expect(friendlyError(new ApiError(429, "x", "session_turns"))).toBe(LIMIT_MESSAGES.session_turns);
-    expect(friendlyError(new ApiError(429, "x", "concurrent_turns"))).toMatch(/busy/);
+    expect(friendlyError(new ApiError(429, "x", undefined, "session_turns"))).toBe(LIMIT_MESSAGES.session_turns);
+    expect(friendlyError(new ApiError(429, "x", undefined, "concurrent_turns"))).toMatch(/busy/);
     expect(friendlyError(new ApiError(402, "Monthly budget of $5"))).not.toMatch(/\$/);
     expect(friendlyError(new ApiError(410, "x"))).toMatch(/expired/);
   });

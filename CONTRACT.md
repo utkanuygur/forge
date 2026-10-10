@@ -1209,7 +1209,7 @@ redaction of all stored secret values.
 | `explain_failure` | read | as `get_run`, with a longer trace that keeps every error step |
 | `list_eval_cases` | read | `GET /agents/{slug}/evals` |
 | `get_eval_results` | read | `GET /agents/{slug}/evals/results` joined with case names (default prod) |
-| `get_improvements` | read | `GET /agents/{slug}/improvements` or `GET /improvements/{id}` |
+| `get_improvements` | read | `GET /agents/{slug}/improvements` or `GET /improvements/{id}`; shows `needs_author` messages and quoted `instruction_conflicts` with a Review instructions link |
 | `get_metrics` | read | `GET /agents/{slug}/metrics` or `GET /metrics/overview` |
 | `docs_lookup` | read | keyword search over README, CONTRACT, TESTING and `docs/*.md` sections (`FORGE_DOCS_DIR` overrides the root) |
 | `create_eval_case` | write | `POST /agents/{slug}/evals` (several calls in one turn share one confirmation) |
