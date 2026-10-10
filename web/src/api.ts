@@ -440,6 +440,22 @@ export interface CreateAgentBody {
   eval_cases?: NewEvalBody[];
 }
 
+// POST /agents/{slug}/sample-task (the Generate button). Share-token callers get only title, prompt, rationale.
+export interface SampleTask {
+  title: string;
+  prompt: string;
+  rationale: string;
+  version?: number;
+  variety?: string;
+  context?: Record<string, unknown>;
+}
+
+export interface SampleTaskBody {
+  version?: number;
+  hint?: string;
+  avoid?: string[];
+}
+
 export interface NewVersionBody {
   system_prompt?: string;
   lessons?: string[];
@@ -564,6 +580,8 @@ export const api = {
     if (opts.version !== undefined) body.version = opts.version;
     return request<Run>("POST", `/agents/${enc(slug)}/runs`, body, share);
   },
+  sampleTask: (slug: string, body: SampleTaskBody = {}, share?: string) =>
+    request<SampleTask>("POST", `/agents/${enc(slug)}/sample-task`, body, share),
   listRuns: (slug: string, limit = 50, share?: string) =>
     request<Run[]>("GET", `/agents/${enc(slug)}/runs?limit=${limit}`, undefined, share),
   getRun: (id: string, share?: string) => request<Run>("GET", `/runs/${enc(id)}`, undefined, share),

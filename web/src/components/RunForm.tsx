@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Paperclip, Play, X } from "lucide-react";
 import { api, errMsg, type Run, type Version } from "../api";
 import { ErrorBox } from "./ui";
+import GenerateTaskButton from "./GenerateTaskButton";
 
 export default function RunForm({
   slug,
@@ -24,6 +25,7 @@ export default function RunForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const taskRef = useRef<HTMLTextAreaElement>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,6 +48,7 @@ export default function RunForm({
   return (
     <form onSubmit={submit} className="space-y-3">
       <textarea
+        ref={taskRef}
         aria-label="Task"
         className="input min-h-[110px]"
         placeholder={placeholder}
@@ -80,6 +83,15 @@ export default function RunForm({
             setFiles([...files, ...Array.from(e.target.files || [])]);
             e.target.value = "";
           }}
+        />
+        <GenerateTaskButton
+          slug={slug}
+          share={share}
+          value={input}
+          inputRef={taskRef}
+          version={version === "prod" ? undefined : Number(version)}
+          onGenerated={setInput}
+          disabled={busy}
         />
         <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}>
           <Paperclip className="h-4 w-4" /> Attach files
