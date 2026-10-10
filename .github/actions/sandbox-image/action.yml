@@ -1,0 +1,22 @@
+name: Sandbox image
+description: >-
+  Builds forge-sandbox into the local Docker daemon from the GitHub Actions layer cache and fails if it is
+  missing (Docker tests would otherwise skip themselves).
+inputs:
+  write-cache:
+    description: Also export the layers to the cache. Set on one job only, to avoid redundant cache writes.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-buildx-action@v3
+    - uses: docker/build-push-action@v6
+      with:
+        context: sandbox
+        tags: forge-sandbox:latest
+        load: true
+        cache-from: type=gha,scope=forge-sandbox
+        cache-to: ${{ inputs.write-cache == 'true' && 'type=gha,mode=max,scope=forge-sandbox' || '' }}
+    - name: Check the image is loaded
+      shell: bash
+      run: docker image inspect forge-sandbox > /dev/null
