@@ -147,10 +147,20 @@ def run(
             if p.is_file() and ".git" not in p.parts and p.stat().st_size < 1_000_000
         }
         await executor.start(seed, dict(os.environ) if not sandbox else {})
+        # HTTP tools and MCP servers work locally; {{NAME}} references resolve from this machine's environment.
+        # Callable agents need the server's run manager, so they are not offered in local runs.
+        from forge.tools import build_registry
+        from forge.tools.http import SECRET_RE
+
+        refs = {m for t in version.http_tools for v in t.headers.values() for m in SECRET_RE.findall(v)}
+        refs |= {m for sv in version.mcp_servers for v in [*sv.headers.values(), *sv.env.values()]
+                 for m in SECRET_RE.findall(v)}
+        local_secrets = {k: os.environ[k] for k in refs if os.environ.get(k)}
+        registry = build_registry(version, secrets=local_secrets, executor=executor)
         try:
             result = await run_agent(
                 version, task, run_id=run_id, provider=make_provider(version.model),
-                executor=executor, emit=emit,
+                executor=executor, emit=emit, secrets=local_secrets or None, extra_tools=registry,
             )
         finally:
             await executor.stop()

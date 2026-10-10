@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from forge.types import (
     AgentVersion,
@@ -18,6 +18,9 @@ from forge.types import (
     ToolCall,
     ToolSpec,
 )
+
+if TYPE_CHECKING:
+    from forge.tools.registry import ToolRegistry
 
 MAX_OUTPUT = 10_000
 KEEP_HEAD = 4_000
@@ -207,6 +210,7 @@ async def run_agent(
     temperature: float | None = None,
     max_turns: int = 30,
     max_seconds: int = 600,
+    extra_tools: ToolRegistry | None = None,  # HTTP, MCP and agent tools (forge/tools/registry.py)
 ) -> RunResult:
     # Longest first so a secret containing another secret is fully redacted.
     secret_values = sorted({v for v in (secrets or {}).values() if v}, key=len, reverse=True)
@@ -228,6 +232,9 @@ async def run_agent(
 
     await send("run_started", {"version_id": version.id, "model": version.model, "input": input})
     try:
+        if extra_tools is not None:
+            await extra_tools.open(send)
+            tools += extra_tools.specs()
         while True:
             if result.turns >= max_turns:
                 result.status, result.error = "timeout", f"turn limit of {max_turns} reached"
@@ -257,14 +264,23 @@ async def run_agent(
                 break
             for call in resp.tool_calls:
                 await send("tool_call", {"id": call.id, "name": call.name, "args": call.args})
-                output, is_error = await _run_tool(call, executor, set(allowed), deadline)
-                await send("tool_result", {"id": call.id, "name": call.name, "output": output, "is_error": is_error})
+                extra: dict[str, Any] = {}
+                if extra_tools is not None and extra_tools.has(call.name):
+                    outcome = await extra_tools.call(call, deadline)
+                    output, is_error, extra = outcome.output, outcome.is_error, outcome.extra
+                else:
+                    output, is_error = await _run_tool(call, executor, set(allowed), deadline)
+                await send("tool_result", {"id": call.id, "name": call.name, "output": output, "is_error": is_error,
+                                           **extra})
                 messages.append(Message(role="tool", tool_call_id=call.id, text=output, is_error=is_error))
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001  (unexpected runtime bug: report it, still finish the run)
         result.status, result.error = "failed", f"runtime error: {type(exc).__name__}: {exc}"
         await send("error", {"message": result.error})
+    finally:
+        if extra_tools is not None:
+            await extra_tools.close()
 
     if result.status != "succeeded":
         result.output = last_text

@@ -265,10 +265,12 @@ class ScenarioProvider:
       grader   acts as judge (always passes) and as optimizer (proposes MARKER_LESSON)
       loop     calls bash forever (exercises the turn limit)
       error    raises, as if the model API failed
+      tools    calls non-builtin tools (HTTP, MCP, agent__) as told by a JSON hint in the user input, then
+               finishes with their outputs; see tools_hint()
     """
 
     def __init__(self, scenario: str):
-        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error"}:
+        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "tools"}:
             raise ValueError(f"unknown fake scenario {scenario!r}")
         self.scenario = scenario
 
@@ -296,6 +298,18 @@ class ScenarioProvider:
                 if step == 0 and "MARKER.txt" in system:
                     return _call("write_file", {"path": "MARKER.txt", "content": "ok\n"}, step)
                 return ModelResponse(text="Done.", tokens_in=10, tokens_out=5)
+            case "tools":
+                calls = tools_hint(user)
+                offered = [t.name for t in tools if t.name not in BUILTIN_TOOLS]
+                if step < len(calls):
+                    want, args = calls[step]
+                    name = next((n for n in offered if n == want), None) or next(
+                        (n for n in offered if want and n.startswith(want)), None) or (offered[0] if offered else "")
+                    if not name:
+                        return ModelResponse(text="No extra tools were offered.", tokens_in=10, tokens_out=5)
+                    return _call(name, args, step)
+                outputs = [m.text for m in messages if m.role == "tool"]
+                return ModelResponse(text="Tool results:\n" + "\n---\n".join(outputs), tokens_in=10, tokens_out=5)
             case "grader":
                 if '"lessons"' in system:
                     run_ids = sorted(set(re.findall(r"\br_[0-9a-f]{12}\b", user)))
@@ -304,6 +318,34 @@ class ScenarioProvider:
                     return ModelResponse(text=json.dumps({"lessons": edits}))
                 return ModelResponse(text='{"passed": true, "reason": "fake judge"}')
         raise AssertionError("unreachable")
+
+
+BUILTIN_TOOLS = {"bash", "read_file", "write_file", "edit_file"}
+
+
+def tools_hint(user: str) -> list[tuple[str, dict[str, Any]]]:
+    """Calls requested by the `fake:tools` hint: the first JSON object in the input.
+
+    `{"tool": "<name or prefix>", "args": {...}}` makes one call; `{"calls": [{"tool": .., "args": ..}, ..]}`
+    makes several in order. A missing or unmatched `tool` picks the first non-builtin tool offered. Without a
+    hint, one call with empty arguments is made.
+    """
+    start = user.find("{")
+    hint: Any = {}
+    if start >= 0:
+        try:
+            hint, _ = json.JSONDecoder().raw_decode(user[start:])
+        except json.JSONDecodeError:
+            hint = {}
+    if not isinstance(hint, dict):
+        hint = {}
+    items = hint.get("calls") if isinstance(hint.get("calls"), list) else [hint]
+    out = []
+    for item in items:
+        if isinstance(item, dict):
+            args = item.get("args") if isinstance(item.get("args"), dict) else {}
+            out.append((str(item.get("tool") or ""), args))
+    return out or [("", {})]
 
 
 def make_provider(model: str) -> Provider:

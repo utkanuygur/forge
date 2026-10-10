@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -37,14 +38,18 @@ class RunManager:
         eval_case: dict | None = None,
         after: After | None = None,
         temperature: float | None = None,
+        parent_run_id: str | None = None,
+        max_seconds: int | None = None,
     ) -> str:
         run = db.create_run(agent["id"], version["id"], source, input,
-                            eval_case_id=eval_case["id"] if eval_case else None, callback_url=callback_url)
+                            eval_case_id=eval_case["id"] if eval_case else None, callback_url=callback_url,
+                            parent_run_id=parent_run_id)
         seed: dict[str, bytes] = {k: v.encode() for k, v in (version.get("seed_files") or {}).items()}
         if eval_case:
             seed.update({k: v.encode() for k, v in (eval_case.get("seed_files") or {}).items()})
         seed.update(seed_overrides or {})
-        task = asyncio.create_task(self._execute(run["id"], agent, version, input, seed, after, temperature))
+        task = asyncio.create_task(self._execute(run["id"], agent, version, input, seed, after, temperature,
+                                                 parent_run_id=parent_run_id, max_seconds=max_seconds))
         self.tasks[run["id"]] = task
         task.add_done_callback(lambda _t, rid=run["id"]: self.tasks.pop(rid, None))
         return run["id"]
@@ -56,12 +61,15 @@ class RunManager:
         return db.get_run(run_id)
 
     async def _execute(self, run_id: str, agent: dict, version: dict, input: str, seed: dict[str, bytes],
-                       after: After | None, temperature: float | None) -> None:
+                       after: After | None, temperature: float | None, *, parent_run_id: str | None = None,
+                       max_seconds: int | None = None) -> None:
         from forge.executors import make_executor
         from forge.loop import run_agent
         from forge.providers import make_provider
 
-        async with self.semaphore:
+        # Child runs (agent__ tools) skip the semaphore: their parent already holds a slot and waits for them,
+        # so queueing them could deadlock a full pool.
+        async with contextlib.nullcontext() if parent_run_id else self.semaphore:
             executor: Executor | None = None
             result: RunResult | None = None
             try:
@@ -75,8 +83,15 @@ class RunManager:
                 async def emit(e: Event) -> None:
                     db.append_event(run_id, e.seq, e.ts, e.type, e.payload)
 
+                from forge.tools import build_registry
+
+                registry = build_registry(v, secrets=secrets, executor=executor, run_id=run_id,
+                                          agent_id=agent["id"], manager=self)
+                extra: dict[str, Any] = {"max_seconds": max_seconds} if max_seconds else {}
+                if registry is not None:
+                    extra["extra_tools"] = registry
                 result = await run_agent(v, input, run_id=run_id, provider=make_provider(v.model), executor=executor,
-                                         emit=emit, secrets=secrets or None, temperature=temperature)
+                                         emit=emit, secrets=secrets or None, temperature=temperature, **extra)
                 if after is not None:
                     try:
                         self.after_results[run_id] = await after(executor, result)
@@ -116,6 +131,14 @@ class RunManager:
             db.append_event(run_id, db.next_seq(run_id), time.time(), "run_finished", {
                 "status": result.status, "output": result.output, "turns": result.turns,
                 "tokens_in": result.tokens_in, "tokens_out": result.tokens_out})
+        run = db.get_run(run_id)
+        if run and run.get("parent_run_id"):
+            # Roll this child's usage (its own plus its descendants', already rolled into it) into the parent's
+            # child_* fields. The parent's own tokens_in/tokens_out never include children, so sums over runs
+            # do not double count.
+            db.add_child_usage(run["parent_run_id"], run["tokens_in"] + run["child_tokens_in"],
+                               run["tokens_out"] + run["child_tokens_out"],
+                               float(run.get("cost_usd") or 0) + float(run.get("child_cost_usd") or 0))
 
 
 async def post_webhook(url: str, body: dict, retries: int = 3, backoff: float = 1.0) -> bool:

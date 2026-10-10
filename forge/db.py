@@ -15,7 +15,31 @@ from typing import Any, Iterator
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
-JSON_COLUMNS = {"lessons", "tools", "http_tools", "seed_files", "payload", "summary"}
+JSON_COLUMNS = {"lessons", "tools", "http_tools", "seed_files", "payload", "summary", "mcp_servers",
+                "callable_agents"}
+
+# Additive columns (see CONTRACT.md, Tools). Added with ALTER TABLE when missing so existing databases upgrade
+# in place; fresh databases get them the same way right after schema.sql runs.
+ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("agent_versions", "mcp_servers", "TEXT NOT NULL DEFAULT '[]'"),      # JSON list[McpServer]
+    ("agent_versions", "callable_agents", "TEXT NOT NULL DEFAULT '[]'"),  # JSON list[str] of agent slugs
+    ("runs", "parent_run_id", "TEXT"),                                    # set on runs started by agent__ tools
+    ("runs", "child_tokens_in", "INTEGER NOT NULL DEFAULT 0"),            # usage of all descendant runs
+    ("runs", "child_tokens_out", "INTEGER NOT NULL DEFAULT 0"),
+    ("runs", "child_cost_usd", "REAL NOT NULL DEFAULT 0"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, decl in ADDED_COLUMNS:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            except sqlite3.OperationalError as exc:  # another process added it first
+                if "duplicate column" not in str(exc):
+                    raise
+    conn.execute("CREATE INDEX IF NOT EXISTS runs_parent ON runs(parent_run_id)")
 BOOL_COLUMNS = {"auto_promote", "network", "passed"}
 
 # ---------------------------------------------------------------- basics
@@ -55,6 +79,7 @@ def connect() -> Iterator[sqlite3.Connection]:
     conn.execute("PRAGMA foreign_keys = ON")
     if path not in _initialized:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         _initialized.add(path)
     try:
         yield conn
@@ -149,7 +174,7 @@ def rotate_api_key(agent_id: str) -> str:
 # ---------------------------------------------------------------- versions
 
 VERSION_FIELDS = ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files",
-                  "parent_id", "created_by", "rationale")
+                  "parent_id", "created_by", "rationale", "mcp_servers", "callable_agents")
 
 
 def create_version(agent_id: str, **fields: Any) -> dict:
@@ -215,13 +240,16 @@ def get_secrets(agent_id: str) -> dict[str, str]:
 
 
 def create_run(agent_id: str, version_id: str, source: str, input: str, *, status: str = "queued",
-               eval_case_id: str | None = None, callback_url: str | None = None) -> dict:
+               eval_case_id: str | None = None, callback_url: str | None = None,
+               parent_run_id: str | None = None) -> dict:
     t = now()
     row = {
         "id": new_id("r"), "agent_id": agent_id, "version_id": version_id, "source": source, "input": input,
         "status": status, "eval_case_id": eval_case_id, "callback_url": callback_url, "created_at": t,
         "started_at": t if status == "running" else None,
     }
+    if parent_run_id:
+        row["parent_run_id"] = parent_run_id
     _insert("runs", row)
     return get_run(row["id"])  # type: ignore[return-value]
 
@@ -240,6 +268,33 @@ def list_runs(agent_id: str, limit: int = 50, source: str | None = None) -> list
 def update_run(run_id: str, **fields: Any) -> dict | None:
     _update("runs", "id", run_id, fields)
     return get_run(run_id)
+
+
+def run_ancestry(run_id: str, limit: int = 32) -> list[dict]:
+    """The run followed by its parent, grandparent and so on (via parent_run_id)."""
+    chain: list[dict] = []
+    seen: set[str] = set()
+    current: str | None = run_id
+    while current and current not in seen and len(chain) < limit:
+        seen.add(current)
+        r = get_run(current)
+        if r is None:
+            break
+        chain.append(r)
+        current = r.get("parent_run_id")
+    return chain
+
+
+def list_child_runs(run_id: str) -> list[dict]:
+    return _all("SELECT * FROM runs WHERE parent_run_id = ? ORDER BY created_at", run_id)
+
+
+def add_child_usage(run_id: str, tokens_in: int, tokens_out: int, cost_usd: float = 0.0) -> None:
+    """Rolls a finished child's usage (its own plus its descendants') into its parent's child_* fields."""
+    with connect() as c:
+        c.execute("UPDATE runs SET child_tokens_in = child_tokens_in + ?, child_tokens_out = child_tokens_out + ?, "
+                  "child_cost_usd = child_cost_usd + ? WHERE id = ?",
+                  (int(tokens_in), int(tokens_out), float(cost_usd or 0), run_id))
 
 
 def fail_interrupted_runs() -> int:

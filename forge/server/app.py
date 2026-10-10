@@ -25,7 +25,7 @@ from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
                                 version_view)
-from forge.types import Event, HttpTool
+from forge.types import Event, HttpTool, McpServer
 
 load_dotenv()
 
@@ -87,6 +87,8 @@ class AgentCreate(BaseModel):
     model: str | None = None
     tools: list[str] | None = None
     http_tools: list[HttpTool] | None = None
+    mcp_servers: list[McpServer] | None = None
+    callable_agents: list[str] | None = None
     network: bool = False
     seed_files: dict[str, str] | None = None
     lessons: list[str] | None = None
@@ -105,6 +107,8 @@ class VersionCreate(BaseModel):
     model: str | None = None
     tools: list[str] | None = None
     http_tools: list[HttpTool] | None = None
+    mcp_servers: list[McpServer] | None = None
+    callable_agents: list[str] | None = None
     network: bool | None = None
     seed_files: dict[str, str] | None = None
     rationale: str | None = None
@@ -114,17 +118,34 @@ class Promote(BaseModel):
     version: int
 
 
+def check_tool_config(http_tools: list | None, mcp_servers: list | None, callable_agents: list[str] | None,
+                      own_slug: str) -> None:
+    """400 with every problem in a version's HTTP tools, MCP servers and callable agents."""
+    from forge.tools import validate_tool_config
+
+    errors = validate_tool_config([HttpTool(**t) if isinstance(t, dict) else t for t in http_tools or []],
+                                  [McpServer(**m) if isinstance(m, dict) else m for m in mcp_servers or []],
+                                  list(callable_agents or []), own_slug)
+    for slug in callable_agents or []:
+        if slug != own_slug and db.get_agent_by_slug(slug) is None:
+            errors.append(f"callable agent {slug!r} does not exist")
+    if errors:
+        raise HTTPException(400, "; ".join(errors))
+
+
 @api.post("/agents", dependencies=[Depends(require_local)])
 async def create_agent(body: AgentCreate) -> dict:
     if not SLUG_RE.match(body.slug):
         raise HTTPException(400, "slug must be lowercase letters, digits and dashes")
     if db.get_agent_by_slug(body.slug):
         raise HTTPException(409, f"agent {body.slug!r} already exists")
+    check_tool_config(body.http_tools, body.mcp_servers, body.callable_agents, body.slug)
     agent, key = db.create_agent(body.slug, body.name, body.description, body.auto_promote)
     v = db.create_version(
         agent["id"], system_prompt=body.system_prompt, model=body.model or evals.default_model(), tools=body.tools,
         http_tools=[t.model_dump() for t in body.http_tools] if body.http_tools else None, network=body.network,
-        seed_files=body.seed_files, lessons=body.lessons)
+        mcp_servers=[m.model_dump() for m in body.mcp_servers] if body.mcp_servers else None,
+        callable_agents=body.callable_agents or None, seed_files=body.seed_files, lessons=body.lessons)
     agent = db.update_agent(agent["id"], prod_version_id=v["id"])
     return {**agent_view(agent), "api_key": key}  # type: ignore[arg-type]
 
@@ -156,8 +177,10 @@ async def create_version(slug: str, body: VersionCreate, request: Request) -> di
     agent = agent_or_404(slug)
     authorize(request, agent, allow_share=False)
     prod = version_or_404(agent, "prod")
-    fields = {k: prod[k] for k in ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files")}
+    fields = {k: prod.get(k) for k in ("system_prompt", "lessons", "model", "tools", "http_tools", "network",
+                                       "seed_files", "mcp_servers", "callable_agents")}
     fields.update(body.model_dump(exclude_none=True, exclude={"rationale"}))
+    check_tool_config(fields.get("http_tools"), fields.get("mcp_servers"), fields.get("callable_agents"), slug)
     v = db.create_version(agent["id"], **fields, parent_id=prod["id"], created_by="human",
                           rationale=body.rationale or "")
     return version_view(v)
@@ -190,6 +213,72 @@ async def rotate_key(slug: str, request: Request) -> dict:
     agent = agent_or_404(slug)
     authorize(request, agent, allow_share=False)
     return {"api_key": db.rotate_api_key(agent["id"])}
+
+
+class ToolTest(BaseModel):
+    tool: HttpTool
+    args: dict[str, Any] = Field(default_factory=dict)
+    network: bool | None = None  # the form's current network setting; defaults to the production version's
+
+
+class McpList(BaseModel):
+    server: McpServer
+    network: bool | None = None
+    seed_files: dict[str, str] | None = None  # stdio: workspace files to start with (default: production's)
+
+
+def _secret_values(secrets: dict[str, str]) -> list[str]:
+    return sorted({v for v in secrets.values() if v}, key=len, reverse=True)
+
+
+@api.post("/agents/{slug}/tools/test")
+async def test_http_tool(slug: str, body: ToolTest, request: Request) -> dict:
+    """Runs an HTTP tool once with sample arguments, exactly as a run would (network policy, SSRF, secrets)."""
+    from forge.loop import redact
+    from forge.tools.http import run_http_tool
+
+    agent = agent_or_404(slug)
+    authorize(request, agent, allow_share=False)
+    check_tool_config([body.tool], [], [], slug)
+    network = body.network if body.network is not None else bool(version_or_404(agent, "prod")["network"])
+    secrets = db.get_secrets(agent["id"])
+    started = time.monotonic()
+    out = await run_http_tool(body.tool, body.args, secrets=secrets, network=network,
+                              deadline=time.monotonic() + 130)
+    return {"output": redact(out.output, _secret_values(secrets)), "is_error": out.is_error,
+            "status": out.extra.get("http_status"), "duration_ms": int((time.monotonic() - started) * 1000)}
+
+
+@api.post("/agents/{slug}/mcp/list")
+async def list_mcp_tools(slug: str, body: McpList, request: Request) -> dict:
+    """Connects to an MCP server (stdio servers start in a fresh sandbox) and lists the tools the agent gets."""
+    import os
+
+    from forge.executors import make_executor
+    from forge.loop import redact
+    from forge.tools.mcp import describe_error, list_server_tools
+
+    agent = agent_or_404(slug)
+    authorize(request, agent, allow_share=False)
+    check_tool_config([], [body.server], [], slug)
+    prod = version_or_404(agent, "prod")
+    network = body.network if body.network is not None else bool(prod["network"])
+    secrets = db.get_secrets(agent["id"])
+    executor = None
+    try:
+        if body.server.transport == "stdio":
+            executor = make_executor(os.environ.get("FORGE_EXECUTOR") or "docker",  # type: ignore[arg-type]
+                                     network=network)
+            seeds = body.seed_files if body.seed_files is not None else (prod.get("seed_files") or {})
+            await executor.start({k: v.encode() for k, v in seeds.items()}, dict(secrets))
+        tools = await list_server_tools(body.server, secrets=secrets, executor=executor, network=network)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, redact(f"could not list tools: {describe_error(exc)}",
+                                        _secret_values(secrets))) from None
+    finally:
+        if executor is not None:
+            await executor.stop()
+    return {"tools": tools}
 
 
 @api.get("/templates")
