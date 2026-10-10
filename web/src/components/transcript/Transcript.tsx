@@ -192,7 +192,7 @@ export default function Transcript({ events, run, live, input }: TranscriptProps
           {!live && run?.error && !hasErrorEvent && <ErrorBlock message={run.error} />}
           <div ref={endRef} />
         </div>
-        <div className="tx-statusbar">
+        <div className={`tx-statusbar ${live ? "tx-statusbar-live" : ""}`}>
           {showJump && (
             <button type="button" className="tx-jump" onClick={jump} data-testid="jump-latest">
               <ArrowDown className="h-3.5 w-3.5" /> Jump to latest

@@ -165,8 +165,8 @@ describe("tool renderers", () => {
     const diff = within(ok).getByTestId("edit-diff");
     expect(diff.querySelector('[data-kind="del"]')).toHaveTextContent("y = 2");
     expect(Array.from(diff.querySelectorAll('[data-kind="add"]')).map((n) => n.textContent)).toEqual([
-      "2+y = 3",
-      "3+z = 4",
+      "+y = 3",
+      "+z = 4",
     ]);
     expect(bad.dataset.error).toBe("true");
     expect(bad).toHaveTextContent("`old` text not found in b.py");

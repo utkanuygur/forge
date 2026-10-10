@@ -140,7 +140,7 @@ function DiffBlock({ lines }: { lines: (DiffLine | null)[] }) {
             </div>
           ) : (
             <div key={i} data-kind={l.kind} className={`tx-diff-line tx-diff-${l.kind}`}>
-              <span className="tx-diff-n">{l.kind === "add" ? l.newN : l.oldN}</span>
+              {/* No line numbers: edits carry only a snippet, so its offset in the file is unknown. */}
               <span className="tx-diff-sign">{l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "}</span>
               <span className="whitespace-pre">{l.text || " "}</span>
             </div>
