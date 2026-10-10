@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createAgent, expectRunSucceeded, uniqueSlug } from "./helpers";
+import { createAgent, RUN_TIMEOUT, uniqueSlug } from "./helpers";
 
 test("FR5: deploy tab shows share link and curl; share page shows suggested prompts and runs without exposing configuration", async ({ page, browser }) => {
   const slug = uniqueSlug("share");
@@ -41,15 +41,13 @@ test("FR5: deploy tab shows share link and curl; share page shows suggested prom
   expect(await shared.text()).not.toContain(secretPrompt);
   expect((await shared.json()).suggested_prompts).toEqual([{ title: "Say hello", prompt: input }]);
 
-  // Suggested prompts are shown to share visitors; clicking one fills the input.
-  await colleague.getByTestId("suggested-prompts").getByRole("button", { name: "Say hello" }).click();
-  await expect(colleague.getByRole("textbox", { name: "Task" })).toHaveValue(input);
-  await colleague.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(colleague).toHaveURL(/[?&]run=r_[0-9a-f]{12}/);
-  await expectRunSucceeded(colleague);
-  await expect(
-    colleague.getByRole("region", { name: "Transcript" }).locator('[data-testid="narration"][data-kind="final"]'),
-  ).toContainText(`echo: ${input}`);
+  // Suggested prompts are shown to share visitors; clicking one starts the conversation with it.
+  await colleague.getByTestId("suggested-prompts").getByRole("button", { name: /Say hello/ }).click();
+  const turn = colleague.getByTestId("turn").first();
+  await expect(turn).toHaveAttribute("data-status", "succeeded", { timeout: RUN_TIMEOUT });
+  await expect(turn.getByTestId("user-message")).toHaveText(input);
+  await expect(turn.getByTestId("final-answer")).toContainText(`echo: ${input}`);
+  await expect(colleague).toHaveURL(/[?&]c=s_[0-9a-f]{12}/);
   await expect(colleague.getByRole("button", { name: "Timeline" })).toHaveCount(0);
   await expect(colleague.getByRole("region", { name: "Save as test case" })).toHaveCount(0);
   expect(await colleague.content()).not.toContain(secretPrompt);

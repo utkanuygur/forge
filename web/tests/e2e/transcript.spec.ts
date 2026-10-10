@@ -46,10 +46,18 @@ test("transcript: fake:hello reads like a Claude Code session, on the run page a
   await page.keyboard.press("Control+o");
   await expect(transcript.getByTestId("numbered-code")).toHaveCount(0);
 
-  // The share page shows the same transcript.
+  // The share page shows the same transcript for a share run (share links only ever open share runs; a one shot
+  // share run without a visitor stays openable by its link, as before conversations).
   const ctx = await browser.newContext();
   const colleague = await ctx.newPage();
-  await colleague.goto(`/s/${slug}?share=${agent.share_token}&run=${runId}`);
+  const shareRun = await colleague.request.post(`/v1/agents/${slug}/runs`, {
+    headers: { "X-Share-Token": agent.share_token },
+    data: { input: "Write hello.py and run it", wait: true },
+    timeout: RUN_TIMEOUT,
+  });
+  expect(shareRun.ok()).toBeTruthy();
+  expect(runId).not.toBe((await shareRun.json()).id);
+  await colleague.goto(`/s/${slug}?share=${agent.share_token}&run=${(await shareRun.json()).id}`);
   const shared = colleague.getByRole("region", { name: "Transcript" });
   await expectHelloTranscript(shared);
   await ctx.close();
