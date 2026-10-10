@@ -15,6 +15,7 @@ saw, with zero regressions.
 - **Improve:** feedback from every surface, evaluation suites with train and held-out splits, each case run k times (3 by default) and judged by majority, an optimizer that proposes evidence-linked lessons, and a no-regression promotion rule. Lesson pruning retires lessons that never helped (leave-one-out ablation, kept only at equal quality), and every lesson records where it came from.
 - **Observe:** a dashboard and per-agent monitoring (version health next to eval pass rates, cost per run, version and improvement cycle, failure breakdown, tool statistics), run search, step timelines, `/healthz`, Prometheus `/metrics` and JSON run logs, all from Forge's own database.
 - **Models:** Claude (agents default to `anthropic:claude-sonnet-5-5`; `.env.example` sets the grader, which judges evals, runs the optimizer and drafts agents, to `anthropic:claude-opus-5-5`), an open-source model served on GPUs with vLLM (`gpu/vllm_modal.py`), or a local model through any OpenAI-compatible server such as Ollama.
+- **Assistant:** a chat side panel on every page (Cmd+J or Ctrl+J) that explains Forge and operates it for you: it looks up agents, runs, evals and costs at once, and asks before anything that changes data or spends money ("add three eval cases about refunds", "why did this run fail?", "ask before rm -rf").
 - **Examples:** four example agents (log triage, data analyst, docs writer, repo maintainer) with suggested prompts shown as one-click chips and verified eval cases.
 
 ## Quick start
