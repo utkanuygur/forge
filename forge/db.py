@@ -16,7 +16,7 @@ SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
 JSON_COLUMNS = {"lessons", "lesson_meta", "tools", "http_tools", "seed_files", "payload", "summary", "approval_policy",
-                "args", "rule"}
+                "args", "rule", "mcp_servers", "callable_agents"}
 BOOL_COLUMNS = {"auto_promote", "network", "passed"}
 
 # ---------------------------------------------------------------- basics
@@ -65,19 +65,28 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 
 # Columns added after the first schema; CREATE TABLE IF NOT EXISTS does not add them to existing databases.
-# Keep in sync with schema.sql.
+# Keep in sync with schema.sql (the tools columns exist only here: fresh databases get them right after
+# schema.sql runs).
 ADDED_COLUMNS = {
     "agents": {"eval_repeats": "INTEGER",
                "monthly_budget_usd": "REAL"},  # governance: null = no monthly budget
     "runs": {"cache_read_tokens": "INTEGER NOT NULL DEFAULT 0", "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
              # The one stored run cost in USD (NULL = unknown price); written after each model turn by
-             # forge.governance.RunGovernor and again when the run is finalized. Backfilled when added.
-             "cost_usd": "REAL"},
+             # forge.governance.RunGovernor and re-priced whenever token counts are written (update_run).
+             # Backfilled when added.
+             "cost_usd": "REAL",
+             # tools: runs started by agent__ tools point at their parent, which rolls up its descendants'
+             # usage. child_cost_usd sums the children's stored cost_usd and is never part of the parent's own
+             # cost_usd, so totals over runs count each run once.
+             "parent_run_id": "TEXT", "child_tokens_in": "INTEGER NOT NULL DEFAULT 0",
+             "child_tokens_out": "INTEGER NOT NULL DEFAULT 0", "child_cost_usd": "REAL NOT NULL DEFAULT 0"},
     "eval_results": {"passes": "INTEGER", "runs": "INTEGER"},
     "improvements": {"kind": "TEXT NOT NULL DEFAULT 'improve'"},
     "agent_versions": {"lesson_meta": "TEXT NOT NULL DEFAULT '{}'",
                        "approval_policy": "TEXT NOT NULL DEFAULT '{}'",  # governance, see forge/policy.py
-                       "max_run_cost_usd": "REAL"},  # governance: null = no per-run cap
+                       "max_run_cost_usd": "REAL",  # governance: null = no per-run cap
+                       "mcp_servers": "TEXT NOT NULL DEFAULT '[]'",  # tools: JSON list[McpServer]
+                       "callable_agents": "TEXT NOT NULL DEFAULT '[]'"},  # tools: JSON list[str] of agent slugs
 }
 
 
@@ -95,6 +104,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
                         raise
     if ("runs", "cost_usd") in added:
         _backfill_run_costs(conn)
+    conn.execute("CREATE INDEX IF NOT EXISTS runs_parent ON runs(parent_run_id)")
     # Single-run verdicts from before repeated evals become run 0 of their case.
     conn.execute("INSERT OR IGNORE INTO eval_run_results (version_id, case_id, idx, run_id, passed, reason, created_at) "
                  "SELECT version_id, case_id, 0, run_id, passed, reason, created_at FROM eval_results "
@@ -199,7 +209,8 @@ def rotate_api_key(agent_id: str) -> str:
 # ---------------------------------------------------------------- versions
 
 VERSION_FIELDS = ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files",
-                  "parent_id", "created_by", "rationale", "lesson_meta", "approval_policy", "max_run_cost_usd")
+                  "parent_id", "created_by", "rationale", "lesson_meta", "approval_policy", "max_run_cost_usd",
+                  "mcp_servers", "callable_agents")
 
 
 def create_version(agent_id: str, **fields: Any) -> dict:
@@ -271,7 +282,8 @@ def get_secrets(agent_id: str) -> dict[str, str]:
 
 
 def create_run(agent_id: str, version_id: str, source: str, input: str, *, status: str = "queued",
-               eval_case_id: str | None = None, callback_url: str | None = None) -> dict:
+               eval_case_id: str | None = None, callback_url: str | None = None,
+               parent_run_id: str | None = None) -> dict:
     from forge import pricing
 
     t = now()
@@ -283,6 +295,8 @@ def create_run(agent_id: str, version_id: str, source: str, input: str, *, statu
         # 0.0 for a priced model, NULL for an unknown price (see forge.pricing.cost)
         "cost_usd": pricing.cost(v["model"] if v else None, 0, 0),
     }
+    if parent_run_id:
+        row["parent_run_id"] = parent_run_id
     _insert("runs", row)
     return get_run(row["id"])  # type: ignore[return-value]
 
@@ -311,6 +325,33 @@ def update_run(run_id: str, **fields: Any) -> dict | None:
                                               fields.get("tokens_out", r["tokens_out"]) or 0)
     _update("runs", "id", run_id, fields)
     return get_run(run_id)
+
+
+def run_ancestry(run_id: str, limit: int = 32) -> list[dict]:
+    """The run followed by its parent, grandparent and so on (via parent_run_id)."""
+    chain: list[dict] = []
+    seen: set[str] = set()
+    current: str | None = run_id
+    while current and current not in seen and len(chain) < limit:
+        seen.add(current)
+        r = get_run(current)
+        if r is None:
+            break
+        chain.append(r)
+        current = r.get("parent_run_id")
+    return chain
+
+
+def list_child_runs(run_id: str) -> list[dict]:
+    return _all("SELECT * FROM runs WHERE parent_run_id = ? ORDER BY created_at", run_id)
+
+
+def add_child_usage(run_id: str, tokens_in: int, tokens_out: int, cost_usd: float = 0.0) -> None:
+    """Rolls a finished child's usage (its own plus its descendants') into its parent's child_* fields."""
+    with connect() as c:
+        c.execute("UPDATE runs SET child_tokens_in = child_tokens_in + ?, child_tokens_out = child_tokens_out + ?, "
+                  "child_cost_usd = child_cost_usd + ? WHERE id = ?",
+                  (int(tokens_in), int(tokens_out), float(cost_usd or 0), run_id))
 
 
 def fail_interrupted_runs() -> int:

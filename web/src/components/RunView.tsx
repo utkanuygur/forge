@@ -108,6 +108,12 @@ export default function RunView({
               cache {(run.cache_read_tokens ?? 0).toLocaleString()} read / {(run.cache_write_tokens ?? 0).toLocaleString()} write
             </span>
           ) : null}
+          {run.child_usage && run.child_usage.tokens_in + run.child_usage.tokens_out > 0 && (
+            <span data-testid="child-usage">
+              plus {run.child_usage.tokens_in.toLocaleString()} in / {run.child_usage.tokens_out.toLocaleString()} out
+              {run.child_usage.cost_usd > 0 ? ` (${fmtUsd(run.child_usage.cost_usd)})` : ""} in called agents
+            </span>
+          )}
           <span>{run.turns} turns</span>
           {run.cost_usd !== undefined && (
             <span data-testid="run-header-cost">
@@ -117,6 +123,14 @@ export default function RunView({
           )}
           <span className="text-neutral-400">{fmtTime(run.created_at)}</span>
         </div>
+      )}
+      {!simple && run.parent_run_id && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="called-by">
+          Called by{" "}
+          <a href={`/runs/${run.parent_run_id}`} className="font-mono text-accent-700 hover:underline dark:text-accent-400">
+            {run.parent_run_id}
+          </a>
+        </p>
       )}
       {simple && (
         <div>

@@ -267,7 +267,8 @@ async def _improve(agent: dict, base: dict, improvement_id: str) -> None:
         lessons = improve.apply_lesson_edits(list(base["lessons"]), edits)
         cand = db.create_version(
             agent["id"], **{k: base[k] for k in ("system_prompt", "model", "tools", "http_tools", "network",
-                                                 "seed_files", "approval_policy", "max_run_cost_usd")},
+                                                 "seed_files", "approval_policy", "max_run_cost_usd",
+                                                 "mcp_servers", "callable_agents")},
             lessons=lessons, parent_id=base["id"], created_by="optimizer", rationale=_rationale(diff))
         db.set_lesson_meta(cand["id"], lesson_provenance(  # per-lesson origin, see CONTRACT.md
             base["lessons"], base.get("lesson_meta"), lessons, edits, cand["n"]))

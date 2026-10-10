@@ -23,7 +23,8 @@ log = logging.getLogger("forge.authoring")
 router = APIRouter(prefix="/v1")
 
 CONFIG_KEYS = ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files",
-               "approval_policy", "max_run_cost_usd")  # governance settings carry into ablations and candidates
+               "approval_policy", "max_run_cost_usd",  # governance settings carry into ablations and candidates
+               "mcp_servers", "callable_agents")  # and so do registry tools
 PRUNE_RULE = ("Pruning rule: a candidate is eligible when no case regresses and it passes at least as many cases "
               "as base. The goal is a smaller prompt at equal quality.")
 

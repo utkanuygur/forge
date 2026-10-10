@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from forge import budget, db, pricing
-from forge.policy import Policy, parse_policy, match, rule_view
+from forge.policy import Policy, http_tool_names, match, parse_policy, rule_view
 from forge.types import RunResult, ToolCall
 
 log = logging.getLogger("forge.governance")
@@ -122,7 +122,8 @@ class RunGovernor:
 
     def __post_init__(self) -> None:
         try:
-            self.policy = parse_policy(self.version.get("approval_policy"))
+            self.policy = parse_policy(self.version.get("approval_policy"),
+                                       tools=http_tool_names(self.version.get("http_tools")))
         except ValueError:
             log.exception("invalid approval policy on version %s; denying every call", self.version.get("id"))
             self.policy = parse_policy({"rules": [{"tool": "*", "mode": "deny", "label": "invalid policy"}]})

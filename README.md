@@ -8,6 +8,7 @@ version, and a candidate is promoted only when it passes more cases, including h
 saw, with zero regressions.
 
 - **Create:** instructions, model, tools (bash, file read/write/edit), network policy, secrets, seed files; or describe the agent in plain words and review a drafted configuration with starter evaluation cases.
+- **Tools:** typed HTTP tools with secret headers and SSRF protection, MCP servers (remote, or local stdio inside the sandbox), and agents that call other agents, each call traced as a linked child run.
 - **Deploy:** immutable versions with a production pointer; REST API with per-agent keys; share links for colleagues; webhooks; a `forge` CLI that runs agents locally against your own files.
 - **Improve:** feedback from every surface, evaluation suites with train and held-out splits, an optimizer that proposes evidence-linked lessons, and a no-regression promotion rule. Lesson pruning retires lessons that never helped (leave-one-out ablation, kept only at equal quality), and every lesson records where it came from.
 - **Observe:** a dashboard and per-agent monitoring (version health next to eval pass rates, cost per run, version and improvement cycle, failure breakdown, tool statistics), run search, step timelines, `/healthz`, Prometheus `/metrics` and JSON run logs, all from Forge's own database.

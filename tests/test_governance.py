@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import time
 import types
@@ -413,3 +414,147 @@ def test_month_to_date_includes_judge_and_optimizer_calls(monkeypatch):
     assert budget.month_to_date_usd(agent["id"]) == pytest.approx(1.0)
     with pytest.raises(budget.BudgetExceeded):
         budget.ensure_budget(agent)
+
+
+# ---------------------------------------------------------------- registry tools (tools x governance)
+
+
+class _Scripted:
+    """Provider that replays fixed responses."""
+
+    def __init__(self, responses: list) -> None:
+        self.responses = list(responses)
+
+    async def complete(self, system, messages, tools, temperature=None):  # noqa: ANN001
+        from forge.types import ModelResponse
+
+        return self.responses.pop(0) if self.responses else ModelResponse(text="done", tokens_in=1, tokens_out=1)
+
+
+class _Recorder:
+    """A registry tool source offering an MCP, an agent and an HTTP tool; records what actually ran."""
+
+    kind = "mcp"
+
+    def __init__(self) -> None:
+        self.ran: list[str] = []
+
+    async def open(self, notify) -> None:  # noqa: ANN001
+        return None
+
+    def specs(self):
+        from forge.types import ToolSpec
+
+        return [ToolSpec(name=n, description=n, parameters={"type": "object"})
+                for n in ("mcp__docs__search", "agent__helper", "lookup")]
+
+    async def call(self, name, args, deadline):  # noqa: ANN001
+        from forge.tools.registry import ToolOutcome
+
+        self.ran.append(name)
+        return ToolOutcome(f"{name} ran")
+
+    async def close(self) -> None:
+        return None
+
+
+REGISTRY_POLICY = {"rules": [
+    {"tool": "mcp__docs__*", "pattern": "secret", "mode": "ask", "label": "docs secrets"},
+    {"tool": "agent__*", "mode": "deny", "label": "no delegation"},
+    {"tool": "lookup", "mode": "ask"},
+], "timeout_seconds": 1}
+
+
+def test_policy_rules_may_name_registry_tools():
+    """Tools x governance: rules accept mcp__/agent__ names and prefixes, and HTTP tool names when the version
+    has them; registry patterns search the arguments as JSON."""
+    p = parse_policy(REGISTRY_POLICY, tools={"lookup"})
+    assert match(p, "mcp__docs__search", {"q": "top secret"})[1].label == "docs secrets"
+    assert match(p, "mcp__docs__search", {"q": "public"}) is None
+    assert match(p, "mcp__other__x", {"q": "secret"}) is None
+    assert match(p, "agent__anyone", {"input": "x"})[1].mode == "deny"
+    with pytest.raises(ValueError, match="unknown tool 'lookup'"):
+        parse_policy(REGISTRY_POLICY)  # not one of this version's HTTP tools
+    with pytest.raises(ValueError, match="invalid regular expression"):
+        parse_policy({"rules": [{"tool": "mcp__x__y", "pattern": "("}]})
+
+
+async def test_approval_policies_gate_registry_tool_calls():
+    """Tools x governance: before_tool sees mcp__, agent__ and HTTP tool calls from the registry. An ask rule
+    pauses (approve runs the tool), a deny rule never runs it, an expired ask never runs it; in an eval run the
+    ask is an immediate deny."""
+    from forge.tools.registry import ToolRegistry
+    from forge.types import ModelResponse, ToolCall
+
+    def script() -> list:
+        return [
+            ModelResponse(tool_calls=[ToolCall(id="c1", name="mcp__docs__search", args={"q": "secret plan"})]),
+            ModelResponse(tool_calls=[ToolCall(id="c2", name="agent__helper", args={"input": "x"})]),
+            ModelResponse(tool_calls=[ToolCall(id="c3", name="lookup", args={"id": "1"})]),
+            ModelResponse(text="finished"),
+        ]
+
+    agent, v, run = _agent_and_run(model="fake:echo", policy=REGISTRY_POLICY)
+    v = {**v, "http_tools": [{"name": "lookup", "description": "", "parameters": {"type": "object"},
+                              "url": "https://example.com"}]}
+    reg = governance.ApprovalRegistry()
+    approved: list[str] = []
+
+    async def emit(e: Event) -> None:
+        events.append(e)
+        if e.type == "approval_requested" and e.payload["name"] == "mcp__docs__search":
+            approved.append(e.payload["name"])
+            reg.resolve(e.payload["id"], "approve", "", "ui")
+
+    for source, expect_ran in (("api", ["mcp__docs__search"]), ("eval", [])):
+        events: list[Event] = []
+        rec = _Recorder()
+        hooks = governance.RunGovernor(run["id"], agent, v, reg, source=source)
+        av = AgentVersion(**{k: v[k] for k in AgentVersion.model_fields if k in v})
+        res = await run_agent(av, "go", run_id=run["id"], provider=_Scripted(script()), executor=Exec(), emit=emit,
+                              hooks=hooks, extra_tools=ToolRegistry([rec]))  # type: ignore[arg-type]
+        assert res.status == "succeeded" and rec.ran == expect_ran, source
+        out = {e.payload["name"]: e.payload for e in events if e.type == "tool_result"}
+        assert out["agent__helper"]["output"].startswith("Denied by policy: no delegation")
+        if source == "api":
+            assert not out["mcp__docs__search"]["is_error"] and out["mcp__docs__search"]["source"] == "mcp"
+            assert "approval_wait_ms" in out["mcp__docs__search"] and "approval_wait_ms" in out["lookup"]
+            assert out["lookup"]["output"].startswith("Denied by reviewer: no decision within 1 seconds")
+            asked = [e.payload["name"] for e in events if e.type == "approval_requested"]
+            assert asked == ["mcp__docs__search", "lookup"]
+        else:
+            assert not any(e.type.startswith("approval") for e in events)
+            for name in ("mcp__docs__search", "lookup"):
+                assert out[name]["output"].startswith("Denied by policy during evaluation:"), name
+    assert approved == ["mcp__docs__search"]
+
+
+def test_child_runs_respect_the_callee_budget_and_cap(client, monkeypatch):
+    """Tools x governance: agent__ child runs skip the concurrency semaphore but not the callee's monthly budget
+    (refused, no child run) nor its per-run cap; the child's stored cost rolls into the parent's child_usage
+    and is never part of the parent's own cost, so Prometheus counts it once."""
+    from forge.server import observability
+
+    monkeypatch.setenv("FORGE_PRICES", '{"fake:loop": [1000, 2000], "fake:tools": [1000, 2000]}')
+    child = client.post("/v1/agents", json={"slug": "callee", "name": "c", "system_prompt": "s", "model": "fake:loop",
+                                            "max_run_cost_usd": 0.03, "monthly_budget_usd": 0}).json()
+    client.post("/v1/agents", json={"slug": "caller", "name": "p", "system_prompt": "s", "model": "fake:tools",
+                                    "callable_agents": ["callee"]})
+    hint = json.dumps({"tool": "agent__callee", "args": {"input": "go"}})
+    r = client.post("/v1/agents/caller/runs", json={"input": hint, "wait": True}).json()
+    res = next(e["payload"] for e in db.list_events(r["id"]) if e["type"] == "tool_result")
+    assert res["is_error"] and "callee was not called: Monthly budget of $0.00 reached" in res["output"]
+    assert db.list_runs(child["id"]) == []
+
+    client.patch("/v1/agents/callee", json={"monthly_budget_usd": 10})
+    r = client.post("/v1/agents/caller/runs", json={"input": hint, "wait": True}).json()
+    [kid] = db.list_runs(child["id"])
+    assert kid["source"] == "agent" and kid["parent_run_id"] == r["id"]
+    assert kid["status"] == "budget_exceeded" and kid["cost_usd"] == pytest.approx(0.04)  # cap 0.03, 0.02 a turn
+    parent = client.get(f"/v1/runs/{r['id']}").json()
+    assert parent["child_usage"]["cost_usd"] == pytest.approx(kid["cost_usd"])
+    assert parent["cost_usd"] == pytest.approx(pricing.cost("fake:tools", parent["tokens_in"], parent["tokens_out"]))
+    total = next(f for f in observability.prometheus_families() if f["name"] == "forge_cost_usd_total")["samples"]
+    by_agent = {lbl["agent"]: val for _, lbl, val in total}
+    assert by_agent["callee"] == pytest.approx(0.04)
+    assert by_agent["caller"] == pytest.approx(sum(x["cost_usd"] for x in db.list_runs(db.get_agent_by_slug("caller")["id"])))

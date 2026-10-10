@@ -7,8 +7,11 @@ A policy is stored as JSON on each agent version (`agent_versions.approval_polic
                {"tool": "edit_file", "mode": "ask"}],
      "timeout_seconds": 900}
 
-- `tool` is a tool name, or "*" for any tool (then `pattern` must be empty).
-- `pattern` is optional. For `bash` it is a regular expression searched in the command. For the file
+- `tool` is a tool name, or "*" for any tool (then `pattern` must be empty). Besides the builtins it may
+  name a registry tool (forge/tools): `mcp__<server>__<tool>`, `agent__<slug>` or one of the version's
+  HTTP tools; a trailing `*` matches by prefix (`mcp__github__*`, `agent__*`).
+- `pattern` is optional. For `bash` it is a regular expression searched in the command; for registry
+  tools a regular expression searched in the arguments as compact JSON with sorted keys. For the file
   tools it is a path glob: `*` stays inside one directory, `**` crosses directories, and a glob without
   a slash also matches the file name in any directory (`*.env` matches `config/prod.env`).
 - No pattern means every call to that tool matches.
@@ -19,16 +22,28 @@ An empty policy (`{}` or no rules) changes nothing.
 
 from __future__ import annotations
 
+import json
 import posixpath
 import re
 from functools import lru_cache
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 DEFAULT_TIMEOUT_SECONDS = 15 * 60
 FILE_TOOLS = ("read_file", "write_file", "edit_file")
 KNOWN_TOOLS = ("bash", *FILE_TOOLS)
+REGISTRY_PREFIXES = ("mcp__", "agent__")  # forge/tools/registry.py RESERVED_PREFIXES
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,127}\*?$")
+
+
+def http_tool_names(http_tools: list | None) -> set[str]:
+    """Names of a version's HTTP tools (dicts or HttpTool models), for validating rules that name them."""
+    return {t["name"] if isinstance(t, dict) else t.name for t in http_tools or []}
+
+
+def _is_registry_tool(name: str) -> bool:
+    return name.startswith(REGISTRY_PREFIXES)
 
 # Presets offered in the UI (web/src/components/PolicyEditor.tsx mirrors these).
 PRESETS: dict[str, list[dict[str, Any]]] = {
@@ -59,12 +74,16 @@ class Rule(BaseModel):
         return v if v and v.strip() else None
 
     @model_validator(mode="after")
-    def _check(self) -> "Rule":
-        if self.tool != "*" and self.tool not in KNOWN_TOOLS:
-            raise ValueError(f"unknown tool {self.tool!r}; use one of {', '.join(KNOWN_TOOLS)} or *")
+    def _check(self, info: ValidationInfo) -> "Rule":
+        extra: set[str] = set(((info.context or {}) if info else {}).get("tools") or ())
+        known = self.tool == "*" or self.tool in KNOWN_TOOLS or self.tool in extra or (
+            _TOOL_NAME_RE.match(self.tool) is not None and _is_registry_tool(self.tool))
+        if not known:
+            raise ValueError(f"unknown tool {self.tool!r}; use one of {', '.join(KNOWN_TOOLS)}, an mcp__ or "
+                             "agent__ tool, one of this version's HTTP tools, or *")
         if self.tool == "*" and self.pattern:
             raise ValueError("a rule for every tool (*) cannot have a pattern")
-        if self.tool == "bash" and self.pattern:
+        if self.tool not in FILE_TOOLS and self.pattern:
             try:
                 re.compile(self.pattern)
             except re.error as exc:
@@ -74,7 +93,7 @@ class Rule(BaseModel):
     def describe(self) -> str:
         what = "any tool" if self.tool == "*" else self.tool
         if self.pattern:
-            what += f" matching /{self.pattern}/" if self.tool == "bash" else f" on {self.pattern}"
+            what += f" on {self.pattern}" if self.tool in FILE_TOOLS else f" matching /{self.pattern}/"
         return f"{self.label}: {what}" if self.label else what
 
 
@@ -83,13 +102,14 @@ class Policy(BaseModel):
     timeout_seconds: int = Field(DEFAULT_TIMEOUT_SECONDS, ge=1, le=7 * 24 * 3600)
 
 
-def parse_policy(raw: Any) -> Policy:
-    """Validated policy from stored JSON (None or {} gives the empty policy). Raises ValueError when invalid."""
+def parse_policy(raw: Any, tools: set[str] | None = None) -> Policy:
+    """Validated policy from stored JSON (None or {} gives the empty policy). Raises ValueError when invalid.
+    `tools` are extra tool names rules may use (the version's HTTP tools)."""
     if not raw:
         return Policy()
     if not isinstance(raw, dict):
         raise ValueError("approval_policy must be an object with a `rules` list")
-    return Policy.model_validate(raw)
+    return Policy.model_validate(raw, context={"tools": set(tools or ())})
 
 
 @lru_cache(maxsize=512)
@@ -121,14 +141,22 @@ def glob_match(pattern: str, path: str) -> bool:
     return "/" not in pat and bool(rx.match(posixpath.basename(norm)))
 
 
+def tool_matches(rule_tool: str, name: str) -> bool:
+    if rule_tool == "*" or rule_tool == name:
+        return True
+    return rule_tool.endswith("*") and name.startswith(rule_tool[:-1])
+
+
 def rule_matches(rule: Rule, name: str, args: dict[str, Any]) -> bool:
-    if rule.tool != "*" and rule.tool != name:
+    if not tool_matches(rule.tool, name):
         return False
     if not rule.pattern:
         return True
     if name == "bash":
         cmd = args.get("cmd", args.get("command"))
         return isinstance(cmd, str) and re.search(rule.pattern, cmd) is not None
+    if name not in FILE_TOOLS:  # registry tools: search the arguments as JSON
+        return re.search(rule.pattern, json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)) is not None
     path = args.get("path")
     return isinstance(path, str) and glob_match(rule.pattern, path)
 

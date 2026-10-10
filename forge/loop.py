@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from forge.types import (
     AgentVersion,
@@ -18,6 +18,9 @@ from forge.types import (
     ToolCall,
     ToolSpec,
 )
+
+if TYPE_CHECKING:
+    from forge.tools.registry import ToolRegistry
 
 MAX_OUTPUT = 10_000
 KEEP_HEAD = 4_000
@@ -210,6 +213,7 @@ async def run_agent(
     max_turns: int = 30,
     max_seconds: int = 600,
     hooks: Any = None,
+    extra_tools: ToolRegistry | None = None,  # HTTP, MCP and agent tools (forge/tools/registry.py)
 ) -> RunResult:
     """`hooks` (optional, see forge.governance.RunGovernor) may stop the run after a model turn
     (`after_turn`) and replace a tool call's result (`before_tool`); time spent in `before_tool`, such as
@@ -238,6 +242,9 @@ async def run_agent(
 
     await send("run_started", {"version_id": version.id, "model": version.model, "input": input})
     try:
+        if extra_tools is not None:
+            await extra_tools.open(send)
+            tools += extra_tools.specs()
         while True:
             if result.turns >= max_turns:
                 result.status, result.error = "timeout", f"turn limit of {max_turns} reached"
@@ -308,12 +315,13 @@ async def run_agent(
                     turn_usage = None
                 await send("tool_call", call_payload)
                 timing: dict[str, Any] = {}
+                extra: dict[str, Any] = {}
                 if truncated and i == len(resp.tool_calls) - 1:  # its arguments may be cut off mid-way
                     output, is_error = TRUNCATED_CALL, True
                     t_tool = time.monotonic()
                 else:
                     gated = None
-                    if hooks is not None:
+                    if hooks is not None:  # approval policies cover registry tools (mcp__, agent__, HTTP) too
                         asked_before, paused = approvals_asked, time.monotonic()
                         gated = await hooks.before_tool(call, send)
                         waited = time.monotonic() - paused
@@ -323,16 +331,22 @@ async def run_agent(
                     t_tool = time.monotonic()
                     if gated is not None:
                         output, is_error = gated
+                    elif extra_tools is not None and extra_tools.has(call.name):
+                        outcome = await extra_tools.call(call, deadline)
+                        output, is_error, extra = outcome.output, outcome.is_error, outcome.extra
                     else:
                         output, is_error = await _run_tool(call, executor, set(allowed), deadline)
                 await send("tool_result", {"id": call.id, "name": call.name, "output": output, "is_error": is_error,
-                                           "duration_ms": _ms_since(t_tool), **timing})
+                                           "duration_ms": _ms_since(t_tool), **timing, **extra})
                 messages.append(Message(role="tool", tool_call_id=call.id, text=output, is_error=is_error))
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001  (unexpected runtime bug: report it, still finish the run)
         result.status, result.error = "failed", f"runtime error: {type(exc).__name__}: {exc}"
         await send("error", {"message": result.error})
+    finally:
+        if extra_tools is not None:
+            await extra_tools.close()
 
     if result.status != "succeeded":
         result.output = last_text

@@ -28,7 +28,8 @@ class Event(BaseModel):
     #   run_started:  {"version_id", "model", "input"}
     #   assistant:    {"text"}
     #   tool_call:    {"id", "name", "args"}
-    #   tool_result:  {"id", "name", "output", "is_error"}
+    #   tool_result:  {"id", "name", "output", "is_error"}; non-builtin tools add "source"
+    #                 ("http" | "mcp" | "agent") and agent tools add "child_run_id"
     #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out", "cache_read_tokens",
     #                  "cache_write_tokens"}
     #   error:        {"message"}
@@ -53,14 +54,32 @@ Emit = Callable[[Event], Awaitable[None]]
 
 
 class HttpTool(BaseModel):
-    """A typed tool that calls an HTTP endpoint (P2)."""
+    """A typed tool that calls an HTTP endpoint from the server process (see CONTRACT.md, Tools)."""
 
     name: str
     description: str
-    parameters: dict[str, Any]  # JSON schema
-    url: str
-    method: Literal["GET", "POST"] = "POST"
+    parameters: dict[str, Any]  # JSON schema (type "object")
+    url: str  # may contain {param} placeholders, filled URL-encoded from the arguments
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "POST"
     headers: dict[str, str] = Field(default_factory=dict)  # values may reference secrets as {{NAME}}
+    # Arguments not used in the URL go to the query string for GET and DELETE and to a JSON body otherwise;
+    # names listed here always go to the query string.
+    query_params: list[str] = Field(default_factory=list)
+    timeout: float = 30.0  # seconds, capped at 120 and by the run's remaining wall clock
+    max_response_chars: int = 10_000
+
+
+class McpServer(BaseModel):
+    """An MCP server whose tools are offered to the agent as `mcp__<name>__<tool>`."""
+
+    name: str  # letters, digits, `-` and `_`; unique per version
+    transport: Literal["http", "sse", "stdio"] = "http"
+    url: str = ""  # http (Streamable HTTP) and sse
+    headers: dict[str, str] = Field(default_factory=dict)  # http and sse; values may reference {{SECRET}}
+    command: str = ""  # stdio: runs inside the agent's sandbox (`docker exec -i`)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)  # stdio; values may reference {{SECRET}}
+    timeout: float = 60.0  # seconds per tool call
 
 
 class AgentVersion(BaseModel):
@@ -74,6 +93,8 @@ class AgentVersion(BaseModel):
     model: str  # "anthropic:<model>" | "openai_compat:<base_url>|<model>"
     tools: list[str] = Field(default_factory=lambda: ["bash", "read_file", "write_file", "edit_file"])
     http_tools: list[HttpTool] = Field(default_factory=list)
+    mcp_servers: list[McpServer] = Field(default_factory=list)
+    callable_agents: list[str] = Field(default_factory=list)  # agent slugs offered as `agent__<slug>` tools
     network: bool = False
     seed_files: dict[str, str] = Field(default_factory=dict)  # relative path -> text content
     parent_id: str | None = None

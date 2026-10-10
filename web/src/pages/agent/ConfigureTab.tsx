@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { FileText, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { api, errMsg, fmtTime, type Agent, type ApprovalPolicy, type LessonMeta, type Version } from "../../api";
+import { api, errMsg, fmtTime, type Agent, type ApprovalPolicy, type HttpTool, type LessonMeta, type McpServer, type Version } from "../../api";
 import PolicyEditor, { MonthlyBudgetSetting, RunCapField, normalizePolicy, parseUsd } from "../../components/PolicyEditor";
 import { ModelField, NetworkField, ToolsField } from "../../components/ConfigFields";
+import ToolsConfig from "../../components/ToolsConfig";
 import { useToast } from "../../components/Toast";
 import { Badge, CreatedByBadge, Empty, ErrorBox, Modal, Section, Toggle } from "../../components/ui";
 
@@ -96,6 +97,9 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
   const [tools, setTools] = useState<string[]>([]);
   const [network, setNetwork] = useState(false);
   const [seeds, setSeeds] = useState<Record<string, string>>({});
+  const [httpTools, setHttpTools] = useState<HttpTool[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [callable, setCallable] = useState<string[]>([]);
   const [rationale, setRationale] = useState("");
   const [policy, setPolicy] = useState<ApprovalPolicy>({});
   const [runCap, setRunCap] = useState("");
@@ -110,6 +114,9 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
     setTools(v.tools);
     setNetwork(v.network);
     setSeeds(v.seed_files || {});
+    setHttpTools(v.http_tools || []);
+    setMcpServers(v.mcp_servers || []);
+    setCallable(v.callable_agents || []);
     setRationale("");
     setPolicy(v.approval_policy || {});
     setRunCap(v.max_run_cost_usd == null ? "" : String(v.max_run_cost_usd));
@@ -124,7 +131,10 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
       JSON.stringify([...tools].sort()) !== JSON.stringify([...prod.tools].sort()) ||
       JSON.stringify(seeds) !== JSON.stringify(prod.seed_files || {}) ||
       JSON.stringify(normalizePolicy(policy)) !== JSON.stringify(normalizePolicy(prod.approval_policy)) ||
-      parseUsd(runCap) !== (prod.max_run_cost_usd ?? null));
+      parseUsd(runCap) !== (prod.max_run_cost_usd ?? null) ||
+      JSON.stringify(httpTools) !== JSON.stringify(prod.http_tools || []) ||
+      JSON.stringify(mcpServers) !== JSON.stringify(prod.mcp_servers || []) ||
+      JSON.stringify(callable) !== JSON.stringify(prod.callable_agents || []));
   const capInvalid = parseUsd(runCap) === undefined;
 
   async function save() {
@@ -137,6 +147,9 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
         tools,
         network,
         seed_files: seeds,
+        http_tools: httpTools,
+        mcp_servers: mcpServers,
+        callable_agents: callable,
         rationale,
         approval_policy: normalizePolicy(policy),
         max_run_cost_usd: parseUsd(runCap) ?? null,
@@ -220,6 +233,23 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
             <ModelField value={model} onChange={setModel} />
             <ToolsField value={tools} onChange={setTools} />
             <NetworkField value={network} onChange={setNetwork} />
+            <section aria-label="Tools" className="space-y-3 border-t border-neutral-200 pt-5 dark:border-neutral-800">
+              <div>
+                <h3 className="text-sm font-semibold">Tools</h3>
+                <p className="text-xs text-neutral-500">HTTP endpoints, MCP servers and other agents the model can call.</p>
+              </div>
+              <ToolsConfig
+                agent={agent}
+                network={network}
+                seedFiles={seeds}
+                httpTools={httpTools}
+                onHttpTools={setHttpTools}
+                mcpServers={mcpServers}
+                onMcpServers={setMcpServers}
+                callableAgents={callable}
+                onCallableAgents={setCallable}
+              />
+            </section>
             <PolicyEditor value={policy} onChange={setPolicy} network={network} />
             <RunCapField value={runCap} onChange={setRunCap} />
             <div>

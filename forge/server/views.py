@@ -8,11 +8,14 @@ from forge import db, governance, pricing
 
 VERSION_KEYS = ("id", "agent_id", "n", "system_prompt", "lessons", "model", "tools", "http_tools", "network",
                 "seed_files", "parent_id", "created_by", "rationale", "created_at",
-                "approval_policy", "max_run_cost_usd")  # governance
+                "approval_policy", "max_run_cost_usd",  # governance
+                "mcp_servers", "callable_agents")  # tools
+LIST_DEFAULTS = ("mcp_servers", "callable_agents")
 
 
 def version_view(v: dict) -> dict:
-    return {**{k: v[k] for k in VERSION_KEYS}, "lesson_meta": v.get("lesson_meta") or {}}
+    return {**{k: (v.get(k) or []) if k in LIST_DEFAULTS else v[k] for k in VERSION_KEYS},
+            "lesson_meta": v.get("lesson_meta") or {}}
 
 
 def agent_view(a: dict, *, versions: bool = False) -> dict:
@@ -44,6 +47,9 @@ def run_view(r: dict, *, version_n: int | None = None, model: str | None = None)
         "cache_read_tokens": r.get("cache_read_tokens") or 0, "cache_write_tokens": r.get("cache_write_tokens") or 0,
         "has_artifacts": bool(r["artifact_path"] and Path(r["artifact_path"]).exists()),
         "eval_case_id": r["eval_case_id"],
+        "parent_run_id": r.get("parent_run_id"),
+        "child_usage": {"tokens_in": r.get("child_tokens_in") or 0, "tokens_out": r.get("child_tokens_out") or 0,
+                        "cost_usd": r.get("child_cost_usd") or 0},
         "created_at": r["created_at"], "started_at": r["started_at"], "ended_at": r["ended_at"],
         "feedback": [feedback_view(f) for f in db.list_feedback(r["id"])],
         # Additive observability fields (CONTRACT.md "Observability").

@@ -62,6 +62,47 @@ export interface Governance {
   awaiting_runs: string[];
 }
 
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export interface HttpTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  url: string;
+  method: HttpMethod;
+  headers: Record<string, string>;
+  query_params?: string[];
+  timeout?: number;
+  max_response_chars?: number;
+}
+
+export type McpTransport = "http" | "sse" | "stdio";
+
+export interface McpServer {
+  name: string;
+  transport: McpTransport;
+  url?: string;
+  headers?: Record<string, string>;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  timeout?: number;
+}
+
+export interface McpToolInfo {
+  name: string;
+  tool: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
+export interface ToolTestResult {
+  output: string;
+  is_error: boolean;
+  status: number | null;
+  duration_ms: number;
+}
+
 export interface Version {
   id: string;
   agent_id: string;
@@ -70,7 +111,9 @@ export interface Version {
   lessons: string[];
   model: string;
   tools: string[];
-  http_tools: unknown[];
+  http_tools: HttpTool[];
+  mcp_servers?: McpServer[];
+  callable_agents?: string[];
   network: boolean;
   seed_files: Record<string, string>;
   parent_id: string | null;
@@ -153,6 +196,8 @@ export interface Run {
   ended_at: number | null;
   feedback: Feedback[];
   eval_case_id?: string | null;
+  parent_run_id?: string | null;
+  child_usage?: { tokens_in: number; tokens_out: number; cost_usd: number };
   // Not in CONTRACT.md; used if the backend includes it.
   agent_slug?: string;
   // Observability and governance (additive): the stored run cost; null means the model's price is unknown.
@@ -513,6 +558,9 @@ export interface NewVersionBody {
   tools?: string[];
   network?: boolean;
   seed_files?: Record<string, string>;
+  http_tools?: HttpTool[];
+  mcp_servers?: McpServer[];
+  callable_agents?: string[];
   rationale?: string;
   approval_policy?: ApprovalPolicy;
   max_run_cost_usd?: number | null;
@@ -623,6 +671,12 @@ export const api = {
     request<AgentDraft>("POST", "/agent-drafts", body),
   putSecrets: (slug: string, values: Record<string, string>) =>
     request<{ names: string[] }>("PUT", `/agents/${enc(slug)}/secrets`, values),
+  testTool: (slug: string, body: { tool: HttpTool; args: Record<string, unknown>; network?: boolean }) =>
+    request<ToolTestResult>("POST", `/agents/${enc(slug)}/tools/test`, body),
+  listMcpTools: (
+    slug: string,
+    body: { server: McpServer; network?: boolean; seed_files?: Record<string, string> },
+  ) => request<{ tools: McpToolInfo[] }>("POST", `/agents/${enc(slug)}/mcp/list`, body),
 
   // runtime
   createRun: (

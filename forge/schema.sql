@@ -1,4 +1,5 @@
 -- Forge database schema (SQLite, WAL mode). Frozen contract: see CONTRACT.md.
+-- Additive columns are listed in forge/db.py ADDED_COLUMNS and applied with ALTER TABLE when missing.
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 

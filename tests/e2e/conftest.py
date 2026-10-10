@@ -6,6 +6,7 @@ The server runs with a temporary FORGE_DATA_DIR, FORGE_EXECUTOR=docker and deter
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import socket
@@ -28,6 +29,18 @@ SANDBOX_FILTER = ["--filter", "ancestor=" + os.environ.get("FORGE_SANDBOX_IMAGE"
 
 
 def _free_port() -> int:
+    """A free port for a server subprocess. FORGE_PYTEST_E2E_PORTS="8082-8089" restricts servers to that range
+    (first free port wins; servers bind before the next one is picked); otherwise the OS picks one."""
+    if rng := os.environ.get("FORGE_PYTEST_E2E_PORTS"):
+        lo, _, hi = rng.partition("-")
+        for port in range(int(lo), int(hi or lo) + 1):
+            with socket.socket() as s:
+                try:
+                    s.bind(("127.0.0.1", port))
+                except OSError:
+                    continue
+                return port
+        raise RuntimeError(f"no free port in FORGE_PYTEST_E2E_PORTS={rng}")
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -49,13 +62,11 @@ class Server:
             return "(no server log)"
 
 
-@pytest.fixture(scope="session")
-def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
-    if why := docker_unavailable():
-        pytest.skip(why)
-    root = tmp_path_factory.mktemp("forge-e2e")
+@contextlib.contextmanager
+def start_server(root: Path, extra_env: dict[str, str] | None = None) -> Iterator[Server]:
+    """A real Forge server subprocess on a free port with its own data dir under `root`."""
     data_dir, log = root / "data", root / "server.log"
-    port = int(os.environ.get("FORGE_PYTEST_E2E_PORT") or 0) or _free_port()  # pin with FORGE_PYTEST_E2E_PORT
+    port = _free_port()
     keep = {"FORGE_SANDBOX_IMAGE"}
     env = {k: v for k, v in os.environ.items()
            if (not k.startswith("FORGE_") or k in keep) and k != "ANTHROPIC_API_KEY"}
@@ -71,6 +82,7 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
         "PYTHONUNBUFFERED": "1",
         # Do not rely on the editable-install .pth (macOS may flag it hidden, which Python then skips).
         "PYTHONPATH": os.pathsep.join(p for p in (str(REPO), os.environ.get("PYTHONPATH", "")) if p),
+        **(extra_env or {}),
     })
     before = sandbox_containers()
     logf = log.open("w")
@@ -113,6 +125,14 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
         poll(no_leaks, timeout=20, interval=0.5, what="sandbox containers to exit")
     except AssertionError:
         raise AssertionError(f"leaked sandbox containers: {sorted(leaked)}\n{srv.log_tail()}") from None
+
+
+@pytest.fixture(scope="session")
+def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
+    if why := docker_unavailable():
+        pytest.skip(why)
+    with start_server(tmp_path_factory.mktemp("forge-e2e")) as srv:
+        yield srv
 
 
 @pytest.fixture(scope="session")
