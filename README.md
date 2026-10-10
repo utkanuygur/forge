@@ -36,6 +36,17 @@ prompts and verified eval cases: `make examples`, then see [docs/test-cases.md](
 
 Expose it to others: `cloudflared tunnel --url http://localhost:8000`.
 
+## Configuration
+
+Every setting (default and grader models, OpenAI compatible endpoints such as Ollama and vLLM, sandbox
+image and limits, run limits, eval repeats, concurrency, logs, metrics, model prices, the public URL) is
+on the Settings page (gear icon), with a description, where its value comes from, and whether it applies
+at once or after a restart. Status cards show the Claude key, Ollama, Docker and a GPU endpoint. A variable
+set in the environment or `.env` wins and is shown read only, so keep `.env` for API keys and the data
+directory. API keys are never stored in the database: put them in `.env` for the dev server, or in the
+desktop app's Settings window (Keychain). `.env.example` is generated from the registry in
+`forge/settings.py`; see CONTRACT.md "Settings".
+
 ## Documentation
 
 | File | Contents |
