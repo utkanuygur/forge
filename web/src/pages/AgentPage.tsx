@@ -8,9 +8,11 @@ import ConfigureTab from "./agent/ConfigureTab";
 import RunsTab from "./agent/RunsTab";
 import EvalsTab from "./agent/EvalsTab";
 import DeployTab from "./agent/DeployTab";
+import Playground from "../components/playground/Playground";
 
 const TABS = [
   { key: "configure", label: "Configure" },
+  { key: "playground", label: "Playground" },
   { key: "runs", label: "Runs" },
   { key: "evals", label: "Evaluations" },
   { key: "deploy", label: "Deploy" },
@@ -55,6 +57,7 @@ export default function AgentPage() {
       </div>
       <Tabs tabs={TABS} active={tab} onChange={(k) => navigate(`/agents/${slug}/${k}`)} />
       {tab === "configure" && <ConfigureTab agent={agent} onChanged={reload} />}
+      {tab === "playground" && <Playground agent={agent} />}
       {tab === "runs" && <RunsTab agent={agent} />}
       {tab === "evals" && <EvalsTab agent={agent} onChanged={reload} />}
       {tab === "deploy" && <DeployTab agent={agent} onChanged={reload} />}

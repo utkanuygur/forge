@@ -1,6 +1,6 @@
 // Typed client for the Forge HTTP API. Shapes mirror CONTRACT.md.
 
-export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "timeout";
+export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "timeout" | "cancelled";
 export type Split = "train" | "holdout";
 export type CreatedBy = "human" | "optimizer";
 export type ImprovementStatus = "running" | "promoted" | "eligible" | "rejected" | "failed";
@@ -33,6 +33,33 @@ export interface Agent {
   share_token: string;
   created_at: number;
   versions?: Version[];
+  // Added on another branch (feat/examples); absent on older servers.
+  suggested_prompts?: { title: string; prompt: string }[];
+}
+
+export interface DraftConfig {
+  system_prompt?: string;
+  model?: string;
+  tools?: string[];
+  network?: boolean;
+  lessons?: string[];
+  seed_files?: Record<string, string>;
+}
+
+export interface Session {
+  id: string;
+  agent_slug: string;
+  version_n: number | null; // null for a draft
+  draft: DraftConfig | null;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  turns?: Run[];
+  // Implementation extras (see CONTRACT.md).
+  base_version_n?: number | null;
+  is_draft?: boolean;
+  turn_count?: number | null;
+  running?: boolean;
 }
 
 export interface AgentCreated extends Agent {
@@ -67,6 +94,9 @@ export interface Run {
   ended_at: number | null;
   feedback: Feedback[];
   eval_case_id?: string | null;
+  // Playground sessions (CONTRACT.md "Sessions").
+  session_id?: string | null;
+  turn_index?: number | null;
   // Not in CONTRACT.md; used if the backend includes it.
   agent_slug?: string;
 }
@@ -301,6 +331,16 @@ export const api = {
   improve: (slug: string) => request<Improvement>("POST", `/agents/${enc(slug)}/improve`, {}),
   getImprovement: (id: string) => request<Improvement>("GET", `/improvements/${enc(id)}`),
   listImprovements: (slug: string) => request<Improvement[]>("GET", `/agents/${enc(slug)}/improvements`),
+
+  // playground sessions
+  createSession: (slug: string, body: { version?: number; draft?: DraftConfig }) =>
+    request<Session>("POST", `/agents/${enc(slug)}/sessions`, body),
+  listSessions: (slug: string, limit = 20) => request<Session[]>("GET", `/agents/${enc(slug)}/sessions?limit=${limit}`),
+  getSession: (id: string) => request<Session>("GET", `/sessions/${enc(id)}`),
+  sendMessage: (id: string, input: string) => request<Run>("POST", `/sessions/${enc(id)}/messages`, { input }),
+  saveSessionVersion: (id: string, rationale = "") =>
+    request<Version>("POST", `/sessions/${enc(id)}/save-version`, { rationale }),
+  cancelRun: (id: string) => request<Run>("POST", `/runs/${enc(id)}/cancel`),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -345,5 +385,5 @@ export function fmtDuration(run: Pick<Run, "started_at" | "ended_at" | "status">
 }
 
 export function isTerminal(status: RunStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "timeout";
+  return status === "succeeded" || status === "failed" || status === "timeout" || status === "cancelled";
 }

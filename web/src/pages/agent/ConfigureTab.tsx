@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileText, Plus, Trash2 } from "lucide-react";
+import { FileText, FlaskConical, Plus, Trash2 } from "lucide-react";
+import { useOpenPlayground } from "../../components/playground/Playground";
 import { api, errMsg, fmtTime, type Agent, type Version } from "../../api";
 import { ModelField, NetworkField, ToolsField } from "../../components/ConfigFields";
 import { useToast } from "../../components/Toast";
@@ -44,6 +45,7 @@ function SeedFileModal({
 
 export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onChanged: () => void }) {
   const toast = useToast();
+  const openPlayground = useOpenPlayground(agent.slug);
   const versions = useMemo(() => [...(agent.versions || [])].sort((a, b) => b.n - a.n), [agent.versions]);
   const prod = versions.find((v) => v.n === agent.prod_version);
 
@@ -206,6 +208,14 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
             <div className="flex justify-end gap-2">
               <button className="btn-secondary" disabled={!dirty || busy} onClick={() => reset(prod)}>
                 Discard
+              </button>
+              <button
+                className="btn-secondary"
+                disabled={busy}
+                title={dirty ? "Try these unsaved edits in the Playground" : "Open the Playground on production"}
+                onClick={() => openPlayground(dirty ? { system_prompt: prompt, model, tools, network, seed_files: seeds } : undefined)}
+              >
+                <FlaskConical className="h-4 w-4" /> Test
               </button>
               <button className="btn-primary" disabled={!dirty || busy} onClick={save}>
                 {busy ? "Saving..." : "Save as new version"}
