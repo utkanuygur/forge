@@ -46,19 +46,21 @@ test("transcript: fake:hello reads like a Claude Code session, on the run page a
   await page.keyboard.press("Control+o");
   await expect(transcript.getByTestId("numbered-code")).toHaveCount(0);
 
-  // The share page shows the same transcript for a share run (share links only ever open share runs; a one shot
-  // share run without a visitor stays openable by its link, as before conversations).
+  // The share page shows the same transcript for a run started through the share link (a share token reaches
+  // only share runs; the builder's run above is not visible there).
+  const res = await page.request.post(`/v1/agents/${slug}/runs`, {
+    data: { input: "Write hello.py and run it" },
+    headers: { "X-Share-Token": agent.share_token, "X-Forwarded-For": "203.0.113.9" },
+  });
+  expect(res.ok(), await res.text()).toBeTruthy();
+  const shareRun = (await res.json()).id;
   const ctx = await browser.newContext();
   const colleague = await ctx.newPage();
-  const shareRun = await colleague.request.post(`/v1/agents/${slug}/runs`, {
-    headers: { "X-Share-Token": agent.share_token },
-    data: { input: "Write hello.py and run it", wait: true },
-    timeout: RUN_TIMEOUT,
-  });
-  expect(shareRun.ok()).toBeTruthy();
-  expect(runId).not.toBe((await shareRun.json()).id);
-  await colleague.goto(`/s/${slug}?share=${agent.share_token}&run=${(await shareRun.json()).id}`);
+  await colleague.goto(`/s/${slug}?share=${agent.share_token}&run=${shareRun}`);
   const shared = colleague.getByRole("region", { name: "Transcript" });
   await expectHelloTranscript(shared);
+  expect((await colleague.request.get(`/v1/runs/${runId}?share=${agent.share_token}`, {
+    headers: { "X-Forwarded-For": "203.0.113.9" },
+  })).status()).toBe(404);
   await ctx.close();
 });
