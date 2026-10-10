@@ -531,7 +531,7 @@ Playground sessions (additive). Builder-only (localhost or the agent's API key; 
 
 Generate buttons: grader-written suggestions for fields users would otherwise type by hand. Every kind goes through
 one registry (`forge/assist/registry.py`), one engine (`forge/assist/engine.py`) and one route
-(`forge/server/assist.py`). Built-in kinds: `task`.
+(`forge/server/assist.py`). Built-in kinds: `task`, `eval_case`, `eval_cases`.
 
 ### Endpoint
 
@@ -579,6 +579,34 @@ credentials), naming real files, endpoints or columns, 1 to 4 sentences phrased 
 `variety` (type and difficulty) cycled by the number of earlier `assist:task` calls for the agent. Valid when the
 prompt is non-empty and under 1200 chars, the title is under 100 chars, and the prompt is not a near duplicate
 (normalized text similarity at least 0.85) of a recent input or an avoided text. Share links allowed.
+
+### Kind `eval_case`
+
+One evaluation case (task input plus checker) drafted for the agent. Never saved: the client creates it with
+`POST /agents/{slug}/evals` (or `POST /runs/{id}/save-as-eval`) only when the user clicks Add. Builders only (no
+share links). Stable interface (other features call it):
+
+`input` (all optional): `{split?: "train"|"holdout" (default train), focus?: str, checker_type?: "shell"|"judge"
+(default: the model picks shell when the result is checkable by commands, else judge), from_run_id?: str,
+task?: str}`. `from_run_id` (one of this agent's runs, else `400`) turns the run's input, reply and feedback into a
+case whose input is the run's input verbatim; `task` fixes the case input (verbatim) so only the checker and name
+are written (the Add case form's checker button).
+`result`: `{name, input, checker_type: "shell"|"judge", checker, split: "train"|"holdout", rationale}`. The
+context is the shared agent context plus the existing cases (split, type, name, input; the agent's own longest
+shell checker as a style reference), `avoid`, and the request. Valid when: `name` is a lowercase hyphenated slug
+under 60 chars not used by an existing case; `input` is non-empty, under 3000 chars, and not a near duplicate of
+an existing case input or an avoided text (or equals the fixed input); `checker_type` and `split` match the request
+when given; a shell checker contains `set -euo pipefail` and a `FAIL` line and, when network is off, no network
+commands (curl, wget, pip install, npm install, apt install, git clone, uv add); a judge rubric says "Pass only if"
+and lists at least two numbered criteria; `rationale` is non-empty. Holdout requests ask for a different task that
+exercises the same skills as the train cases.
+
+### Kind `eval_cases`
+
+A batch for the "Generate several" review list. `input`: `{n?: 1..6 (default 3), holdout?: 0..n (default n // 2),
+focus?: str, checker_type?: "shell"|"judge"}` (out of range `400`). `result`: `{cases: [<eval_case result>]}` with
+exactly `n` cases, exactly `holdout` of them holdout, each valid as above, with unique names and no near duplicates
+among themselves.
 
 ### Adding a kind
 
