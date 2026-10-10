@@ -13,18 +13,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import tempfile
 import time
 from contextlib import AsyncExitStack
 from typing import Any
 
+from forge import settings
 from forge.tools.http import SECRET_RE, ToolError, check_destination, substitute_secrets
 from forge.tools.registry import Notify, ToolOutcome
 from forge.types import Executor, McpServer, ToolSpec
 
-CONNECT_TIMEOUT = float(os.environ.get("FORGE_MCP_CONNECT_TIMEOUT") or 30)
+settings.register_setting(
+    key="mcp_connect_timeout", env="FORGE_MCP_CONNECT_TIMEOUT", type="float", default=30, min=1, max=600,
+    group="Tools", label="MCP connect timeout (seconds)",
+    description="Seconds to wait when connecting to an MCP server and listing its tools.")
+
+
+def connect_timeout() -> float:
+    return float(settings.get("mcp_connect_timeout"))
 MAX_TOOLS_PER_SERVER = 200
 NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
 
@@ -177,7 +184,7 @@ class McpConnection:
             async with AsyncExitStack() as stack:
                 read, write = await self._transport(stack)
                 session = await stack.enter_async_context(
-                    ClientSession(read, write, read_timeout_seconds=max(self.server.timeout, CONNECT_TIMEOUT)))
+                    ClientSession(read, write, read_timeout_seconds=max(self.server.timeout, connect_timeout())))
                 await session.initialize()
                 tools: list[Any] = []
                 cursor = None
@@ -217,7 +224,8 @@ class McpConnection:
             tail = ""
         return f"{msg}\nstderr: {tail}" if tail else msg
 
-    async def start(self, timeout: float = CONNECT_TIMEOUT) -> list[Any]:
+    async def start(self, timeout: float | None = None) -> list[Any]:
+        timeout = connect_timeout() if timeout is None else timeout
         self._ready = asyncio.get_running_loop().create_future()
         self._task = asyncio.create_task(self._main())
         try:

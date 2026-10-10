@@ -20,6 +20,7 @@ and read them with `settings.get("share_rate_limit")` where they are used.
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -38,7 +39,12 @@ SettingType = Literal["string", "int", "float", "bool", "enum", "model", "url", 
 ApplyMode = Literal["live", "restart"]
 Source = Literal["env", "saved", "default"]
 
-GROUPS = ["Models", "Sandbox", "Evaluations", "Server", "Observability", "Pricing", "Sharing"]
+GROUPS = ["Models", "Sandbox", "Evaluations", "Server", "Observability", "Pricing", "Sharing", "Tools", "Triggers"]
+
+# Modules that register their own settings at import time (see the module docstring). load_all() imports them so
+# the registry is complete wherever it is listed (.env.example, the Settings page), whatever was imported first.
+SETTING_MODULES = ("forge.triggers.security", "forge.triggers.core", "forge.triggers.slack", "forge.server.assist",
+                   "forge.tools.mcp")
 
 TYPES = {"string", "int", "float", "bool", "enum", "model", "url", "json", "secret"}
 TRUE = {"1", "true", "yes", "on"}
@@ -550,7 +556,14 @@ def view(key: str) -> dict[str, Any]:
     return out
 
 
+def load_all() -> None:
+    """Imports every module in SETTING_MODULES so their settings are registered."""
+    for name in SETTING_MODULES:
+        importlib.import_module(name)
+
+
 def groups() -> list[dict[str, Any]]:
+    load_all()
     by: dict[str, list[dict]] = {g: [] for g in GROUPS}
     for s in REGISTRY.values():
         by.setdefault(s.group, []).append(view(s.key))
@@ -578,6 +591,7 @@ def openai_key_for(base_url: str) -> str | None:
 
 def env_example() -> str:
     """The text of .env.example, generated from the registry (scripts/gen_env_example.py writes it)."""
+    load_all()
     lines = [
         "# Forge settings, generated from forge/settings.py by `uv run python scripts/gen_env_example.py`.",
         "# Do not edit by hand: tests/test_settings.py fails when this file and the registry drift apart.",
@@ -596,7 +610,46 @@ def env_example() -> str:
                 lines.append(f"{s.env}=")
             else:
                 lines.append(f"# {s.env}={_env_default(s)}")
+    lines += ["", *ENV_ONLY]
     return "\n".join(lines) + "\n"
+
+
+# Variables that are not settings: read by the desktop entry point, scripts, tests and development switches.
+ENV_ONLY = [
+    "# ---- Environment only (not settings): desktop entry, development switches, scripts and tests",
+    "# Desktop app server entry (forge/desktop_entry.py; set by the macOS app): host, port and the app's PID.",
+    "# FORGE_HOST=127.0.0.1",
+    "# FORGE_PORT=8000",
+    "# FORGE_PARENT_PID=",
+    "# Directory with example agents (default demo/ in the checkout, or the bundled copy in the desktop app).",
+    "# FORGE_EXAMPLES_DIR=",
+    "# 1 disables the SSRF address check for HTTP tools, remote MCP servers and webhooks (development and tests only).",
+    "# FORGE_ALLOW_PRIVATE_HTTP=0",
+    "# 0 disables the trigger scheduler; seconds between scheduler checks (default 15).",
+    "# FORGE_SCHEDULER=1",
+    "# FORGE_SCHEDULER_INTERVAL=15",
+    "# Seconds between GitHub and Slack delivery retries (default 1).",
+    "# FORGE_TRIGGER_RETRY_BACKOFF=1",
+    "# Tests only: the scheduler reads the current unix time from this file.",
+    "# FORGE_TEST_CLOCK_FILE=",
+    "# Server that scripts/preflight.sh checks. Default http://localhost:8000.",
+    "# FORGE_URL=http://localhost:8000",
+    "# 1 runs live model tests (same as pytest -m live); agent and judge models for live Claude tests.",
+    "# FORGE_LIVE=0",
+    "# FORGE_LIVE_MODEL=",
+    "# FORGE_LIVE_GRADER_MODEL=",
+    "# OpenAI compatible server and model for the live local model test. Defaults: Ollama and qwen3:4b-instruct.",
+    "# FORGE_LOCAL_BASE_URL=http://localhost:11434/v1",
+    "# FORGE_LOCAL_MODEL=qwen3:4b-instruct",
+    "# vLLM endpoint for the live GPU test and preflight, including /v1; model defaults to the first served.",
+    "# FORGE_VLLM_URL=",
+    "# FORGE_VLLM_MODEL=",
+    "# Browser tests (web/playwright.config.ts): base port (servers on it, +1 and +2) and data dir.",
+    "# FORGE_E2E_PORT=8011",
+    "# FORGE_E2E_DATA_DIR=",
+    "# Python end-to-end servers (tests/e2e): restrict their ports to a range, e.g. 8082-8089. Default: any free port.",
+    "# FORGE_PYTEST_E2E_PORTS=",
+]
 
 
 def _env_default(s: Setting) -> str:

@@ -12,7 +12,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from forge import db
+from forge import db, settings
 from forge.types import ACTIVE_STATUSES
 from forge.server import runs
 from forge.triggers import store
@@ -25,6 +25,10 @@ KINDS = ("schedule", "github", "slack")
 ACTIVE = ACTIVE_STATUSES  # a run paused on an approval is still running
 limiter = RateLimiter()
 _background: set[asyncio.Task] = set()
+
+settings.register_setting(
+    key="trigger_rate_limit", env="FORGE_TRIGGER_RATE_LIMIT", type="int", default=30, min=1, max=10000,
+    group="Triggers", label="Trigger rate limit", description="Runs per hour each trigger may start.")
 
 
 def now() -> float:
@@ -39,14 +43,11 @@ def now() -> float:
 
 
 def default_rate() -> int:
-    try:
-        return int(os.environ.get("FORGE_TRIGGER_RATE_LIMIT") or 30)
-    except ValueError:
-        return 30
+    return int(settings.get("trigger_rate_limit"))
 
 
 def public_url() -> str | None:
-    return (os.environ.get("FORGE_PUBLIC_URL") or "").rstrip("/") or None
+    return (settings.get("public_url") or "").rstrip("/") or None
 
 
 def run_url(base: str | None, run_id: str) -> str:

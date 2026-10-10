@@ -938,8 +938,9 @@ register_setting(key="share_rate_limit", env="FORGE_SHARE_RATE_LIMIT", type="int
                  group="Sharing", label="Share link rate limit", description="Runs per minute allowed per share link.")
 ```
 
-Suggested for pending work: triggers, `triggers_api_hosts` (json list of hosts webhooks may call, group Server);
-governance, `budget_default_usd` (float, monthly spend cap for new agents) and `budget_action` (enum warn or
-block), group Evaluations or a new Governance group; sharing, `share_rate_limit` (int) and
-`share_runs_per_day` (int), group Sharing; tools, `tool_timeout_seconds` (int, Sandbox) and `http_tools_allowed`
-(bool); parallel tests, none at runtime.
+Registered by other modules (listed in `settings.SETTING_MODULES`, which `settings.load_all()` imports before
+the registry is listed): `trigger_api_hosts`, `trigger_rate_limit` and `slack_response_url_prefixes` (group
+Triggers, `forge/triggers`), `assist_share_limit` (Sharing, `forge/server/assist.py`) and `mcp_connect_timeout`
+(Tools, `forge/tools/mcp.py`). Triggers read `public_url` for hook paths and reply links. Governance budgets are
+per agent fields, not settings. Development and test switches (`FORGE_ALLOW_PRIVATE_HTTP`, `FORGE_SCHEDULER`,
+`FORGE_TEST_CLOCK_FILE`, desktop entry, scripts) stay environment only and are listed at the end of `.env.example`.

@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
-import os
 import re
 from collections import OrderedDict
 from typing import Any
 
+from forge import settings
 from forge.triggers import text
 from forge.triggers.core import post_json, run_url
 from forge.triggers.security import api_base_allowed, api_base_error
 
 DEFAULT_RESPONSE_PREFIXES = ("https://hooks.slack.com/",)
+
+settings.register_setting(
+    key="slack_response_url_prefixes", env="FORGE_SLACK_RESPONSE_URL_PREFIXES", type="string", default="",
+    optional=True, group="Triggers", label="Slack response URL prefixes",
+    description="Comma separated URL prefixes Slack replies may be posted to; empty means https://hooks.slack.com/.")
 _seen_events: "OrderedDict[str, None]" = OrderedDict()
 
 
 def response_url_allowed(url: str) -> bool:
     """Only post to Slack's own response URLs unless the operator widens it (tests point it at a local receiver)."""
-    raw = os.environ.get("FORGE_SLACK_RESPONSE_URL_PREFIXES")
+    raw = settings.get("slack_response_url_prefixes")
     prefixes = tuple(p.strip() for p in raw.split(",") if p.strip()) if raw else DEFAULT_RESPONSE_PREFIXES
     return bool(url) and url.startswith(prefixes)
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import threading
 import time
 from collections import defaultdict, deque
@@ -19,7 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from forge import assist, db
+from forge import assist, db, settings
 from forge.assist import engine, registry
 from forge.server import evals
 from forge.server.auth import authorize, is_local
@@ -28,6 +27,11 @@ log = logging.getLogger("forge.assist")
 router = APIRouter(prefix="/v1")
 
 SHARE_LIMIT_DEFAULT = 10
+
+settings.register_setting(
+    key="assist_share_limit", env="FORGE_ASSIST_SHARE_LIMIT", type="int", default=SHARE_LIMIT_DEFAULT, min=1,
+    max=10000, group="Sharing", label="Generate limit on share pages",
+    description="Generate button suggestions each share link may request per hour.")
 SHARE_WINDOW_S = 3600.0
 
 
@@ -77,10 +81,7 @@ class RateLimiter:
 
 
 def _share_limit() -> int:
-    try:
-        return max(1, int(os.environ.get("FORGE_ASSIST_SHARE_LIMIT") or SHARE_LIMIT_DEFAULT))
-    except ValueError:
-        return SHARE_LIMIT_DEFAULT
+    return max(1, int(settings.get("assist_share_limit")))
 
 
 share_limiter = RateLimiter(_share_limit(), SHARE_WINDOW_S)  # one budget per share token, shared by all kinds

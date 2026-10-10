@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 import secrets
 import threading
 import time
 from collections import deque
 from typing import Callable
 from urllib.parse import urlsplit
+
+from forge import settings
+
+settings.register_setting(
+    key="trigger_api_hosts", env="FORGE_TRIGGER_API_HOSTS", type="string", default="", optional=True,
+    group="Triggers", label="Extra trigger API origins",
+    description="Comma separated API origins triggers may call besides api.github.com and slack.com, such as GitHub "
+                "Enterprise; a bare host means https and an origin without a port allows any port.",
+    placeholder="https://ghe.example.com")
 
 SLACK_MAX_AGE = 300  # seconds; Slack recommends rejecting requests older than five minutes
 
@@ -109,7 +117,7 @@ def operator_api_hosts() -> list[str]:
     """FORGE_TRIGGER_API_HOSTS: comma separated extra allowed API origins, e.g.
     `https://ghe.example.com,http://127.0.0.1:9000`. An entry without a scheme means https; an entry without a
     port allows any port of that scheme and host."""
-    raw = os.environ.get("FORGE_TRIGGER_API_HOSTS") or ""
+    raw = settings.get("trigger_api_hosts") or ""
     return [e.strip() for e in raw.split(",") if e.strip()]
 
 
