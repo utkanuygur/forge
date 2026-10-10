@@ -226,6 +226,10 @@ def get_agent_by_slug(slug: str) -> dict | None:
     return _one("SELECT * FROM agents WHERE slug = ?", slug)
 
 
+def get_agent_by_key_hash(key_hash: str) -> dict | None:
+    return _one("SELECT * FROM agents WHERE api_key_hash = ?", key_hash)
+
+
 def list_agents() -> list[dict]:
     return _all("SELECT * FROM agents ORDER BY created_at")
 
@@ -652,3 +656,54 @@ def link_improvement_run(improvement_id: str, run_id: str) -> None:
     with connect() as c:
         c.execute("INSERT OR IGNORE INTO improvement_runs (improvement_id, run_id) VALUES (?, ?)",
                   (improvement_id, run_id))
+
+
+# ---------------------------------------------------------------- assistant (copilot)
+
+
+def create_copilot_session(owner: str, title: str = "", context: dict | None = None) -> dict:
+    t = now()
+    row = {"id": new_id("cs"), "owner": owner, "title": title, "context": context or {}, "created_at": t,
+           "updated_at": t}
+    _insert("copilot_sessions", row)
+    return get_copilot_session(row["id"])  # type: ignore[return-value]
+
+
+def _copilot_session(row: dict | None) -> dict | None:
+    if row is not None and isinstance(row.get("context"), str):  # "context" is not a global JSON column
+        row["context"] = json.loads(row["context"] or "{}")
+    return row
+
+
+def get_copilot_session(session_id: str) -> dict | None:
+    return _copilot_session(_one("SELECT * FROM copilot_sessions WHERE id = ?", session_id))
+
+
+def list_copilot_sessions(owner: str, limit: int = 10) -> list[dict]:
+    return [_copilot_session(r) for r in  # type: ignore[misc]
+            _all("SELECT * FROM copilot_sessions WHERE owner = ? ORDER BY updated_at DESC LIMIT ?", owner, limit)]
+
+
+def update_copilot_session(session_id: str, **fields: Any) -> None:
+    _update("copilot_sessions", "id", session_id, {**fields, "updated_at": now()})
+
+
+def add_copilot_message(session_id: str, type: str, payload: dict) -> dict:
+    with connect() as c:
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            seq = c.execute("SELECT COALESCE(MAX(seq), -1) + 1 FROM copilot_messages WHERE session_id = ?",
+                            (session_id,)).fetchone()[0]
+            row = {"id": new_id("cm"), "session_id": session_id, "seq": seq, "type": type, "payload": payload,
+                   "created_at": now()}
+            c.execute("INSERT INTO copilot_messages (id, session_id, seq, type, payload, created_at) "
+                      "VALUES (?, ?, ?, ?, ?, ?)", [_encode(v) for v in row.values()])
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+    return row
+
+
+def list_copilot_messages(session_id: str, after: int = -1) -> list[dict]:
+    return _all("SELECT * FROM copilot_messages WHERE session_id = ? AND seq > ? ORDER BY seq", session_id, after)

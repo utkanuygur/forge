@@ -429,11 +429,13 @@ class ScenarioProvider:
                finishes with their outputs; see tools_hint()
       session  turn 1 writes hello.py; later turns `cat hello.py` and report what they saw (playground)
       slow     runs `sleep 30` forever (exercises cancel / Stop)
+      copilot  the Forge assistant's model (forge.copilot.fake): adds N eval cases, explains a failed run,
+               refuses secrets; `grader` also answers like this when given the assistant's system prompt
     """
 
     def __init__(self, scenario: str):
         if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "flaky", "risky", "tools", "session", "slow",
-                            "missing"}:
+                            "missing", "copilot"}:
             raise ValueError(f"unknown fake scenario {scenario!r}")
         self.scenario = scenario
 
@@ -453,6 +455,12 @@ class ScenarioProvider:
                 return r
         else:
             _call_t = _call
+        from forge.copilot.prompt import MARK as COPILOT_MARK
+
+        if self.scenario == "copilot" or (self.scenario == "grader" and system.startswith(COPILOT_MARK)):
+            from forge.copilot.fake import respond
+
+            return respond(messages)
         match self.scenario:
             case "error":
                 raise RuntimeError("fake model failure")

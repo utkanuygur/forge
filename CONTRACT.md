@@ -23,6 +23,7 @@ amendment or additive extend the objects and endpoints above; where both describ
 | `gpu/` | runtime | vLLM on Modal for GPU served open models |
 | `forge/cli.py` | cli | `forge` Typer app |
 | `web/` | web | React + Vite + Tailwind single-page app |
+| `forge/copilot/`, `forge/server/copilot_api.py`, `web/src/components/copilot/` | assistant | Forge assistant side panel (see Assistant) |
 | `demo/` | demo | `acme-orders` seed repo, `repo-maintainer` agent definition, eval cases; `examples/` example agents (`load_examples.py`, `verify_examples.py`) |
 | `tests/` | each owner | `tests/test_<area>.py` |
 
@@ -1103,3 +1104,125 @@ curl -s $FORGE/v1/sessions/$SESSION/messages -H "Authorization: Bearer $FORGE_AP
 curl -s $FORGE/v1/sessions/$SESSION/messages -H "Authorization: Bearer $FORGE_API_KEY" \
   -H "Content-Type: application/json" -d '{"input": "Now expand the second idea", "wait": true}'
 ```
+## Assistant (additive)
+
+A chat side panel on every page of the web app (and so the desktop app) that explains Forge and operates it for
+the user. Backend in `forge/copilot/` (prompt, tools, engine, docs search, fake model) and
+`forge/server/copilot_api.py`; web in `web/src/components/copilot/` and `web/src/copilotApi.ts`.
+
+### Endpoints (prefix `/v1/copilot`)
+
+Builder only: localhost, or any agent's API key; share tokens and anonymous remote callers get 401. A session
+belongs to its caller (`local`, or the key's agent) and other callers get 404. Tools act with the caller's own
+credentials through Forge's HTTP API in process, so an API-key caller can only change its own agent.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/sessions` | `{context?}` | `CopilotSession` |
+| GET | `/sessions?limit=10` | | `[CopilotSession]` newest first (limit 1 to 50) |
+| GET | `/sessions/{id}` | | `CopilotSession` + `messages: [CopilotEvent]` + `pending_confirm` (the open `confirm_request` payload or null) |
+| POST | `/sessions/{id}/messages` | `{text: 1..8000 chars, context: {page?, agent_slug?, run_id?, version?}}` | SSE stream of the turn's `CopilotEvent`s (`event: <type>`, `id: <seq>`, `data: CopilotEvent`), ending with `event: end`; 409 while a turn is running |
+| GET | `/sessions/{id}/events?after=<seq>` | | SSE: re-attaches to the latest turn after `seq` (reload while running); ends at once when idle |
+| POST | `/sessions/{id}/confirm` | `{confirm_id, approve: bool}` | `{ok, confirm_id, approved}`; 404 unknown id, 409 already answered or expired |
+| POST | `/sessions/{id}/cancel` | | `{ok, cancelled}`; Stop: the turn ends with `final` status `stopped` and any open confirmation counts as denied |
+
+```jsonc
+// CopilotSession
+{"id": "cs_..", "title": "add 3 eval cases to repo-maintainer", "context": {"page": "/agents/x/evals",
+ "agent_slug": "x"}, "created_at": 0.0, "updated_at": 0.0, "running": false}
+// CopilotEvent: one stored step; the stream and `messages` carry the same objects
+{"seq": 3, "type": "tool_result", "payload": {...}}
+```
+
+| type | payload |
+|---|---|
+| `user` | `{text, context}` |
+| `assistant` | `{text, kind: "progress" or "final", tool_calls?: [{id, name, args}]}`; one per model turn (text per turn, not token deltas); model progress notes are `kind: "progress"` without `tool_calls` |
+| `tool_call` | `{id, tool, args, risk}` |
+| `tool_result` | `{id, tool, risk, ok, summary (one line for the UI), output (what the model saw, at most 6000 chars), links: [{label, href}] (relative app paths), refresh: ["evals:<slug>", "agent:<slug>", "runs:<slug>", "triggers:<slug>", "run:<id>"]}` |
+| `confirm_request` | `{id: "cf_..", tool (or "multiple"), args (one call's args, or a list), summary, items: [{call_id, tool, args, summary}]}` |
+| `confirm_resolved` | `{id, approved, by: "user", "timeout" or "stopped"}` |
+| `error` | `{message}` |
+| `final` | `{status: "done", "stopped", "limit" or "error", message, steps, tokens_in, tokens_out, cost_usd}` |
+
+Storage: tables `copilot_sessions` and `copilot_messages` (`CREATE TABLE IF NOT EXISTS`, so existing databases
+gain them on connect). Ids `cs_` (session), `cm_` (message), `cf_` (confirmation).
+
+### Model and metering
+
+The model is `FORGE_GRADER_MODEL` through the provider adapters (Claude: adaptive thinking with progress
+updates, no temperature, `tool_choice` auto). Every model call is metered in `grader_calls` with kind
+`assist:copilot`: under the agent named by `context.agent_slug` (so it appears in that agent's metrics
+`cost.assist.kinds.copilot` and counts toward its monthly budget), else under the bucket `agent_id = "copilot"`,
+reported by `GET /metrics/overview` as `copilot: {calls, tokens_in, tokens_out, cost_usd, cost_complete}`. The
+system prompt is static (cacheable); the page context goes into each user message as a `<context>` block.
+
+### Tools
+
+Thin wrappers over the HTTP API above (no business logic of their own), each with a JSON schema, a one-line
+description and a risk. `read` tools run as soon as the model calls them; `write` tools change data or spend
+money and run only after the user approves. No tool reads or writes secrets, keys, share tokens or webhook
+secrets; the assistant refuses such requests, and every tool output and argument shown is passed through
+redaction of all stored secret values.
+
+| Tool | Risk | Wraps |
+|---|---|---|
+| `list_agents` | read | `GET /agents` |
+| `get_agent` | read | `GET /agents/{slug}`: config summary of prod, versions, budget (no share token) |
+| `list_runs` | read | `GET /agents/{slug}/runs` or `GET /runs` with status, version, source, q, limit (at most 25) |
+| `get_run` | read | `GET /runs/{id}` + `events.json`: status, error, cost, input, output, eval verdict, condensed trace |
+| `explain_failure` | read | as `get_run`, with a longer trace that keeps every error step |
+| `list_eval_cases` | read | `GET /agents/{slug}/evals` |
+| `get_eval_results` | read | `GET /agents/{slug}/evals/results` joined with case names (default prod) |
+| `get_improvements` | read | `GET /agents/{slug}/improvements` or `GET /improvements/{id}` |
+| `get_metrics` | read | `GET /agents/{slug}/metrics` or `GET /metrics/overview` |
+| `docs_lookup` | read | keyword search over README, CONTRACT, TESTING and `docs/*.md` sections (`FORGE_DOCS_DIR` overrides the root) |
+| `create_eval_case` | write | `POST /agents/{slug}/evals` (several calls in one turn share one confirmation) |
+| `delete_eval_case` | write | `DELETE /evals/{id}` |
+| `generate_eval_cases` | write | `POST /assist/<kind>` then `POST /agents/{slug}/evals` per case; assist kind `eval_cases` (`n` = count; `holdout` = count or 0 when a split is given) |
+| `start_run` | write | `POST /agents/{slug}/runs` (with `generate_task`, the input comes from `POST /agents/{slug}/sample-task`) |
+| `run_evaluation` | write | `POST /agents/{slug}/evals/run` |
+| `start_improvement` | write | `POST /agents/{slug}/improve` |
+| `promote_version` | write | `POST /agents/{slug}/promote` |
+| `create_version` | write | `POST /agents/{slug}/versions` with system_prompt, model, tools, network or lessons (not promoted) |
+| `set_approval_policy` | write | `POST /agents/{slug}/versions` with prod's rules plus the new ones (or `replace`), not promoted |
+| `set_budget` | write | `PATCH /agents/{slug}` (monthly budget) and/or `POST /agents/{slug}/versions` (per-run cap) |
+| `create_trigger` | write | `POST /agents/{slug}/triggers` with kind `schedule` only |
+| `save_run_as_eval` | write | `POST /runs/{id}/save-as-eval` |
+| `add_feedback` | write | `POST /runs/{id}/feedback` |
+
+Settings are not exposed: this base has no settings registry.
+
+### Confirmation flow
+
+1. In each model turn, read calls run in order; every write call is validated (schema, then the tool's own
+   check, e.g. the agent and version exist) and an invalid one returns an error result without asking.
+2. The valid write calls of that turn are announced together in ONE `confirm_request` whose `summary` and
+   per-item `summary` say exactly what changes and what it may cost (estimated from the agent's recent average
+   run cost, the number of missing eval runs and the grader price). The loop waits.
+3. `POST /confirm` with `approve: true` runs them in order (`tool_call`, `tool_result` each); `false` returns an
+   error result to the model for each ("the user denied this action, so nothing was changed"), and the model is
+   told not to retry. No answer within 10 minutes counts as denied (`by: "timeout"`). The engine's single
+   execution path refuses a write tool without an approval.
+
+### Limits
+
+Per user message: at most 15 tool calls (further calls get an error result and the turn ends with `final`
+status `limit`), 2 minutes of wall clock excluding time spent waiting on a confirmation and running the
+approved actions, 20 model calls; each
+tool output is capped at 6000 characters for the model, older history outputs at 1500; user text at 8000
+characters. One turn runs per session at a time; it keeps running when the stream disconnects.
+
+### Web
+
+`Assistant` nav button (sparkles icon) and Cmd+J or Ctrl+J toggle a right side panel, resizable from 360 to 520 px
+(a full screen sheet under 768 px); open state, width and current session are kept in `localStorage`. The header
+shows the context (`Repo maintainer · Evaluations`), recent sessions (10) and New session. Messages render as
+user bubbles, assistant Markdown (app links navigate in place), compact tool steps (`● tool(args) ⎿ summary`),
+confirm cards (Approve, Deny, Details) and result links. Each successful tool result's `refresh` keys are
+published as a `forge:refresh` window event; the Evaluations tab, Runs tab and agent header refetch. Enter
+sends, Shift+Enter adds a line, Esc or the Stop button stops. Starters depend on the page.
+
+### Test model
+
+`fake:copilot` (also `fake:grader` given the assistant's system prompt): see TESTING.md.

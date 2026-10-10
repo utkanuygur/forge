@@ -501,7 +501,19 @@ def overview(days: float, include_eval: bool = False, tz_offset_min: int = 0, no
         "top_failure_reasons": reasons[:10],
         "top_failing_agents": [{"slug": x["slug"], "name": x["name"], "flagged_runs": x["flagged_runs"],
                                 "failing_runs": x["failing_runs"]} for x in failing[:5]],
+        "copilot": _copilot_costs(since),
     }
+
+
+def _copilot_costs(since: float) -> dict:
+    """Assistant calls made with no agent in context (grader_calls bucket "copilot"); calls made on an agent's
+    page are in that agent's `cost.assist` (kind "copilot") instead."""
+    rows = _rows("SELECT model, tokens_in, tokens_out FROM grader_calls WHERE agent_id = 'copilot' "
+                 "AND created_at >= ?", (since,))
+    costs = [pricing.cost(g["model"], g["tokens_in"], g["tokens_out"]) for g in rows]
+    return {"calls": len(rows), "tokens_in": sum(g["tokens_in"] for g in rows),
+            "tokens_out": sum(g["tokens_out"] for g in rows), "cost_usd": sum(c or 0.0 for c in costs),
+            "cost_complete": all(c is not None for c in costs)}
 
 
 @api.get("/metrics/overview", dependencies=[Depends(require_local)])

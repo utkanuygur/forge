@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRefresh } from "../../lib/refresh";
 import { Link } from "react-router-dom";
 import { Layers, Loader2, Play, Plus, Sparkles, Trash2 } from "lucide-react";
 import { api, errMsg, type Agent, type EvalCase, type EvalCaseSuggestion, type EvalResults, type Split } from "../../api";
@@ -177,6 +178,14 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
       }
     }, 2000);
   }, [loadResults]);
+
+  // The assistant panel announces changes it made (new cases, an evaluation started).
+  useRefresh([`evals:${agent.slug}`], () => {
+    loadCases();
+    loadResults().then((r) => {
+      if (r?.running) startPolling();
+    });
+  });
 
   useEffect(() => {
     loadCases();

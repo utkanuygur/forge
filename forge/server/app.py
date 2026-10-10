@@ -24,6 +24,7 @@ from forge.models_available import model_warning
 from forge.policy import http_tool_names, parse_policy
 from forge.provenance import lesson_provenance
 from forge.server import assist, authoring, evals, files, observability, obslog, runs, sessions_api, settings_api
+from forge.server import copilot_api
 from forge.server import examples as examples_api
 from forge.server import governance as governance_routes
 from forge.server.auth import authorize, require_local, share_can_see, visitor
@@ -801,6 +802,7 @@ app.include_router(sessions_api.router)  # playground, API and share sessions
 app.include_router(assist.router)  # /v1/assist/{kind} and /v1/agents/{slug}/sample-task
 app.include_router(examples_api.router)  # /v1/examples (one click example agents)
 app.include_router(settings_api.router)  # /v1/settings and /v1/models/available
+app.include_router(copilot_api.router)  # /v1/copilot (the Forge assistant side panel)
 
 # ---------------------------------------------------------------- SPA
 
