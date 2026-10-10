@@ -116,7 +116,7 @@ Builder UI calls runtime endpoints without auth when the request comes from loca
 
 Auth amendments (server implementation):
 - Builder routes require a localhost client or that agent's API key; `GET/POST /agents` are localhost only; `/templates` is open; `FORGE_TRUST_ALL=1` disables checks.
-- A share token may `GET /agents/{slug}` and its versions (for the share page) and start/read its own share runs; it gets 401 on builder, eval and improve routes. With a share token, `GET /agents/{slug}/runs` lists only share-sourced runs.
+- A share token may `GET /agents/{slug}` (only `id, slug, name, description, suggested_prompts`) and its versions (for the share page) and start/read its own share runs; it gets 401 on builder, eval and improve routes. With a share token, `GET /agents/{slug}/runs` lists only share-sourced runs.
 - Share page URL: `/s/{slug}?share=<token>`.
 - Extras: Run includes `eval_case_id`; eval results include `"running": bool`; `PUT secrets` with an empty value deletes it.
 
@@ -397,8 +397,8 @@ this change are not known; an agent without records shows one synthetic promotio
 
 ## Suggested prompts (additive)
 
-Starter tasks a person can run immediately, shown as clickable chips above the run input (Runs tab, and the
-Playground). They belong to the agent, not to a version: they describe what to try, not how the agent behaves,
+Starter tasks a person can run immediately, shown as clickable chips above the run input (Runs tab, the
+Playground, and the share page). They belong to the agent, not to a version: they describe what to try, not how the agent behaves,
 so changing them never creates a version and never affects evals.
 
 ```jsonc
@@ -411,7 +411,8 @@ so changing them never creates a version and never affects evals.
 | `POST /agents` | optional `suggested_prompts` |
 | `PATCH /agents/{slug}` | optional `suggested_prompts`; when present it replaces the list (`[]` clears it), when absent it is kept |
 | `POST /agents/{slug}/versions` | optional `suggested_prompts`, same replace semantics as PATCH; the Version object does not carry it |
-| `GET /agents`, `GET /agents/{slug}`, Agent responses | always include `suggested_prompts` (`[]` when none). Share token callers do not get it. |
+| `GET /agents`, `GET /agents/{slug}`, Agent responses | always include `suggested_prompts` (`[]` when none) |
+| `GET /agents/{slug}` with a share token | returns exactly `id, slug, name, description, suggested_prompts`; the share page shows the chips above its input, since the prompts are written for users of the agent |
 
 Validation: at most 12 items; `title` 1 to 80 characters, `prompt` 1 to 20000 characters; otherwise 422.
 Storage: `agents.suggested_prompts` (JSON text, default `'[]'`), added to existing databases by the guarded

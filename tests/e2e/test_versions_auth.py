@@ -65,7 +65,7 @@ def test_share_token_can_run_and_give_feedback_but_not_read_config_or_evals(api,
     assert fb.status_code == 200 and fb.json()["source"] == "share"
 
     public = api.get(f"/agents/{slug}", headers=share).json()
-    assert set(public) == {"id", "slug", "name", "description"}
+    assert set(public) == {"id", "slug", "name", "description", "suggested_prompts"}
     listed = {x["id"] for x in api.get(f"/agents/{slug}/runs", headers=share).json()}
     assert shared["id"] in listed and api_run["id"] not in listed
 

@@ -66,7 +66,7 @@ Requirement IDs are defined in the technical design document. Each row names the
 | FR2 Code and file tools | 1: tool semantics (`edit_file` missing and duplicate matches); 3: run lifecycle writes and runs `hello.py`; 6: Claude task in sandbox |
 | FR3 Network policy and secrets | 2: network none blocks egress, bridge allows; 3: secrets injected as env |
 | FR4 Immutable versions, prod pointer | 1: new version copies prod fields; 3: v1 unchanged after v2, pin, promote, rollback; 4: version history and Promote |
-| FR5 Share page and API | 1 and 3: API key, share-token scope, 401 cases; 4: share page runs and hides configuration |
+| FR5 Share page and API | 1 and 3: API key, share-token scope (share view is exactly id, slug, name, description, suggested_prompts), 401 cases; 4: share page shows suggested prompt chips, runs and hides configuration |
 | FR6 File inputs and artifacts | 3: JSON seed files, multipart file and tarball uploads, diff and archive contents; 4: diff view |
 | FR7 Complete traces | 3: gapless ordered events ending in `run_finished`; SSE resume with `after` |
 | FR8 Feedback from every surface | 3: API and CLI feedback stored against run and version; 4: thumbs down persists |
@@ -114,6 +114,8 @@ Requirement IDs are defined in the technical design document. Each row names the
 | PRUNE11 Pruning on majority of k | 1: `train_passes` counts majority verdicts, fewer than k runs is incomplete; 3: `fake:flaky` k=3 prune: every version runs 3 per case, ablations train only, all runs linked to the job in cost |
 | PRUNE12 Reuse copies per-run rows | 1: `_reuse_results` copies eval_run_results and passes/runs, leaves cases with own runs alone |
 | PRUNE13 Prune keeps the feedback window | 1: prune jobs do not move `_last_improvement_time`; auto-improve still fires; improve jobs do move it |
+| EX1 Suggested prompts | 1: stored on the agent, returned by every Agent response including the share view, replaced by PATCH and POST versions without creating a new Version field, 422 on bad title or more than 12 (`tests/test_server.py`, `tests/test_auth_proxy.py`); 4: chips render, fill the input and run as is (Vitest `SuggestedPrompts.test.tsx`), share page chips (Playwright `deploy.spec.ts`) |
+| EX2 Example agents | 1: definitions well formed, deterministic builds match committed files, splits, planted ground truth, judge rubrics grade references (`tests/test_examples.py`); 3: `load_examples.py` creates everything idempotently and seeds reach the sandbox (`tests/e2e/test_examples_loader.py`); 5b: `demo/verify_examples.py` 50 expectations |
 
 ## Adding a test
 

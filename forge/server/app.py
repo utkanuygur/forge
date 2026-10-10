@@ -169,7 +169,8 @@ async def get_agent(slug: str, request: Request) -> dict:
     agent = agent_or_404(slug)
     if authorize(request, agent) == "share":
         # Share-link visitors see only what the share page displays, never configuration.
-        return {k: agent[k] for k in ("id", "slug", "name", "description")}
+        # Suggested prompts are written for users of the agent, so they are shown there too.
+        return {k: agent[k] for k in ("id", "slug", "name", "description", "suggested_prompts")}
     return agent_view(agent, versions=True)
 
 
