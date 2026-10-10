@@ -25,8 +25,9 @@ PREVIEW_LINES = 3
 def color_enabled(stream: TextIO) -> bool:
     if "NO_COLOR" in os.environ:  # https://no-color.org: any value disables color
         return False
-    if os.environ.get("FORCE_COLOR"):
-        return True
+    force = os.environ.get("FORCE_COLOR")
+    if force:  # like Node and chalk: FORCE_COLOR=0 or false turns color off, any other value forces it on
+        return force.lower() not in ("0", "false")
     return is_tty(stream) and os.environ.get("TERM") != "dumb"
 
 

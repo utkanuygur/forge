@@ -155,6 +155,11 @@ def test_no_color_and_non_tty(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
     assert color_enabled(Tty()) is True
     assert color_enabled(io.StringIO()) is False
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    assert color_enabled(io.StringIO()) is True
+    monkeypatch.setenv("FORCE_COLOR", "0")  # what scripts/test_fast.py exports to its layers
+    assert color_enabled(io.StringIO()) is False and color_enabled(Tty()) is False
+    monkeypatch.delenv("FORCE_COLOR")
     monkeypatch.setenv("NO_COLOR", "")
     assert color_enabled(Tty()) is False
     t = Transcript(Tty())
