@@ -99,3 +99,34 @@ def test_prune_candidate_with_regression_is_rejected(api, make_agent):
     assert im["candidate"]["train"] == {"passed": 0, "total": 2} and len(im["regressions"]) == 3
     assert api.get(f"/agents/{slug}/versions/{im['candidate_version']}").json()["lessons"] == []
     assert api.get(f"/agents/{slug}").json()["prod_version"] == 1
+
+
+def test_prune_with_k3_uses_majority_verdicts_and_meters_the_job(api, make_agent):
+    """PRUNE11, OBS2: with k=3 every version in a prune job (base, each ablation, candidate) runs each case 3 times
+    on the repeated-eval path. `fake:flaky` passes 2 of 3 runs per version (each version's system prompt differs,
+    so each has its own counter), so every train verdict is a 2/3 majority pass; ablations run train cases only;
+    every eval run is linked to the prune job in the cost breakdown."""
+    from tests.e2e.test_repeats import FLAKY, eval_runs
+
+    agent = make_agent("prunek3", model="fake:flaky", system_prompt=f"Flaky pruner {uuid.uuid4().hex[:6]}, k=3.",
+                       lessons=["Lesson one: be brief.", "Lesson two: be polite."])
+    slug = agent["slug"]
+    assert agent["eval_repeats"] == 3
+    train = add_case(api, slug, "prunek3-a", FLAKY)
+    add_case(api, slug, "prunek3-h", FLAKY, split="holdout")
+    im = wait_improvement(api, api.post(f"/agents/{slug}/prune", json={}).json()["id"])
+    assert im["status"] == "eligible", im
+    verdicts = {a["lesson"]: a for a in im["ablations"]}
+    assert {a["verdict"] for a in verdicts.values()} == {"unhelpful"}
+    assert all(a["base_train"] == a["train"] == {"passed": 1, "total": 1} for a in verdicts.values())
+    for a in verdicts.values():
+        res = api.get(f"/agents/{slug}/evals/results", params={"version": a["version"]}).json()
+        assert [(r["case_id"], r["passed"], r["passes"], r["runs"]) for r in res["results"]] == \
+            [(train["id"], True, 2, 3)]  # train only, majority of 3
+    assert all((c["base"]["passes"], c["base"]["runs"]) == (2, 3) for c in im["cases"])
+    assert all((c["candidate"]["passes"], c["candidate"]["runs"]) == (2, 3) for c in im["cases"])
+    runs = eval_runs(api, slug)
+    assert len(runs) == 6 + 2 * 3 + 6  # base (2 cases), two ablations (train only), candidate (2 cases)
+    costs = api.get(f"/agents/{slug}/metrics", params={"days": 1}).json()["cost"]["improvements"]
+    [row] = [c for c in costs if c["id"] == im["id"]]
+    assert row["kind"] == "prune" and row["eval_runs"] == len(runs)

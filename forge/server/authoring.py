@@ -6,6 +6,7 @@ Pure logic lives in forge.drafting and forge.pruning; this module wires it to th
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import time
 from typing import Any
@@ -77,17 +78,32 @@ def _identical_versions(agent_id: str, config: dict, exclude: str | None = None)
 
 
 def _reuse_results(agent_id: str, version: dict, cases: list[dict]) -> int:
-    """Copies cached eval results from versions with an identical configuration. Returns how many were copied."""
+    """Copies cached eval results from versions with an identical configuration: the per-run verdicts
+    (eval_run_results) and the majority summary with its passes/runs. Only cases with no runs of their own are
+    copied, so run indexes never clash; run_eval then tops them up to the current k. Returns cases copied."""
+    from forge import improve
+
     have = evals.results_map(version["id"])
+    own = {r["case_id"] for r in db.list_eval_run_results(version["id"])}
     copied = 0
     for other in _identical_versions(agent_id, _config(version), exclude=version["id"]):
         theirs = evals.results_map(other["id"])
         for c in cases:
-            if c["id"] not in have and c["id"] in theirs:
-                r = theirs[c["id"]]
-                db.upsert_eval_result(version["id"], c["id"], r["run_id"], bool(r["passed"]), r["reason"])
-                have[c["id"]] = r
-                copied += 1
+            if c["id"] in have or c["id"] in own:
+                continue
+            runs = db.list_eval_run_results(other["id"], c["id"])
+            if not runs:
+                continue
+            for r in runs:
+                db.add_eval_run_result(version["id"], c["id"], r["idx"], r["run_id"], bool(r["passed"]), r["reason"])
+            own.add(c["id"])
+            if c["id"] in theirs:  # their summary, recomputed over the copied runs
+                n = theirs[c["id"]]["runs"]
+                s = improve.summarize_runs(runs[:n])
+                db.upsert_eval_result(version["id"], c["id"], s["run_id"], s["passed"], s["reason"], s["passes"],
+                                      s["runs"])
+                have[c["id"]] = s
+            copied += 1
     return copied
 
 
@@ -99,17 +115,6 @@ def _ablation_version(agent: dict, base: dict, lessons: list[str]) -> dict:
         return same[0]
     return db.create_version(agent["id"], **config, parent_id=base["id"], created_by="optimizer",
                              rationale="ablation")
-
-
-async def _eval_cases(agent: dict, version: dict, cases: list[dict], sem: asyncio.Semaphore, judge: list) -> None:
-    """Evaluates `version` on `cases` that lack a cached result.
-
-    INTEGRATION: this calls evals._eval_case once per case. When evals gain k repeats with majority verdicts,
-    route this through that path (or a public `run_eval(..., cases=...)`) so ablations use the same repeats.
-    """
-    cached = evals.results_map(version["id"])
-    todo = [c for c in cases if c["id"] not in cached]
-    await asyncio.gather(*(evals._eval_case(agent, version, c, sem, judge) for c in todo))
 
 
 def _run_ids(results: dict[str, dict], cases: list[dict]) -> list[str]:
@@ -133,7 +138,9 @@ async def prune(slug: str, request: Request, body: PruneIn = Body(default_factor
     if not any(c["split"] == "train" for c in db.list_eval_cases(agent["id"])):
         raise HTTPException(400, "pruning needs at least one train evaluation case")
     im = db.create_improvement(agent["id"], base["id"], kind="prune")
-    t = asyncio.create_task(_prune(agent, base, im["id"], body.max_ablations))
+    ctx = contextvars.copy_context()  # eval runs and judge calls are attributed to this prune job (observability)
+    ctx.run(evals.current_improvement.set, im["id"])
+    t = asyncio.create_task(_prune(agent, base, im["id"], body.max_ablations), context=ctx)
     evals._improve_tasks[im["id"]] = t  # so evals.wait_improvement works for prune jobs too
     t.add_done_callback(lambda _t: evals._improve_tasks.pop(im["id"], None))
     return improvement_view(im)
@@ -148,20 +155,21 @@ async def _prune(agent: dict, base: dict, improvement_id: str, max_ablations: in
         cases = db.list_eval_cases(agent["id"])
         train = [c for c in cases if c["split"] == "train"]
         base_res = evals.results_map(base["id"])
-        b_pass, total, complete = pruning.train_passes(base_res, train)
+        k = evals.eval_repeats(db.get_agent(agent["id"]) or agent)
+        b_pass, total, complete = pruning.train_passes(base_res, train, k)
         if not complete:
             raise RuntimeError("the base version could not be evaluated on every train case")
 
         lessons = list(base["lessons"])
         targets = pruning.select_for_ablation(lessons, base.get("lesson_meta"), max_ablations)
-        sem, judge = asyncio.Semaphore(evals.EVAL_CONCURRENCY), []
+        sem = asyncio.Semaphore(evals.EVAL_CONCURRENCY)  # one sandbox bound shared by all ablations
 
         async def ablate(lesson: str) -> dict:
             v = _ablation_version(agent, base, [x for x in lessons if x != lesson])
             _reuse_results(agent["id"], v, train)
-            await _eval_cases(agent, v, train, sem, judge)
+            await evals.run_eval(agent, v, cases=train, sem=sem)  # majority of k, cached per version
             res = evals.results_map(v["id"])
-            a_pass, _, ok = pruning.train_passes(res, train)
+            a_pass, _, ok = pruning.train_passes(res, train, k)
             verdict = pruning.classify(b_pass, a_pass, ok)
             return {"lesson": lesson, "version": v["n"], "verdict": verdict,
                     "base_train": {"passed": b_pass, "total": total},

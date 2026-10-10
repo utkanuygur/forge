@@ -207,14 +207,20 @@ background job stored as an improvement with `kind: "prune"`:
    `created_by: "optimizer"` and `rationale: "ablation"`. A lesson is **unhelpful** when removing it does not
    reduce train passes (ties count), **helpful** when it does, **unknown** (kept) when the ablation could not be
    fully evaluated.
+   Every evaluation in a prune job (base, ablations, candidate) uses the repeated-eval path: k runs per case,
+   majority verdict, per-version caching, at most 4 concurrent sandbox runs (shared by all ablations of a job).
+   Ablations evaluate train cases only; an ablation whose summary covers fewer than k runs is `unknown`.
 3. If no lesson is unhelpful the job ends `rejected` with an explanatory `error`. Otherwise ONE candidate removes
    every unhelpful lesson and is evaluated on train and holdout. Cached results of any version with an identical
-   configuration are copied first, so an ablation identical to the candidate is not re-run.
+   configuration are copied first (per-run verdicts and the passes/runs summary, for cases the version has no
+   runs of its own), so an ablation identical to the candidate is not re-run; missing runs up to k are then added.
 4. **Pruning rule** (`forge.pruning.is_eligible_prune`): eligible iff zero regressions and candidate passes >= base
    passes. A tie is enough because the goal is a smaller prompt at equal quality. Prune candidates are never
    auto-promoted, even for `auto_promote` agents; promote with `POST /agents/{slug}/promote`.
 
-Prune jobs do not reset the negative feedback window used by Improve and auto-improve.
+Prune jobs do not reset the negative feedback window used by Improve and auto-improve. Their eval runs and judge calls
+are attributed to the job like an improvement cycle's (`improvement_runs`, `grader_calls`), and the agent metrics
+`cost.improvements` rows carry `kind`. Draft calls are not metered: no agent exists yet.
 
 Improvement additions (all improvements): `"kind": "improve" | "prune"`, `"ablations": [...]` (prune only):
 

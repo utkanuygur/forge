@@ -37,12 +37,14 @@ def select_for_ablation(lessons: list[str], meta: dict | None = None,
     return ordered[: max(0, max_ablations)]
 
 
-def train_passes(results: dict[str, dict], train_cases: list[dict]) -> tuple[int, int, bool]:
-    """(passed, total, complete) over the train cases; `complete` is False if any case has no result."""
+def train_passes(results: dict[str, dict], train_cases: list[dict], k: int | None = None) -> tuple[int, int, bool]:
+    """(passed, total, complete) over the train cases. `passed` counts majority-of-k verdicts (`results[case]
+    ["passed"]` is the per-case summary, see forge.improve.summarize_runs). `complete` is False if any case has no
+    result, or (given k) a summary that covers fewer than k runs."""
     passed, complete = 0, True
     for c in train_cases:
         r = results.get(c["id"])
-        if r is None:
+        if r is None or (k is not None and (r.get("runs") or 1) < k):
             complete = False
         elif r.get("passed"):
             passed += 1

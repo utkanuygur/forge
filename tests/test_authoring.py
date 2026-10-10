@@ -258,3 +258,94 @@ def test_prune_requires_two_lessons_and_a_train_case(client):
     assert client.get("/v1/agents/q/improvements").json() == []
     v1 = client.get("/v1/agents/q/versions/1").json()
     assert v1["lesson_meta"]["one"]["origin"] == "human" and v1["lesson_meta"]["one"]["created_in_version"] == 1
+
+
+# ---------------------------------------------------------------- integration with repeated evals (temp DB)
+
+
+@pytest.fixture
+def tmpdb(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path / "data"))
+    yield
+
+
+def _agent_v(slug: str, lessons: list[str] | None = None) -> tuple[dict, dict]:
+    from forge import db
+
+    a, _ = db.create_agent(slug, slug)
+    v = db.create_version(a["id"], system_prompt="p", model="fake:echo", lessons=lessons or [])
+    return db.set_prod_version(a["id"], v["id"], "create"), v
+
+
+def _seed_runs(a: dict, v: dict, case: dict, verdicts: tuple[bool, ...]) -> list[str]:
+    from forge import db, improve
+
+    ids = []
+    for i, ok in enumerate(verdicts):
+        r = db.create_run(a["id"], v["id"], "eval", case["input"], eval_case_id=case["id"])
+        db.add_eval_run_result(v["id"], case["id"], i, r["id"], ok, "ok" if ok else "no")
+        ids.append(r["id"])
+    s = improve.summarize_runs(db.list_eval_run_results(v["id"], case["id"]))
+    db.upsert_eval_result(v["id"], case["id"], s["run_id"], s["passed"], s["reason"], s["passes"], s["runs"])
+    return ids
+
+
+def test_train_passes_uses_majority_of_k_verdicts(tmpdb):
+    """PRUNE11: with k=3 a case whose first run failed but 2/3 passed counts as passed, 1/3 counts as failed, and a
+    summary covering fewer than k runs is incomplete (the ablation is then `unknown`, never `unhelpful`)."""
+    from forge import db
+    from forge.server import evals
+
+    a, v = _agent_v("maj")
+    c1, c2 = (db.create_eval_case(a["id"], n, "task " + n, "shell", "true", "train") for n in ("c1", "c2"))
+    _seed_runs(a, v, c1, (False, True, True))
+    _seed_runs(a, v, c2, (True, False, False))
+    res = evals.results_map(v["id"])
+    assert pruning.train_passes(res, [c1, c2], 3) == (1, 2, True)
+    assert pruning.train_passes(res, [c1, c2], 5)[2] is False
+    assert pruning.classify(1, 1, pruning.train_passes(res, [c1, c2], 5)[2]) == "unknown"
+
+
+def test_reuse_results_copies_per_run_rows_and_counts(tmpdb):
+    """PRUNE12: copying cached results between identical versions copies every eval_run_results row and the
+    majority summary with passes/runs; cases the target already has runs for are left alone."""
+    from forge import db
+    from forge.server import authoring, evals
+
+    a, base = _agent_v("reuse", ["L1", "L2"])
+    src = db.create_version(a["id"], **{**authoring._config(base), "lessons": ["L1"]})
+    dst = db.create_version(a["id"], **{**authoring._config(base), "lessons": ["L1"]})
+    c1, c2 = (db.create_eval_case(a["id"], n, "task " + n, "shell", "true", "train") for n in ("c1", "c2"))
+    ids = _seed_runs(a, src, c1, (False, True, True))
+    _seed_runs(a, src, c2, (True, True, True))
+    _seed_runs(a, dst, c2, (False,))  # dst's own partial run for c2 must not be clobbered
+    assert authoring._reuse_results(a["id"], dst, [c1, c2]) == 1
+    rows = db.list_eval_run_results(dst["id"], c1["id"])
+    assert [(r["idx"], r["run_id"], bool(r["passed"])) for r in rows] == list(zip(range(3), ids, (False, True, True)))
+    r1 = evals.results_map(dst["id"])[c1["id"]]
+    assert (bool(r1["passed"]), r1["passes"], r1["runs"], r1["run_id"]) == (True, 2, 3, ids[1])
+    assert len(db.list_eval_run_results(dst["id"], c2["id"])) == 1
+    assert evals._pending(a, dst, 3, [c1, c2]) == [c2]  # c1 needs no re-run at k=3
+
+
+def test_prune_jobs_do_not_reset_the_negative_feedback_window(tmpdb, monkeypatch):
+    """PRUNE13: a prune job created after negative feedback neither moves the window used by Improve nor stops
+    auto-improve from firing once the threshold is reached; an improve job does move it."""
+    from forge import db
+    from forge.server import evals
+
+    a, v = _agent_v("window")
+    a = db.update_agent(a["id"], auto_promote=True)
+    for _ in range(evals.AUTO_IMPROVE_THRESHOLD):
+        r = db.create_run(a["id"], v["id"], "api", "task")
+        db.create_feedback(r["id"], -1, "bad")
+    pr = db.create_improvement(a["id"], v["id"], kind="prune")
+    db.update_improvement(pr["id"], status="rejected")
+    assert evals._last_improvement_time(a["id"]) == 0.0
+    started: list[dict] = []
+    monkeypatch.setattr(evals, "start_improve", lambda agent: started.append(agent) or {"id": "im_x"})
+    assert evals.maybe_auto_improve(db.get_agent(a["id"])) == {"id": "im_x"} and len(started) == 1
+    im = db.create_improvement(a["id"], v["id"])
+    db.update_improvement(im["id"], status="rejected")
+    assert evals._last_improvement_time(a["id"]) == im["created_at"]
+    assert evals.maybe_auto_improve(db.get_agent(a["id"])) is None

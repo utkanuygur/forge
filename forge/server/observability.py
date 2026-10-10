@@ -291,7 +291,7 @@ def _improvement_costs(agent_id: str, since: float, versions: dict[str, dict]) -
                    "JOIN runs r ON r.id = ir.run_id WHERE r.agent_id = ?", (agent_id,)):
         runs[r["improvement_id"]].append(r)
     out = []
-    for im in _rows("SELECT id, status, base_version_id, candidate_version_id, created_at, ended_at FROM improvements "
+    for im in _rows("SELECT id, kind, status, base_version_id, candidate_version_id, created_at, ended_at FROM improvements "
                     "WHERE agent_id = ? AND created_at >= ? ORDER BY created_at DESC", (agent_id, since)):
         eval_cost, unknown, tin, tout = 0.0, False, 0, 0
         for r in runs.get(im["id"], []):
@@ -311,7 +311,7 @@ def _improvement_costs(agent_id: str, since: float, versions: dict[str, dict]) -
             g_in, g_out = g_in + g["tokens_in"], g_out + g["tokens_out"]
         n = lambda vid: (versions.get(vid) or {}).get("n") if vid else None  # noqa: E731
         out.append({
-            "id": im["id"], "status": im["status"], "base_version": n(im["base_version_id"]),
+            "id": im["id"], "kind": im["kind"], "status": im["status"], "base_version": n(im["base_version_id"]),
             "candidate_version": n(im["candidate_version_id"]), "created_at": im["created_at"],
             "ended_at": im["ended_at"], "eval_runs": len(runs.get(im["id"], [])), "eval_cost_usd": eval_cost,
             "judge_cost_usd": judge_cost, "optimizer_cost_usd": opt_cost,

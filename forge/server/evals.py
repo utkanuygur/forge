@@ -150,24 +150,43 @@ async def _eval_case(agent: dict, version: dict, case: dict, k: int, sem: asynci
     _summarize_case(version, case, k)
 
 
-async def run_eval(agent: dict, version: dict) -> dict:
-    """Evaluates `version` on every case lacking a cached result. Concurrent calls for one version share work."""
-    task = _eval_tasks.get(version["id"])
-    if task is None:
-        task = asyncio.create_task(_run_eval(agent, version))
-        _eval_tasks[version["id"]] = task
-        task.add_done_callback(lambda _t: _eval_tasks.pop(version["id"], None))
-    await asyncio.shield(task)
+def _pending(agent: dict, version: dict, k: int, cases: list[dict] | None = None) -> list[dict]:
+    """Cases (all of the agent's, or `cases`) whose cached summary does not cover k runs."""
+    cached = results_map(version["id"])
+    pool = db.list_eval_cases(agent["id"]) if cases is None else cases
+    return [c for c in pool if cached.get(c["id"], {}).get("runs") != k]
+
+
+async def run_eval(agent: dict, version: dict, cases: list[dict] | None = None,
+                   sem: asyncio.Semaphore | None = None) -> dict:
+    """Evaluates `version` on every case (or only `cases`) lacking a cached majority-of-k result.
+
+    Concurrent calls for one version share work: a caller that finds an eval already running waits for it and then
+    runs whatever of its own cases is still missing. `sem` lets several versions share one sandbox bound (pruning
+    ablations); by default each eval gets its own bound of EVAL_CONCURRENCY runs.
+    """
+    while True:
+        task = _eval_tasks.get(version["id"])
+        if task is None:
+            task = asyncio.create_task(_run_eval(agent, version, cases, sem))
+            _eval_tasks[version["id"]] = task
+            task.add_done_callback(lambda _t: _eval_tasks.pop(version["id"], None))
+            await asyncio.shield(task)
+            break
+        await asyncio.shield(task)
+        if not _pending(agent, version, eval_repeats(db.get_agent(agent["id"]) or agent), cases):
+            break
     return eval_summary(agent, version)
 
 
-async def _run_eval(agent: dict, version: dict) -> None:
+async def _run_eval(agent: dict, version: dict, cases: list[dict] | None = None,
+                    sem: asyncio.Semaphore | None = None) -> None:
     """Each case runs k times; its verdict is the majority (forge.improve.majority). A case whose summary already
     covers k runs is cached and not re-run; a k change reuses stored runs and only adds missing ones."""
     k = eval_repeats(db.get_agent(agent["id"]) or agent)
-    cached = results_map(version["id"])
-    todo = [c for c in db.list_eval_cases(agent["id"]) if cached.get(c["id"], {}).get("runs") != k]
-    sem, judge = asyncio.Semaphore(EVAL_CONCURRENCY), []  # bounds sandbox runs across all cases and repeats
+    todo = _pending(agent, version, k, cases)
+    sem = sem or asyncio.Semaphore(EVAL_CONCURRENCY)  # bounds sandbox runs across all cases and repeats
+    judge: list = []
     await asyncio.gather(*(_eval_case(agent, version, c, k, sem, judge) for c in todo))
 
 

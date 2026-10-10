@@ -110,6 +110,9 @@ Requirement IDs are defined in the technical design document. Each row names the
 | PRUNE8 Pruning verdicts in provenance | 3: base and candidate `lesson_meta.pruning` |
 | PRUNE9 Prune regression rejected | 3: removing two individually unhelpful lessons regresses every case and is rejected |
 | PRUNE10 Prune UI | 4: Playwright Prune lessons, removal evidence, pruning rule, promote, Configure origin and "kept after pruning" |
+| PRUNE11 Pruning on majority of k | 1: `train_passes` counts majority verdicts, fewer than k runs is incomplete; 3: `fake:flaky` k=3 prune: every version runs 3 per case, ablations train only, all runs linked to the job in cost |
+| PRUNE12 Reuse copies per-run rows | 1: `_reuse_results` copies eval_run_results and passes/runs, leaves cases with own runs alone |
+| PRUNE13 Prune keeps the feedback window | 1: prune jobs do not move `_last_improvement_time`; auto-improve still fires; improve jobs do move it |
 
 ## Adding a test
 
