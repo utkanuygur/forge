@@ -30,7 +30,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name="bash",
         description=(
             "Run a shell command with bash in the workspace root and return its exit code, stdout and stderr. "
-            "Use it to inspect files (ls, rg, cat), run tests and builds, and use git. Each call is a fresh shell: "
+            "Use it to run tests and builds, search (ls, rg) and use git; view and change files with read_file, "
+            "write_file and edit_file instead. Each call is a fresh shell: "
             "`cd` does not persist between calls. Commands are killed after `timeout` seconds. "
             "Output longer than 10,000 characters is truncated in the middle."
         ),
@@ -108,9 +109,12 @@ def build_system_prompt(version: AgentVersion) -> str:
         "## Environment\n"
         "- Your working directory is the workspace root (/workspace). All file paths are relative to it.\n"
         f"- Network access is {net}.\n"
-        "- Before each group of tool calls, say in one short sentence what you are about to do.\n"
-        "- Use read_file, write_file and edit_file to view and change files; use bash for running commands "
-        "(tests, builds, git, search), not for editing files.\n"
+        "- People follow your work live as a transcript, so keep them oriented:\n"
+        "  - Before each group of tool calls, say in one short sentence what you are about to do.\n"
+        "  - Use read_file, write_file and edit_file to view and change files; the transcript shows their "
+        "results as file contents and reviewable diffs. Use bash for running commands (tests, builds, git, "
+        "search), not for editing files: no sed -i, heredocs or scripts that rewrite files, since those changes "
+        "are invisible to the reader.\n"
         "- When you are done, reply without calling any tools and summarize what you did."
     )
     return "\n\n".join(p for p in parts if p)
