@@ -25,6 +25,7 @@ from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
                                 version_view)
+from forge.triggers import api as triggers_api, scheduler as triggers_scheduler
 from forge.types import Event, HttpTool
 
 load_dotenv()
@@ -40,7 +41,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     runs.reset_manager()
     db.fail_interrupted_runs()
     db.fail_interrupted_improvements()
+    triggers_scheduler.start()
     yield
+    await triggers_scheduler.stop()
 
 
 app = FastAPI(title="Forge", lifespan=lifespan)
@@ -525,6 +528,7 @@ async def list_improvements(slug: str, request: Request) -> list[dict]:
 
 
 app.include_router(api)
+app.include_router(triggers_api.router)
 
 # ---------------------------------------------------------------- SPA
 

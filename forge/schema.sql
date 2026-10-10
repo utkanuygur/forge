@@ -111,3 +111,34 @@ CREATE TABLE IF NOT EXISTS improvements (
   created_at            REAL NOT NULL,
   ended_at              REAL
 );
+
+-- Triggers (additive): schedules, GitHub webhooks and Slack commands that start runs. See CONTRACT.md "Triggers".
+CREATE TABLE IF NOT EXISTS triggers (
+  id             TEXT PRIMARY KEY,
+  agent_id       TEXT NOT NULL REFERENCES agents(id),
+  kind           TEXT NOT NULL,               -- schedule | github | slack
+  config         TEXT NOT NULL DEFAULT '{}',  -- JSON, per kind
+  secret         TEXT,                        -- webhook signing secret (never returned after creation)
+  tokens         TEXT NOT NULL DEFAULT '{}',  -- JSON {github_token | bot_token}, never returned
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  created_at     REAL NOT NULL,
+  last_fired_at  REAL,
+  last_run_id    TEXT,
+  last_error     TEXT,
+  last_slot_at   REAL                         -- schedules: last slot handled (fired, skipped or missed)
+);
+CREATE INDEX IF NOT EXISTS triggers_agent ON triggers(agent_id, created_at);
+
+CREATE TABLE IF NOT EXISTS trigger_fires (
+  id              TEXT PRIMARY KEY,
+  trigger_id      TEXT NOT NULL REFERENCES triggers(id),
+  run_id          TEXT,
+  status          TEXT NOT NULL,   -- started | skipped | missed | rate_limited | error
+  detail          TEXT NOT NULL DEFAULT '',
+  test            INTEGER NOT NULL DEFAULT 0,
+  context         TEXT NOT NULL DEFAULT '{}',  -- JSON: where to deliver the output (never contains tokens)
+  delivery        TEXT,            -- null | delivered | failed | skipped
+  delivery_error  TEXT,
+  created_at      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trigger_fires_trigger ON trigger_fires(trigger_id, created_at DESC);
