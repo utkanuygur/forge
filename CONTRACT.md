@@ -94,6 +94,10 @@ Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<mes
 | PUT | `/agents/{slug}/secrets` | `{NAME: value, ...}` | `{"names": [..]}` |
 | POST | `/agents/{slug}/rotate-key` | | `{"api_key": ".."}` |
 | GET | `/templates` | | `[{key, name, description, system_prompt, tools, network}]` |
+| POST | `/agent-drafts` | `{description, examples?: [str], constraints?: str}` | `AgentDraft` (creates nothing; see Authoring) |
+
+Additive: `POST /agents` also accepts `eval_cases?: [{name, input, seed_files?, checker_type, checker, split}]`, created
+with the agent (used to create a reviewed draft and its selected starter cases in one call).
 
 ### Runtime (API key or share token)
 
@@ -129,6 +133,7 @@ Auth amendments (server implementation):
 | POST | `/agents/{slug}/improve` | `{}` | `Improvement` (status `running`; poll) |
 | GET | `/improvements/{id}` | | `Improvement` |
 | GET | `/agents/{slug}/improvements` | | `[Improvement]` newest first |
+| POST | `/agents/{slug}/prune` | `{max_ablations?: 1..30}` (default 8) | `Improvement` with `kind: "prune"` (status `running`; poll) |
 
 ### Local runner
 
@@ -161,6 +166,83 @@ which gets an error result because its arguments may be cut off. `AnthropicProvi
 (ephemeral) on the system block, which caches tools + system, and in tool-using calls on the last message block,
 which caches the growing conversation (2 of 4 breakpoints). `run_finished` payloads and Run objects carry
 `cache_read_tokens` and `cache_write_tokens`; `tokens_in` stays the uncached input count.
+
+## Authoring (additive)
+
+### Agent drafts
+
+`POST /v1/agent-drafts` (localhost builder only) calls `FORGE_GRADER_MODEL` once with the drafting prompt
+(`forge/drafting.py`, `DRAFT_SYSTEM`). Claude models get structured output (`output_config.format`, JSON schema
+`DRAFT_SCHEMA`); other providers get the same prompt and the reply is parsed leniently. The draft is validated and,
+if invalid, the call is retried once as a fresh request listing the problems. Still invalid: `502`. Empty or
+oversized description: `400`. Nothing is stored; the builder edits the draft and creates it with `POST /agents`.
+
+```jsonc
+// AgentDraft
+{"name": "Issue triager", "slug": "issue-triager",   // slug is made free: "-2", "-3"... if taken
+ "description": "..", "system_prompt": "..",
+ "tools": ["bash", "read_file", "write_file"],        // subset of the built-in tools
+ "network": true, "network_reason": "Needs the GitHub REST API.",
+ "suggested_secrets": [{"name": "GITHUB_TOKEN", "why": ".."}],   // names only, never values
+ "seed_files_hint": "..",
+ "eval_cases": [{"name": "crash-report", "input": "..", "checker_type": "judge", "checker": "PASS only if ..",
+                 "split": "train"}]}
+```
+
+Validation: slug `^[a-z0-9][a-z0-9-]{0,62}$`; tools non-empty and known; system prompt 300 to 8000 chars;
+`network_reason` present; secret names `UPPER_SNAKE_CASE` with a reason; 3 to 6 cases with unique slug names,
+non-empty inputs, judge rubrics 60 to 1200 chars, shell checkers 1 to 500 chars; at least one train and one
+holdout case and no more than half holdout (target: about two thirds train).
+
+### Lesson pruning
+
+`POST /v1/agents/{slug}/prune` (builder or the agent's API key) returns `400` when production has fewer than 2
+lessons or there is no train case, and `409` while any improvement or prune is running. Otherwise it starts a
+background job stored as an improvement with `kind: "prune"`:
+
+1. Evaluate production (all cases, cached).
+2. Leave-one-out ablation on TRAIN cases for at most `max_ablations` lessons, oldest first (by
+   `lesson_meta.created_in_version`, then list order). Each ablation is a version identical to production minus
+   one lesson: an existing identical version is reused, otherwise a new unpromoted one is created with
+   `created_by: "optimizer"` and `rationale: "ablation"`. A lesson is **unhelpful** when removing it does not
+   reduce train passes (ties count), **helpful** when it does, **unknown** (kept) when the ablation could not be
+   fully evaluated.
+3. If no lesson is unhelpful the job ends `rejected` with an explanatory `error`. Otherwise ONE candidate removes
+   every unhelpful lesson and is evaluated on train and holdout. Cached results of any version with an identical
+   configuration are copied first, so an ablation identical to the candidate is not re-run.
+4. **Pruning rule** (`forge.pruning.is_eligible_prune`): eligible iff zero regressions and candidate passes >= base
+   passes. A tie is enough because the goal is a smaller prompt at equal quality. Prune candidates are never
+   auto-promoted, even for `auto_promote` agents; promote with `POST /agents/{slug}/promote`.
+
+Prune jobs do not reset the negative feedback window used by Improve and auto-improve.
+
+Improvement additions (all improvements): `"kind": "improve" | "prune"`, `"ablations": [...]` (prune only):
+
+```jsonc
+{"lesson": "..", "version": 3, "verdict": "unhelpful",   // unhelpful | helpful | unknown | not_ablated
+ "base_train": {"passed": 2, "total": 2}, "train": {"passed": 2, "total": 2},
+ "evidence": "removing this lesson kept train at 2/2", "run_ids": ["r_.."]}
+```
+
+For prune jobs `lessons_diff` holds one `{"op": "remove", "text", "evidence_run_ids": <ablation train runs>,
+"rationale": <evidence>}` per removed lesson.
+
+### Lesson provenance
+
+Version gains `"lesson_meta": {<lesson text>: Provenance}` (JSON column `agent_versions.lesson_meta`, default `{}`).
+Lessons carried over unchanged keep their entry; lessons new in a version get one when the optimizer adds or edits
+them (`origin: "optimizer"`) or a human supplies them via `POST /agents` or `POST /agents/{slug}/versions`
+(`origin: "human"`). Pruning records its verdict on the base version and on the candidate's kept lessons.
+
+```jsonc
+{"created_in_version": 2, "evidence_run_ids": ["r_.."], "origin": "optimizer", "op": "add", "created_at": 0.0,
+ "edited_from": "..",                                  // edits only
+ "pruning": {"improvement_id": "im_..", "verdict": "helpful", "evidence": "..", "at": 0.0, "version": 4}}
+```
+
+`lesson_meta` is the only field written after a version is created (its `n` is needed); configuration fields stay
+immutable. Schema additions: `improvements.kind TEXT NOT NULL DEFAULT 'improve'`, `agent_versions.lesson_meta`;
+existing databases are migrated on first connect (`forge/db.py`, `ADDED_COLUMNS`).
 
 ## Promotion rule
 

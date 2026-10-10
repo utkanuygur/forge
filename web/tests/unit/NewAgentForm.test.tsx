@@ -31,11 +31,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function setup() {
+async function setup({ blank = true } = {}) {
   const onCreated = vi.fn();
   const onCancel = vi.fn();
   render(<NewAgentForm onCreated={onCreated} onCancel={onCancel} />);
-  return { onCreated, onCancel, user: userEvent.setup() };
+  const user = userEvent.setup();
+  if (blank) await user.click(screen.getByRole("button", { name: "Start blank" }));
+  return { onCreated, onCancel, user };
 }
 
 const createBody = () => {
@@ -45,13 +47,13 @@ const createBody = () => {
 
 describe("NewAgentForm slug generation", () => {
   it("derives the slug from the name while the slug is untouched", async () => {
-    const { user } = setup();
+    const { user } = await setup();
     await user.type(screen.getByLabelText("Name"), "My Cool Agent!");
     expect(screen.getByLabelText("Slug")).toHaveValue("my-cool-agent");
   });
 
   it("stops deriving once the slug is edited by hand", async () => {
-    const { user } = setup();
+    const { user } = await setup();
     await user.type(screen.getByLabelText("Name"), "First");
     const slug = screen.getByLabelText("Slug");
     await user.clear(slug);
@@ -61,7 +63,7 @@ describe("NewAgentForm slug generation", () => {
   });
 
   it("template prefill sets name, slug, description, instructions, tools and network", async () => {
-    const { user } = setup();
+    const { user } = await setup();
     await user.click(await screen.findByRole("button", { name: "Repo Maintainer" }));
     expect(screen.getByLabelText("Name")).toHaveValue("Repo Maintainer");
     expect(screen.getByLabelText("Slug")).toHaveValue("repo-maintainer");
@@ -73,7 +75,7 @@ describe("NewAgentForm slug generation", () => {
   });
 
   it("template prefill keeps a hand edited slug", async () => {
-    const { user } = setup();
+    const { user } = await setup();
     await user.type(screen.getByLabelText("Slug"), "mine");
     await user.click(await screen.findByRole("button", { name: "Repo Maintainer" }));
     expect(screen.getByLabelText("Slug")).toHaveValue("mine");
@@ -82,7 +84,7 @@ describe("NewAgentForm slug generation", () => {
 
 describe("NewAgentForm submit", () => {
   it("posts the form and omits an empty model", async () => {
-    const { user, onCreated } = setup();
+    const { user, onCreated } = await setup();
     await user.type(screen.getByLabelText("Name"), "Hello Bot");
     await user.type(screen.getByLabelText("Instructions"), "Say hi");
     await user.click(screen.getByRole("button", { name: "Create agent" }));
@@ -101,7 +103,7 @@ describe("NewAgentForm submit", () => {
   });
 
   it("sends a trimmed model when set", async () => {
-    const { user, onCreated } = setup();
+    const { user, onCreated } = await setup();
     await user.type(screen.getByLabelText("Name"), "M");
     await user.type(screen.getByLabelText("Instructions"), "x");
     await user.type(screen.getByLabelText("Model"), "  fake:hello  ");
@@ -112,7 +114,7 @@ describe("NewAgentForm submit", () => {
 
   it("shows the server error and re-enables the button", async () => {
     createResponse = () => json({ detail: "slug already exists" }, 409);
-    const { user, onCreated } = setup();
+    const { user, onCreated } = await setup();
     await user.type(screen.getByLabelText("Name"), "Dup");
     await user.type(screen.getByLabelText("Instructions"), "x");
     await user.click(screen.getByRole("button", { name: "Create agent" }));
@@ -122,7 +124,7 @@ describe("NewAgentForm submit", () => {
   });
 
   it("cancel calls onCancel", async () => {
-    const { user, onCancel } = setup();
+    const { user, onCancel } = await setup();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancel).toHaveBeenCalled();
   });

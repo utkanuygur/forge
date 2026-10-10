@@ -21,6 +21,26 @@ export interface Version {
   created_by: CreatedBy;
   rationale: string;
   created_at: number;
+  // Per-lesson provenance keyed by lesson text (see CONTRACT.md "Lesson provenance").
+  lesson_meta?: Record<string, LessonMeta>;
+}
+
+export interface PruneNote {
+  improvement_id: string;
+  verdict: "unhelpful" | "helpful" | "unknown";
+  evidence: string;
+  at: number;
+  version?: number;
+}
+
+export interface LessonMeta {
+  created_in_version?: number;
+  evidence_run_ids?: string[];
+  origin?: "optimizer" | "human";
+  op?: "add" | "edit";
+  created_at?: number;
+  edited_from?: string;
+  pruning?: PruneNote;
 }
 
 export interface Agent {
@@ -354,6 +374,39 @@ export interface Improvement {
   error: string | null;
   created_at: number;
   ended_at: number | null;
+  kind?: "improve" | "prune";
+  ablations?: Ablation[];
+}
+
+export interface Ablation {
+  lesson: string;
+  version: number | null;
+  verdict: "unhelpful" | "helpful" | "unknown" | "not_ablated";
+  evidence: string;
+  base_train?: Score;
+  train?: Score;
+  run_ids?: string[];
+}
+
+export interface DraftCase {
+  name: string;
+  input: string;
+  checker_type: "judge" | "shell";
+  checker: string;
+  split: Split;
+}
+
+export interface AgentDraft {
+  name: string;
+  slug: string;
+  description: string;
+  system_prompt: string;
+  tools: string[];
+  network: boolean;
+  network_reason: string;
+  suggested_secrets: { name: string; why: string }[];
+  seed_files_hint: string;
+  eval_cases: DraftCase[];
 }
 
 export interface EvalResults {
@@ -384,6 +437,7 @@ export interface CreateAgentBody {
   network?: boolean;
   seed_files?: Record<string, string>;
   auto_promote?: boolean;
+  eval_cases?: NewEvalBody[];
 }
 
 export interface NewVersionBody {
@@ -488,6 +542,10 @@ export const api = {
   promote: (slug: string, version: number) => request<Agent>("POST", `/agents/${enc(slug)}/promote`, { version }),
   rotateKey: (slug: string) => request<{ api_key: string }>("POST", `/agents/${enc(slug)}/rotate-key`),
   templates: () => request<Template[]>("GET", "/templates"),
+  draftAgent: (body: { description: string; examples?: string[]; constraints?: string }) =>
+    request<AgentDraft>("POST", "/agent-drafts", body),
+  putSecrets: (slug: string, values: Record<string, string>) =>
+    request<{ names: string[] }>("PUT", `/agents/${enc(slug)}/secrets`, values),
 
   // runtime
   createRun: (
@@ -548,6 +606,7 @@ export const api = {
   timeline: (id: string) => request<Timeline>("GET", `/runs/${enc(id)}/timeline`),
 
   improve: (slug: string) => request<Improvement>("POST", `/agents/${enc(slug)}/improve`, {}),
+  prune: (slug: string) => request<Improvement>("POST", `/agents/${enc(slug)}/prune`, {}),
   getImprovement: (id: string) => request<Improvement>("GET", `/improvements/${enc(id)}`),
   listImprovements: (slug: string) => request<Improvement[]>("GET", `/agents/${enc(slug)}/improvements`),
 };

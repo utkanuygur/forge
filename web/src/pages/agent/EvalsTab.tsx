@@ -259,7 +259,13 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
         </p>
       </Section>
 
-      <ImprovePanel agent={agent} hasCases={!!cases && cases.length > 0} onChanged={onChanged} />
+      <ImprovePanel
+        agent={agent}
+        hasCases={!!cases && cases.length > 0}
+        hasTrainCases={!!cases && cases.some((c) => c.split === "train")}
+        prodLessons={agent.versions?.find((v) => v.n === agent.prod_version)?.lessons.length ?? 0}
+        onChanged={onChanged}
+      />
 
       {adding && (
         <Modal title="Add evaluation case" onClose={() => setAdding(false)} wide>

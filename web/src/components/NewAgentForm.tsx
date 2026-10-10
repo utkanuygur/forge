@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { api, errMsg, slugify, TOOL_NAMES, type AgentCreated, type Template } from "../api";
+import { ArrowLeft } from "lucide-react";
+import { api, errMsg, slugify, TOOL_NAMES, type AgentCreated, type AgentDraft, type Template } from "../api";
 import { ModelField, NetworkField, ToolsField } from "./ConfigFields";
+import { DescribeStep, StarterCases, SuggestedSecrets, type DescribeValue, type SecretSuggestion, type StarterCase } from "./DraftFields";
 import { ErrorBox, Toggle } from "./ui";
 
 export default function NewAgentForm({ onCreated, onCancel }: { onCreated: (a: AgentCreated) => void; onCancel: () => void }) {
@@ -17,6 +19,14 @@ export default function NewAgentForm({ onCreated, onCancel }: { onCreated: (a: A
   const [autoPromote, setAutoPromote] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Drafting: first step "describe", then the form (blank, from a template, or prefilled from a draft).
+  const [step, setStep] = useState<"describe" | "form">("describe");
+  const [describe, setDescribe] = useState<DescribeValue>({ description: "", examples: [], constraints: "" });
+  const [drafting, setDrafting] = useState(false);
+  const [draft, setDraft] = useState<AgentDraft | null>(null);
+  const [networkReason, setNetworkReason] = useState("");
+  const [secrets, setSecrets] = useState<SecretSuggestion[]>([]);
+  const [cases, setCases] = useState<StarterCase[]>([]);
 
   useEffect(() => {
     api.templates().then(setTemplates).catch(() => setTemplates([]));
@@ -34,6 +44,43 @@ export default function NewAgentForm({ onCreated, onCancel }: { onCreated: (a: A
     setNetwork(t.network);
   }
 
+  async function draftAgent() {
+    setDrafting(true);
+    setError(null);
+    try {
+      const d = await api.draftAgent({
+        description: describe.description,
+        examples: describe.examples.filter((x) => x.trim()),
+        ...(describe.constraints.trim() ? { constraints: describe.constraints.trim() } : {}),
+      });
+      setDraft(d);
+      setTplKey("");
+      setName(d.name);
+      setSlug(d.slug);
+      setSlugTouched(false);
+      setDescription(d.description);
+      setInstructions(d.system_prompt);
+      setTools(d.tools);
+      setNetwork(d.network);
+      setNetworkReason(d.network_reason);
+      setSecrets(d.suggested_secrets.map((x) => ({ ...x, value: "" })));
+      setCases(d.eval_cases.map((c) => ({ ...c, selected: true })));
+      setStep("form");
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setDrafting(false);
+    }
+  }
+
+  function startBlank() {
+    setDraft(null);
+    setCases([]);
+    setSecrets([]);
+    setError(null);
+    setStep("form");
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -48,7 +95,22 @@ export default function NewAgentForm({ onCreated, onCancel }: { onCreated: (a: A
         tools,
         network,
         auto_promote: autoPromote,
+        ...(draft
+          ? {
+              eval_cases: cases
+                .filter((c) => c.selected)
+                .map(({ name, input, checker_type, checker, split }) => ({ name, input, checker_type, checker, split })),
+            }
+          : {}),
       });
+      const values = Object.fromEntries(secrets.filter((x) => x.value).map((x) => [x.name, x.value]));
+      if (Object.keys(values).length > 0) {
+        try {
+          await api.putSecrets(a.slug, values);
+        } catch (err) {
+          setError(`Agent created, but saving secrets failed: ${errMsg(err)}`);
+        }
+      }
       onCreated(a);
     } catch (err) {
       setError(errMsg(err));
@@ -57,9 +119,31 @@ export default function NewAgentForm({ onCreated, onCancel }: { onCreated: (a: A
     }
   }
 
+  if (step === "describe") {
+    return (
+      <DescribeStep
+        value={describe}
+        onChange={setDescribe}
+        onDraft={draftAgent}
+        onBlank={startBlank}
+        onCancel={onCancel}
+        busy={drafting}
+        error={error}
+      />
+    );
+  }
+
   return (
     <form onSubmit={submit} className="space-y-5">
-      <div>
+      {draft && (
+        <div data-testid="draft-notice" className="flex flex-wrap items-center gap-3 rounded-lg border border-accent-200 bg-accent-50/60 px-3 py-2.5 text-sm dark:border-accent-900 dark:bg-accent-900/20">
+          <span className="flex-1">Drafted from your description. Review and edit everything below; nothing is created until you press Create agent.</span>
+          <button type="button" className="btn-secondary btn-sm" onClick={() => setStep("describe")}>
+            <ArrowLeft className="h-3.5 w-3.5" /> Edit description
+          </button>
+        </div>
+      )}
+      <div hidden={!!draft}>
         <label className="label">Start from</label>
         <div className="flex flex-wrap gap-2">
           <button
@@ -142,6 +226,11 @@ export default function NewAgentForm({ onCreated, onCancel }: { onCreated: (a: A
       <ToolsField value={tools} onChange={setTools} />
       <div className="space-y-3">
         <NetworkField value={network} onChange={setNetwork} />
+        {draft && networkReason && (
+          <p data-testid="network-reason" className="-mt-1 pl-12 text-xs text-neutral-600 dark:text-neutral-400">
+            Suggested {draft.network ? "on" : "off"}: {networkReason}
+          </p>
+        )}
         <Toggle
           checked={autoPromote}
           onChange={setAutoPromote}
@@ -149,6 +238,18 @@ export default function NewAgentForm({ onCreated, onCancel }: { onCreated: (a: A
           hint="Promote improved versions automatically when they beat production without regressions."
         />
       </div>
+      {draft && (
+        <>
+          {draft.seed_files_hint && (
+            <p className="text-xs text-neutral-500">
+              <span className="font-medium text-neutral-700 dark:text-neutral-300">Seed files: </span>
+              {draft.seed_files_hint}
+            </p>
+          )}
+          <SuggestedSecrets value={secrets} onChange={setSecrets} />
+          <StarterCases value={cases} onChange={setCases} />
+        </>
+      )}
       <ErrorBox error={error} />
       <div className="flex justify-end gap-2">
         <button type="button" className="btn-secondary" onClick={onCancel}>
