@@ -238,3 +238,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at       REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_agent ON sessions(agent_id, updated_at DESC);
+
+-- Share conversations (additive): a share page visitor, issued on the first session create with a share token.
+-- Visitor ids scope share sessions and their runs (sessions.visitor_id, runs.visitor_id, added in forge/db.py).
+CREATE TABLE IF NOT EXISTS share_visitors (
+  id          TEXT PRIMARY KEY,
+  agent_id    TEXT NOT NULL REFERENCES agents(id),
+  created_at  REAL NOT NULL
+);

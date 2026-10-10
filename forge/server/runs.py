@@ -93,6 +93,7 @@ class RunManager:
         turn_index: int | None = None,
         history: list[Message] | None = None,
         workspace: dict[str, bytes] | None = None,
+        visitor_id: str | None = None,
     ) -> str:
         """`workspace`, when given, replaces the version's seed files (a session turn continuing from the
         previous turn's archive); `history` is the session's earlier conversation."""
@@ -102,7 +103,8 @@ class RunManager:
         budget.ensure_budget(db.get_agent(agent["id"]) or agent)
         run = db.create_run(agent["id"], version["id"], source, input,
                             eval_case_id=eval_case["id"] if eval_case else None, callback_url=callback_url,
-                            parent_run_id=parent_run_id, session_id=session_id, turn_index=turn_index)
+                            parent_run_id=parent_run_id, session_id=session_id, turn_index=turn_index,
+                            visitor_id=visitor_id)
         seed: dict[str, bytes] = {k: v.encode() for k, v in (version.get("seed_files") or {}).items()}
         if workspace is not None:
             seed = dict(workspace)

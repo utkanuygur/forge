@@ -191,7 +191,7 @@ def fire_view(f: dict) -> dict:
 
 @dataclass
 class Fired:
-    status: str  # started | skipped | rate_limited | error
+    status: str  # started | skipped | rate_limited | error (skipped: a Slack thread is busy or full)
     detail: str = ""
     run_id: str | None = None
     fire: dict | None = None
@@ -201,9 +201,35 @@ def _record_error(t: dict, message: str) -> None:
     store.update(t["id"], last_error=message[:2000])
 
 
+def thread_key(trigger_id: str, channel: str, thread_ts: str) -> str:
+    return f"slack:{trigger_id}:{channel}:{thread_ts}"
+
+
+def thread_session(t: dict, agent: dict, version: dict, key: str) -> tuple[dict | None, str]:
+    """The conversation for a Slack thread: the thread's session unless it expired (then a fresh one). Returns
+    (None, reason) when the thread already used the agent's per conversation turn limit or a turn still runs."""
+    from forge import share_limits
+
+    s = db.session_by_key(key)
+    if s is not None and share_limits.is_expired(s) and not any(
+            r["status"] in ACTIVE for r in db.session_runs(s["id"])):
+        s = None
+    if s is None:
+        return db.create_session(agent["id"], version["id"], version_id=version["id"], channel="slack",
+                                 external_key=key), ""
+    if any(r["status"] in ACTIVE for r in db.session_runs(s["id"])):
+        return None, "Still working on the previous message in this thread. Mention me again once it is done."
+    limit = share_limits.effective(agent)["session_turns"]
+    if db.session_turn_count(s["id"]) >= limit:
+        return None, (f"This thread reached its limit of {limit} messages. Mention me in a new thread to start a "
+                      "new conversation.")
+    return s, ""
+
+
 async def fire(t: dict, input_text: str, *, context: dict | None = None, test: bool = False,
-               ignore_rate_limit: bool = False) -> Fired:
-    """Starts one run for trigger `t`; records the outcome in trigger_fires and on the trigger row."""
+               ignore_rate_limit: bool = False, session_key: str | None = None) -> Fired:
+    """Starts one run for trigger `t`; records the outcome in trigger_fires and on the trigger row.
+    With `session_key` (a Slack thread) the run is the next turn of that thread's conversation."""
     cfg = t["config"]
     agent = db.get_agent(t["agent_id"])
     if agent is None:
@@ -227,8 +253,19 @@ async def fire(t: dict, input_text: str, *, context: dict | None = None, test: b
         return Fired("error", detail, fire=f)
     from forge.budget import BudgetExceeded
 
+    session = None
+    if session_key:
+        session, why = thread_session(t, agent, version, session_key)
+        if session is None:
+            f = store.add_fire(t["id"], "skipped", detail=why, test=test)
+            return Fired("skipped", why, fire=f)
     try:  # trigger runs go through budgets like any other run, and through approval policies once started
-        run_id = await runs.get_manager().start_run(agent, version, input_text, t["kind"])
+        if session is not None:
+            from forge.server.sessions_api import start_turn
+
+            run_id = await start_turn(session, agent, input_text, t["kind"], version=version)
+        else:
+            run_id = await runs.get_manager().start_run(agent, version, input_text, t["kind"])
     except BudgetExceeded as exc:
         detail = f"402: {exc}"
         f = store.add_fire(t["id"], "error", detail=detail, test=test)

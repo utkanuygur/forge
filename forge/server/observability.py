@@ -125,7 +125,7 @@ def search_runs(*, agent_id: str | None = None, status: str | None = None, versi
                 source: str | None = None, rating: str | None = None, has_tool_errors: bool | None = None,
                 q: str | None = None, since: float | None = None, until: float | None = None,
                 sort: SortKey = "created_at", order: str = "desc", limit: int = 50,
-                offset: int = 0) -> tuple[list[dict], int]:
+                offset: int = 0, visitor_id: str | None = None) -> tuple[list[dict], int]:
     """Filtered run rows (full `runs` columns plus agent_slug, version_n and model) and the total match count."""
     where, args = [DRAFT_FREE], []  # runs of draft Playground sessions never show up in run lists or metrics
 
@@ -145,6 +145,12 @@ def search_runs(*, agent_id: str | None = None, status: str | None = None, versi
     any_of("r.status", status)
     any_of("v.n", version, int)
     any_of("r.source", source)
+    if visitor_id is not None:  # a share page visitor lists only its own runs; "" means runs without a visitor
+        if visitor_id:
+            where.append("r.visitor_id = ?")
+            args.append(visitor_id)
+        else:
+            where.append("r.visitor_id IS NULL")
     if rating == "up":
         where.append("EXISTS (SELECT 1 FROM feedback f WHERE f.run_id = r.id AND f.rating > 0)")
     elif rating == "down":
