@@ -3,6 +3,7 @@ import { Paperclip, Play, X } from "lucide-react";
 import { api, errMsg, type Run, type SuggestedPrompt, type Version } from "../api";
 import SuggestedPrompts from "./SuggestedPrompts";
 import { ErrorBox } from "./ui";
+import GenerateTaskButton from "./GenerateTaskButton";
 
 export default function RunForm({
   slug,
@@ -94,6 +95,15 @@ export default function RunForm({
             setFiles([...files, ...Array.from(e.target.files || [])]);
             e.target.value = "";
           }}
+        />
+        <GenerateTaskButton
+          slug={slug}
+          share={share}
+          value={input}
+          inputRef={textRef}
+          version={version === "prod" ? undefined : Number(version)}
+          onGenerated={setInput}
+          disabled={busy}
         />
         <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}>
           <Paperclip className="h-4 w-4" /> Attach files

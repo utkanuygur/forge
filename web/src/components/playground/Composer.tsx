@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, useImperativeHandle, useRef, type ReactNode, type RefObject } from "react";
 import { ArrowUp, Square } from "lucide-react";
 
 export interface ComposerHandle {
@@ -20,8 +20,10 @@ const Composer = forwardRef<
     busy?: boolean;
     lastPrompt?: string;
     placeholder?: string;
+    /** Extra controls for the action row (e.g. Generate); gets the textarea ref for focus and shortcuts. */
+    actions?: (inputRef: RefObject<HTMLTextAreaElement>) => ReactNode;
   }
->(function Composer({ value, onChange, onSend, onStop, running, busy, lastPrompt, placeholder }, ref) {
+>(function Composer({ value, onChange, onSend, onStop, running, busy, lastPrompt, placeholder, actions }, ref) {
   const area = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), []);
   const locked = running || Boolean(busy);
@@ -72,7 +74,8 @@ const Composer = forwardRef<
           </button>
         )}
       </div>
-      <div className="pg-hints" aria-live="polite">
+      <div className="pg-hints flex flex-wrap items-center gap-2" aria-live="polite">
+        {actions && !running && <span className="shrink-0">{actions(area)}</span>}
         {running ? (
           <span data-testid="esc-hint">Esc to stop</span>
         ) : (

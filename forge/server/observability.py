@@ -314,6 +314,19 @@ def _improvement_costs(agent_id: str, since: float, versions: dict[str, dict]) -
     return out
 
 
+def _assist_costs(agent_id: str, since: float) -> dict:
+    """Grader calls made by Generate buttons (POST /assist/{kind}, kind "assist:<kind>") in the period."""
+    rows = _rows("SELECT kind, model, tokens_in, tokens_out FROM grader_calls WHERE agent_id = ? "
+                 "AND kind LIKE 'assist:%' AND created_at >= ?", (agent_id, since))
+    costs = [pricing.cost(g["model"], g["tokens_in"], g["tokens_out"]) for g in rows]
+    kinds: dict[str, int] = defaultdict(int)
+    for g in rows:
+        kinds[g["kind"].split(":", 1)[1]] += 1
+    return {"calls": len(rows), "kinds": dict(kinds), "tokens_in": sum(g["tokens_in"] for g in rows),
+            "tokens_out": sum(g["tokens_out"] for g in rows), "cost_usd": sum(c or 0.0 for c in costs),
+            "cost_complete": all(c is not None for c in costs)}
+
+
 VERSION_DELTA_KEYS = ("success_rate", "p50_ms", "p95_ms", "avg_turns", "thumbs_up_rate", "cost_per_run")
 
 
@@ -417,7 +430,8 @@ def agent_metrics(agent: dict, days: float, include_eval: bool, tz_offset_min: i
         "promotions": promos,
         "versions": version_rows,
         "cost": {"total_usd": summary["cost_usd"], "unpriced_runs": summary["unpriced_runs"],
-                 "versions": per_version, "improvements": _improvement_costs(agent["id"], since, versions)},
+                 "versions": per_version, "improvements": _improvement_costs(agent["id"], since, versions),
+                 "assist": _assist_costs(agent["id"], since)},
         "failures": failures,
         "tools": tools,
         "slowest_runs": [{"id": r["id"], "version": r["version_n"], "status": r["status"], "source": r["source"],

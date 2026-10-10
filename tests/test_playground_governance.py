@@ -105,3 +105,18 @@ def test_cancelled_runs_in_metrics():
     assert (h["finished"], h["cancelled"], h["success_rate"]) == (3, 1, 0.5)  # stopped runs are not rated
     assert metrics.classify_run(rows[2]) == [{"category": "cancelled", "reason": "Stopped by user", "count": 1}]
     assert "playground" in metrics.SOURCES
+
+
+def test_generate_assist_counts_toward_and_respects_the_budget(client, monkeypatch):
+    """Assist calls are metered grader calls: they add to month-to-date spend and get 402 once it is used up."""
+    from forge import budget
+
+    monkeypatch.setenv("FORGE_GRADER_MODEL", "fake:grader")
+    monkeypatch.setenv("FORGE_PRICES", '{"fake:grader": [1000, 1000]}')
+    a = agent(client, "pg-assist", monthly_budget_usd=1.0)
+    r = client.post("/v1/agents/pg-assist/sample-task", json={})
+    assert r.status_code == 200, r.text
+    assert budget.month_to_date_usd(a["id"]) > 0
+    client.patch("/v1/agents/pg-assist", json={"monthly_budget_usd": 0})
+    r = client.post("/v1/agents/pg-assist/sample-task", json={})
+    assert r.status_code == 402 and "Monthly budget" in r.json()["detail"]

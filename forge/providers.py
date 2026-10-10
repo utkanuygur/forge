@@ -376,8 +376,9 @@ class ScenarioProvider:
       hello    write hello.py, run it with bash, then finish
       echo     finish immediately, echoing the user's input
       lessons  create MARKER.txt only if a lesson tells it to; otherwise just finish
-      grader   acts as judge (always passes), as optimizer (proposes MARKER_LESSON) and, given the drafting
-               prompt, as agent drafter (returns FAKE_DRAFT)
+      grader   acts as judge (always passes), as optimizer (proposes MARKER_LESSON), given the drafting
+               prompt as agent drafter (returns FAKE_DRAFT) and, given an assist kind's system prompt,
+               as that kind's suggester (returns the kind's registered `fake` reply, see forge.assist)
       loop     calls bash forever (exercises the turn limit)
       error    raises, as if the model API failed
       flaky    alternates per run: the 1st, 3rd, 5th, ... run with a given (system prompt, input) creates
@@ -479,9 +480,12 @@ class ScenarioProvider:
                 return ModelResponse(text="Tool results:\n" + "\n---\n".join(outputs), tokens_in=10, tokens_out=5)
             case "grader":
                 from forge.drafting import DRAFT_SYSTEM
+                from forge.assist.registry import by_system_prompt
 
                 if system == DRAFT_SYSTEM:
                     return ModelResponse(text=json.dumps(FAKE_DRAFT), tokens_in=10, tokens_out=5)
+                if (assist := by_system_prompt(system)) is not None and assist.fake is not None:
+                    return ModelResponse(text=json.dumps(assist.fake(user)), tokens_in=120, tokens_out=30)
                 if '"lessons"' in system:
                     run_ids = sorted(set(re.findall(r"\br_[0-9a-f]{12}\b", user)))
                     edits = [{"op": "add", "text": MARKER_LESSON, "evidence_run_ids": run_ids[:2],

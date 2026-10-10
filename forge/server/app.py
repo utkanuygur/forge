@@ -22,7 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 from forge import budget, db
 from forge.policy import http_tool_names, parse_policy
 from forge.provenance import lesson_provenance
-from forge.server import authoring, evals, files, observability, obslog, runs, sessions_api
+from forge.server import assist, authoring, evals, files, observability, obslog, runs, sessions_api
 from forge.server import governance as governance_routes
 from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
@@ -730,6 +730,7 @@ app.include_router(authoring.router)  # /v1/agent-drafts and /v1/agents/{slug}/p
 governance_routes.install(app)  # approvals, /v1/agents/{slug}/governance and the 402 handler
 app.include_router(triggers_api.router)  # trigger CRUD and /v1/hooks/github|slack/{id}
 app.include_router(sessions_api.router)  # playground sessions
+app.include_router(assist.router)  # /v1/assist/{kind} and /v1/agents/{slug}/sample-task
 
 # ---------------------------------------------------------------- SPA
 

@@ -16,6 +16,7 @@ import {
   useExpandAll,
   useNow,
 } from "../transcript/Transcript";
+import GenerateTaskButton from "../GenerateTaskButton";
 import Composer, { type ComposerHandle } from "./Composer";
 import "../transcript/transcript.css";
 import "./playground.css";
@@ -414,6 +415,16 @@ export default function Playground({
               running={running}
               busy={busy}
               lastPrompt={lastPrompt}
+              actions={(inputRef) => (
+                <GenerateTaskButton
+                  slug={agent.slug}
+                  value={text}
+                  inputRef={inputRef}
+                  onGenerated={setText}
+                  version={session?.version_n ?? undefined}
+                  disabled={running || busy}
+                />
+              )}
             />
           </div>
         </div>
