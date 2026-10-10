@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import AssistButton from "./AssistButton";
 import { Bot, Globe, Pencil, Plug, Plus, Trash2 } from "lucide-react";
 import {
   api,
@@ -6,6 +7,7 @@ import {
   type Agent,
   type HttpMethod,
   type HttpTool,
+  type HttpToolSuggestion,
   type McpServer,
   type McpToolInfo,
   type McpTransport,
@@ -80,19 +82,28 @@ export function sampleArgs(schema: Record<string, unknown> | null): Record<strin
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
-function HttpToolModal({
+/** The form fields an http_tool suggestion fills, serialized so Undo can restore them all at once. */
+function httpToolSnapshot(f: { name: string; description: string; method: string; url: string; headers: string; query: string; schemaText: string }) {
+  return JSON.stringify(f);
+}
+
+export function HttpToolModal({
   slug,
   network,
   initial,
   onSave,
   onClose,
+  existing = [],
 }: {
   slug: string;
   network: boolean;
   initial: HttpTool | null;
   onSave: (t: HttpTool) => void;
   onClose: () => void;
+  existing?: string[];
 }) {
+  const [source, setSource] = useState("");
+  const sourceRef = useRef<HTMLTextAreaElement>(null);
   const [name, setName] = useState(initial?.name || "");
   const [description, setDescription] = useState(initial?.description || "");
   const [method, setMethod] = useState<HttpMethod>(initial?.method || "GET");
@@ -155,9 +166,66 @@ function HttpToolModal({
     }
   }
 
+  const snapshot = httpToolSnapshot({ name, description, method, url, headers, query, schemaText });
+  function restore(text: string) {
+    try {
+      const f = JSON.parse(text);
+      setName(f.name);
+      setDescription(f.description);
+      setMethod(f.method);
+      setUrl(f.url);
+      setHeaders(f.headers);
+      setQuery(f.query);
+      setSchemaText(f.schemaText);
+    } catch {
+      /* not a snapshot */
+    }
+  }
+  const fromSuggestion = (r: HttpToolSuggestion) =>
+    httpToolSnapshot({
+      name: r.name,
+      description: r.description,
+      method: r.method,
+      url: r.url,
+      headers: formatPairs(r.headers),
+      query: (r.query_params || []).join(", "),
+      schemaText: JSON.stringify(r.parameters, null, 2),
+    });
+
   return (
     <Modal title={initial ? `Edit ${initial.name}` : "Add HTTP tool"} onClose={onClose} wide>
       <div className="space-y-4">
+        <div className="space-y-2 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+          {/* Not a <label>: "curl" would make getByLabel("URL") ambiguous. */}
+          <p className="label">Describe the endpoint, paste a curl command or API doc</p>
+          <textarea
+            id="http-source"
+            aria-label="Endpoint source"
+            ref={sourceRef}
+            className="input min-h-[70px] font-mono text-xs"
+            placeholder="curl -H 'Authorization: Bearer $TOKEN' https://api.example.com/orders/123"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <AssistButton<HttpToolSuggestion>
+              kind="http_tool"
+              slug={slug}
+              input={{ source, existing }}
+              resultText={fromSuggestion}
+              onResult={(r) => {
+                restore(fromSuggestion(r));
+                setArgsText(JSON.stringify(sampleArgs(r.parameters), null, 2));
+              }}
+              undoValue={snapshot}
+              onUndo={restore}
+              inputRef={sourceRef}
+              disabled={!source.trim()}
+              ariaLabel="Generate the tool from this text"
+            />
+            <span className="text-xs text-neutral-500">Fills the fields below. Secrets stay as {"{{NAME}}"} references.</span>
+          </div>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="label" htmlFor="http-name">
@@ -647,6 +715,7 @@ export default function ToolsConfig({
       {editingTool && (
         <HttpToolModal
           slug={agent.slug}
+          existing={httpTools.map((t) => t.name).filter((n) => n !== editingTool.tool?.name)}
           network={network}
           initial={editingTool.tool}
           onClose={() => setEditingTool(null)}
