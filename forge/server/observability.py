@@ -16,7 +16,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from forge import db, metrics, pricing
+from forge import buildinfo, db, metrics, pricing
 from forge.server.auth import authorize, is_local, require_local
 
 api = APIRouter(prefix="/v1")
@@ -550,7 +550,13 @@ def health_report() -> tuple[int, dict]:
         components["docker"] = {"status": "skipped", "detail": f"FORGE_EXECUTOR={executor}"}
     ok = all(c["status"] != "error" for c in components.values())
     return (200 if ok else 503), {"status": "ok" if ok else "error", "executor": executor, "components": components,
-                                  "time": time.time()}
+                                  "build": buildinfo.build_info(), "time": time.time()}
+
+
+@api.get("/version")
+async def version() -> dict:
+    """Which build is running: {version, commit, built_at, channel}. No auth; it holds no secrets."""
+    return await asyncio.to_thread(buildinfo.build_info)
 
 
 @ops.get("/healthz", include_in_schema=False)
