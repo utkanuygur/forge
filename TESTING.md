@@ -69,10 +69,10 @@ layer is its own parallel check, so the commit status names the layer that faile
 | Desktop macOS 12 compat | `desktop/scripts/build-server.sh` on macos-14 (arm64), which ends with `check-min-macos.sh` | desktop build |
 
 Each Docker job builds `forge-sandbox` itself through `.github/actions/sandbox-image`, which restores the layers
-from the GitHub Actions cache (about 25 s when warm; the Sandbox job writes the cache) and fails if the image is
+from the GitHub Actions cache (30 to 45 s with a warm cache, including Buildx setup; the Sandbox job writes the cache) and fails if the image is
 missing, since the Docker tests would otherwise skip themselves. Building once and sharing the image as an
 artifact was measured too: download plus `docker load` cost about as much per job and added a serial build job,
-so the run took about 25 s longer. The macOS job is billed at a higher rate, so it runs
+so the run took 15 to 25 s longer. The macOS job is billed at a higher rate, so it runs
 only when `desktop/`, `forge/`, `pyproject.toml`, `uv.lock` or the workflow change (pull requests and pushes
 to `master`), or on manual dispatch (`gh workflow run ci.yml --ref <branch>`). Live tests never run in CI.
 
