@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS agents (
   auto_promote     INTEGER NOT NULL DEFAULT 0,
   api_key_hash     TEXT NOT NULL,
   share_token      TEXT NOT NULL UNIQUE,
-  created_at       REAL NOT NULL
+  created_at       REAL NOT NULL,
+  monthly_budget_usd REAL               -- governance: null = no monthly budget
 );
 
 CREATE TABLE IF NOT EXISTS agent_versions (
@@ -29,6 +30,8 @@ CREATE TABLE IF NOT EXISTS agent_versions (
   created_by     TEXT NOT NULL DEFAULT 'human',
   rationale      TEXT NOT NULL DEFAULT '',
   created_at     REAL NOT NULL,
+  approval_policy TEXT NOT NULL DEFAULT '{}', -- governance: JSON, see forge/policy.py
+  max_run_cost_usd REAL,                      -- governance: null = no per-run cap
   UNIQUE (agent_id, n)
 );
 
@@ -45,7 +48,7 @@ CREATE TABLE IF NOT EXISTS runs (
   version_id     TEXT NOT NULL REFERENCES agent_versions(id),
   source         TEXT NOT NULL,     -- ui | share | api | eval | local
   input          TEXT NOT NULL,
-  status         TEXT NOT NULL,     -- queued | running | succeeded | failed | timeout
+  status         TEXT NOT NULL,     -- queued | running | awaiting_approval | succeeded | failed | timeout | budget_exceeded
   output         TEXT NOT NULL DEFAULT '',
   error          TEXT,
   artifact_path  TEXT,
@@ -57,7 +60,8 @@ CREATE TABLE IF NOT EXISTS runs (
   callback_url   TEXT,
   created_at     REAL NOT NULL,
   started_at     REAL,
-  ended_at       REAL
+  ended_at       REAL,
+  cost_usd       REAL NOT NULL DEFAULT 0   -- governance: estimated spend, updated after each model turn
 );
 CREATE INDEX IF NOT EXISTS runs_agent ON runs(agent_id, created_at DESC);
 
@@ -111,3 +115,21 @@ CREATE TABLE IF NOT EXISTS improvements (
   created_at            REAL NOT NULL,
   ended_at              REAL
 );
+
+
+-- Governance: one row per tool call that matched an `ask` rule (forge/approvals.py).
+CREATE TABLE IF NOT EXISTS approvals (
+  id            TEXT PRIMARY KEY,
+  run_id        TEXT NOT NULL REFERENCES runs(id),
+  tool_call_id  TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  args          TEXT NOT NULL DEFAULT '{}',   -- JSON, secrets redacted
+  rule          TEXT NOT NULL DEFAULT '{}',   -- JSON, the matched rule
+  status        TEXT NOT NULL,                -- pending | approved | denied | expired
+  note          TEXT NOT NULL DEFAULT '',
+  resolved_by   TEXT,                         -- ui | api | timeout | interrupted
+  created_at    REAL NOT NULL,
+  expires_at    REAL NOT NULL,
+  resolved_at   REAL
+);
+CREATE INDEX IF NOT EXISTS approvals_run ON approvals(run_id, created_at);

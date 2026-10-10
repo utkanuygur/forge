@@ -265,10 +265,11 @@ class ScenarioProvider:
       grader   acts as judge (always passes) and as optimizer (proposes MARKER_LESSON)
       loop     calls bash forever (exercises the turn limit)
       error    raises, as if the model API failed
+      risky    runs `rm -rf build` with bash, then finishes saying whether it was allowed (approval policies)
     """
 
     def __init__(self, scenario: str):
-        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error"}:
+        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "risky"}:
             raise ValueError(f"unknown fake scenario {scenario!r}")
         self.scenario = scenario
 
@@ -292,6 +293,14 @@ class ScenarioProvider:
                 if step < len(script):
                     return _call(*script[step], step)
                 return ModelResponse(text="Created and ran hello.py.", tokens_in=10, tokens_out=5)
+            case "risky":
+                if step == 0:
+                    return _call("bash", {"cmd": "rm -rf build"}, step)
+                last = next((m for m in reversed(messages) if m.role == "tool"), None)
+                if last is not None and last.is_error:
+                    return ModelResponse(text=f"Cleanup was not allowed, so build/ is unchanged. ({last.text})",
+                                         tokens_in=10, tokens_out=5)
+                return ModelResponse(text="Removed the build directory.", tokens_in=10, tokens_out=5)
             case "lessons":
                 if step == 0 and "MARKER.txt" in system:
                     return _call("write_file", {"path": "MARKER.txt", "content": "ok\n"}, step)

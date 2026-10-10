@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forge import db
+from forge import db, governance
 
 VERSION_KEYS = ("id", "agent_id", "n", "system_prompt", "lessons", "model", "tools", "http_tools", "network",
-                "seed_files", "parent_id", "created_by", "rationale", "created_at")
+                "seed_files", "parent_id", "created_by", "rationale", "created_at",
+                "approval_policy", "max_run_cost_usd")  # governance
 
 
 def version_view(v: dict) -> dict:
@@ -20,6 +21,7 @@ def agent_view(a: dict, *, versions: bool = False) -> dict:
         "id": a["id"], "slug": a["slug"], "name": a["name"], "description": a["description"],
         "prod_version": prod["n"] if prod else None, "auto_promote": a["auto_promote"],
         "share_token": a["share_token"], "created_at": a["created_at"],
+        **governance.agent_extras(a),
     }
     if versions:
         out["versions"] = [version_view(v) for v in db.list_versions(a["id"])]
@@ -35,7 +37,7 @@ def run_view(r: dict, *, version_n: int | None = None) -> dict:
         "source": r["source"], "input": r["input"], "status": r["status"], "output": r["output"],
         "error": r["error"], "turns": r["turns"], "tokens_in": r["tokens_in"], "tokens_out": r["tokens_out"],
         "has_artifacts": bool(r["artifact_path"] and Path(r["artifact_path"]).exists()),
-        "eval_case_id": r["eval_case_id"],
+        "eval_case_id": r["eval_case_id"], "cost_usd": r.get("cost_usd") or 0.0,
         "created_at": r["created_at"], "started_at": r["started_at"], "ended_at": r["ended_at"],
         "feedback": [feedback_view(f) for f in db.list_feedback(r["id"])],
     }

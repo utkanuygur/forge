@@ -207,7 +207,11 @@ async def run_agent(
     temperature: float | None = None,
     max_turns: int = 30,
     max_seconds: int = 600,
+    hooks: Any = None,
 ) -> RunResult:
+    """`hooks` (optional, see forge.governance.RunGovernor) may stop the run after a model turn
+    (`after_turn`) and replace a tool call's result (`before_tool`); time spent there, such as waiting
+    for a human approval, does not count toward `max_seconds`."""
     # Longest first so a secret containing another secret is fully redacted.
     secret_values = sorted({v for v in (secrets or {}).values() if v}, key=len, reverse=True)
     seq = 0
@@ -252,12 +256,24 @@ async def run_agent(
                 last_text = resp.text
                 await send("assistant", {"text": resp.text})
             messages.append(Message(role="assistant", text=resp.text, tool_calls=resp.tool_calls))
+            if hooks is not None and (stop := await hooks.after_turn(result, send)):
+                result.status, result.error = stop
+                await send("error", {"message": result.error})
+                break
             if not resp.tool_calls:
                 result.status, result.output = "succeeded", resp.text
                 break
             for call in resp.tool_calls:
                 await send("tool_call", {"id": call.id, "name": call.name, "args": call.args})
-                output, is_error = await _run_tool(call, executor, set(allowed), deadline)
+                gated = None
+                if hooks is not None:
+                    paused = time.monotonic()
+                    gated = await hooks.before_tool(call, send)
+                    deadline += time.monotonic() - paused
+                if gated is not None:
+                    output, is_error = gated
+                else:
+                    output, is_error = await _run_tool(call, executor, set(allowed), deadline)
                 await send("tool_result", {"id": call.id, "name": call.name, "output": output, "is_error": is_error})
                 messages.append(Message(role="tool", tool_call_id=call.id, text=output, is_error=is_error))
     except asyncio.CancelledError:

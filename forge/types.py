@@ -11,7 +11,9 @@ from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------- events
 
-EventType = Literal["run_started", "assistant", "tool_call", "tool_result", "run_finished", "error"]
+EventType = Literal["run_started", "assistant", "tool_call", "tool_result", "run_finished", "error",
+                    # governance (additive)
+                    "approval_requested", "approval_resolved", "budget_warning"]
 
 
 class Event(BaseModel):
@@ -29,6 +31,9 @@ class Event(BaseModel):
     #   tool_result:  {"id", "name", "output", "is_error"}
     #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out"}
     #   error:        {"message"}
+    #   approval_requested: {"id", "tool_call_id", "name", "args", "rule", "expires_at"}
+    #   approval_resolved:  {"id", "tool_call_id", "decision": "approve"|"deny", "note", "by"}
+    #   budget_warning:     {"scope": "run"|"month", "limit_usd", "spent_usd", "fraction"}
 
 
 Emit = Callable[[Event], Awaitable[None]]
@@ -64,6 +69,9 @@ class AgentVersion(BaseModel):
     created_by: Literal["human", "optimizer"] = "human"
     rationale: str = ""
     created_at: float = 0.0
+    # governance (additive): see forge/policy.py and forge/budget.py
+    approval_policy: dict[str, Any] = Field(default_factory=dict)
+    max_run_cost_usd: float | None = None
 
 
 # ---------------------------------------------------------------- model provider
@@ -146,7 +154,8 @@ class Executor(Protocol):
 
 # ---------------------------------------------------------------- run result
 
-RunStatus = Literal["queued", "running", "succeeded", "failed", "timeout"]
+RunStatus = Literal["queued", "running", "succeeded", "failed", "timeout",
+                    "awaiting_approval", "budget_exceeded"]  # governance (additive)
 
 
 class RunResult(BaseModel):
@@ -172,6 +181,7 @@ class RunResult(BaseModel):
 #       temperature: float | None = None,
 #       max_turns: int = 30,
 #       max_seconds: int = 600,
+#       hooks: RunHooks | None = None,   # governance (additive): forge.governance.RunGovernor
 #   ) -> RunResult
 #
 # Factories (forge/providers.py, forge/executors.py):

@@ -15,7 +15,16 @@ from typing import Any, Iterator
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
-JSON_COLUMNS = {"lessons", "tools", "http_tools", "seed_files", "payload", "summary"}
+# Columns added after the first schema. CREATE TABLE IF NOT EXISTS does not add columns to an existing
+# database, so connect() adds any that are missing. Keep in sync with schema.sql.
+ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("agents", "monthly_budget_usd", "REAL"),  # governance
+    ("agent_versions", "approval_policy", "TEXT NOT NULL DEFAULT '{}'"),  # governance
+    ("agent_versions", "max_run_cost_usd", "REAL"),  # governance
+    ("runs", "cost_usd", "REAL NOT NULL DEFAULT 0"),  # governance
+]
+
+JSON_COLUMNS = {"lessons", "tools", "http_tools", "seed_files", "payload", "summary", "approval_policy", "args", "rule"}
 BOOL_COLUMNS = {"auto_promote", "network", "passed"}
 
 # ---------------------------------------------------------------- basics
@@ -55,6 +64,9 @@ def connect() -> Iterator[sqlite3.Connection]:
     conn.execute("PRAGMA foreign_keys = ON")
     if path not in _initialized:
         conn.executescript(SCHEMA)
+        for table, col, decl in ADDED_COLUMNS:
+            if col not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         _initialized.add(path)
     try:
         yield conn
@@ -149,7 +161,7 @@ def rotate_api_key(agent_id: str) -> str:
 # ---------------------------------------------------------------- versions
 
 VERSION_FIELDS = ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files",
-                  "parent_id", "created_by", "rationale")
+                  "parent_id", "created_by", "rationale", "approval_policy", "max_run_cost_usd")
 
 
 def create_version(agent_id: str, **fields: Any) -> dict:
@@ -159,7 +171,7 @@ def create_version(agent_id: str, **fields: Any) -> dict:
         n = c.execute("SELECT COALESCE(MAX(n), 0) + 1 FROM agent_versions WHERE agent_id = ?", (agent_id,)).fetchone()[0]
         row = {
             "id": new_id("v"), "agent_id": agent_id, "n": n, "lessons": [], "http_tools": [], "network": False,
-            "seed_files": {}, "parent_id": None, "created_by": "human", "rationale": "",
+            "seed_files": {}, "parent_id": None, "created_by": "human", "rationale": "", "approval_policy": {},
             "tools": ["bash", "read_file", "write_file", "edit_file"],
             **{k: v for k, v in fields.items() if k in VERSION_FIELDS and v is not None},
             "created_at": now(),
@@ -245,7 +257,9 @@ def update_run(run_id: str, **fields: Any) -> dict | None:
 def fail_interrupted_runs() -> int:
     with connect() as c:
         cur = c.execute("UPDATE runs SET status = 'failed', error = 'interrupted', ended_at = ? "
-                        "WHERE status IN ('queued', 'running')", (now(),))
+                        "WHERE status IN ('queued', 'running', 'awaiting_approval')", (now(),))
+        c.execute("UPDATE approvals SET status = 'expired', resolved_by = 'interrupted', resolved_at = ? "
+                  "WHERE status = 'pending'", (now(),))
         return cur.rowcount
 
 

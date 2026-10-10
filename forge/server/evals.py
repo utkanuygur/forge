@@ -171,7 +171,7 @@ async def _improve(agent: dict, base: dict, improvement_id: str) -> None:
         lessons = improve.apply_lesson_edits(list(base["lessons"]), edits)
         cand = db.create_version(
             agent["id"], **{k: base[k] for k in ("system_prompt", "model", "tools", "http_tools", "network",
-                                                 "seed_files")},
+                                                 "seed_files", "approval_policy", "max_run_cost_usd")},
             lessons=lessons, parent_id=base["id"], created_by="optimizer", rationale=_rationale(diff))
         db.update_improvement(improvement_id, candidate_version_id=cand["id"], summary=summary)
         await run_eval(agent, cand)

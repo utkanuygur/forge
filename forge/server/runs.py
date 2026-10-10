@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import time
@@ -10,7 +11,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from forge import db
+from forge import budget, db, governance
 from forge.server.views import run_view
 from forge.types import AgentVersion, Event, Executor, RunResult
 
@@ -24,6 +25,8 @@ class RunManager:
         self.semaphore = asyncio.Semaphore(max_concurrency or int(os.environ.get("FORGE_MAX_CONCURRENCY") or 8))
         self.tasks: dict[str, asyncio.Task] = {}
         self.after_results: dict[str, Any] = {}
+        self.approvals = governance.ApprovalRegistry()
+        self.background: set[asyncio.Task] = set()
 
     async def start_run(
         self,
@@ -38,6 +41,7 @@ class RunManager:
         after: After | None = None,
         temperature: float | None = None,
     ) -> str:
+        budget.ensure_budget(db.get_agent(agent["id"]) or agent)  # raises BudgetExceeded (HTTP 402)
         run = db.create_run(agent["id"], version["id"], source, input,
                             eval_case_id=eval_case["id"] if eval_case else None, callback_url=callback_url)
         seed: dict[str, bytes] = {k: v.encode() for k, v in (version.get("seed_files") or {}).items()}
@@ -75,8 +79,11 @@ class RunManager:
                 async def emit(e: Event) -> None:
                     db.append_event(run_id, e.seq, e.ts, e.type, e.payload)
 
+                hooks = governance.RunGovernor(run_id, agent, version, self.approvals, secrets,
+                                               on_approval_requested=lambda ap: self._notify_approval(run_id, ap))
+                extra = {"hooks": hooks} if "hooks" in inspect.signature(run_agent).parameters else {}
                 result = await run_agent(v, input, run_id=run_id, provider=make_provider(v.model), executor=executor,
-                                         emit=emit, secrets=secrets or None, temperature=temperature)
+                                         emit=emit, secrets=secrets or None, temperature=temperature, **extra)
                 if after is not None:
                     try:
                         self.after_results[run_id] = await after(executor, result)
@@ -108,6 +115,14 @@ class RunManager:
         run = db.get_run(run_id)
         if run and run["callback_url"]:
             await post_webhook(run["callback_url"], run_view(run))
+
+    async def _notify_approval(self, run_id: str, approval: dict) -> None:
+        """Posts the Run (status awaiting_approval) plus the pending `approval` to the run's callback_url."""
+        run = db.get_run(run_id)
+        if run and run["callback_url"]:
+            t = asyncio.create_task(post_webhook(run["callback_url"], {**run_view(run), "approval": approval}))
+            self.background.add(t)
+            t.add_done_callback(self.background.discard)
 
     def _finalize(self, run_id: str, result: RunResult) -> None:
         db.update_run(run_id, status=result.status, output=result.output, error=result.error, turns=result.turns,
