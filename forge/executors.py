@@ -285,7 +285,10 @@ class LocalExecutor:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_idx = Path(tmp) / "index"
             if idx_path.exists():
-                shutil.copy(idx_path, tmp_idx)
+                # copy2 keeps the index mtime: git treats entries written in the same tick as the index as
+                # "racily clean" and rehashes them. A fresh mtime would hide a same-size edit made right after
+                # the baseline commit (stat data unchanged), dropping it from the diff.
+                shutil.copy2(idx_path, tmp_idx)
             env = {**os.environ, "GIT_INDEX_FILE": str(tmp_idx)}
             _check(await self._git("add", "-A", ".", env=env), "git add")
             res = _check(await self._git("diff", "--cached", "--binary", self.baseline, "--", ".", env=env), "git diff")
