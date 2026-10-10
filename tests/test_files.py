@@ -299,7 +299,8 @@ def test_share_token_reaches_only_share_runs(server, method, path, body):
 
 
 def test_builder_only_run_endpoints_refuse_share_tokens(server):
-    """Timeline, cancel and save-as-eval never accept a share token (Playground sessions are builder only too)."""
+    """Timeline and save-as-eval never accept a share token. Cancel and sessions are open to share visitors, but
+    only for their own runs (see tests/test_share_sessions.py): a run without a visitor cannot be stopped."""
     c, agent, make_run = server
     from forge.server.app import app
 
@@ -307,7 +308,6 @@ def test_builder_only_run_endpoints_refuse_share_tokens(server):
     far = TestClient(app, client=REMOTE)
     share = {"share": agent["share_token"]}
     assert far.get(f"/v1/runs/{share_run}/timeline", params=share).status_code == 401
-    assert far.post(f"/v1/runs/{share_run}/cancel", params=share).status_code == 401
+    assert far.post(f"/v1/runs/{share_run}/cancel", params=share).status_code == 404
     assert far.post(f"/v1/runs/{share_run}/save-as-eval", params=share, json={}).status_code == 401
-    assert far.get("/v1/agents/bot/sessions", params=share).status_code == 401
-    assert far.post("/v1/agents/bot/sessions", params=share, json={}).status_code == 401
+    assert far.get("/v1/agents/bot/sessions", params=share).json() == []  # no visitor id: nothing to list
