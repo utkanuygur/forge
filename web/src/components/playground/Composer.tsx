@@ -20,10 +20,15 @@ const Composer = forwardRef<
     busy?: boolean;
     lastPrompt?: string;
     placeholder?: string;
+    /** Placeholder while a turn runs (default "The agent is working…"). */
+    runningPlaceholder?: string;
     /** Extra controls for the action row (e.g. Generate); gets the textarea ref for focus and shortcuts. */
     actions?: (inputRef: RefObject<HTMLTextAreaElement>) => ReactNode;
   }
->(function Composer({ value, onChange, onSend, onStop, running, busy, lastPrompt, placeholder, actions }, ref) {
+>(function Composer(
+  { value, onChange, onSend, onStop, running, busy, lastPrompt, placeholder, runningPlaceholder, actions },
+  ref,
+) {
   const area = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), []);
   const locked = running || Boolean(busy);
@@ -60,7 +65,9 @@ const Composer = forwardRef<
           rows={rows}
           value={value}
           disabled={locked}
-          placeholder={running ? "The agent is working…" : placeholder ?? "Ask the agent to do something"}
+          placeholder={
+            running ? runningPlaceholder ?? "The agent is working…" : placeholder ?? "Ask the agent to do something"
+          }
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
         />

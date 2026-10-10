@@ -351,6 +351,7 @@ export default function CopilotPanel({
           running={running}
           lastPrompt={lastPrompt.current}
           placeholder="Ask about Forge or say what to do"
+          runningPlaceholder="The assistant is working…"
         />
       </div>
     </aside>

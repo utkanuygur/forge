@@ -442,7 +442,7 @@ async def _d_create_eval_case(ctx: ToolContext, a: dict) -> str:
     for k in ("name", "input", "checker"):
         need(a, k)
     return (f"Add {a.get('split', 'train')} eval case \"{a['name']}\" to {a['slug']} ({a['checker_type']} checker: "
-            f"{clip(a['checker'], 90)}). Input: {clip(a['input'], 120)}. Free until evaluated.")
+            f"{clip(a['checker'], 90)}). Input: {clip(a['input'], 120).rstrip('.')}. Free until evaluated.")
 
 
 async def _d_delete_eval_case(ctx: ToolContext, a: dict) -> str:
