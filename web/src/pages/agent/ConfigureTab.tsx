@@ -3,6 +3,7 @@ import { FileText, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, errMsg, fmtTime, type Agent, type LessonMeta, type Version } from "../../api";
 import { ModelField, NetworkField, ToolsField } from "../../components/ConfigFields";
+import ModelWarning from "../../components/settings/ModelWarning";
 import { useToast } from "../../components/Toast";
 import { Badge, CreatedByBadge, Empty, ErrorBox, Modal, Section, Toggle } from "../../components/ui";
 
@@ -92,6 +93,7 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
 
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
+  const [modelWarning, setModelWarning] = useState<string | null>(null);
   const [tools, setTools] = useState<string[]>([]);
   const [network, setNetwork] = useState(false);
   const [seeds, setSeeds] = useState<Record<string, string>>({});
@@ -132,6 +134,7 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
         rationale,
       });
       toast(`Saved v${v.n}. Promote it to put it in production.`);
+      setModelWarning(v.warning ?? null);
       onChanged();
     } catch (e) {
       setError(errMsg(e));
@@ -208,6 +211,7 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
               <p className="mt-1.5 text-xs text-neutral-500">Lessons are written by the optimizer and carried into new versions.</p>
             </div>
             <ModelField value={model} onChange={setModel} />
+            <ModelWarning text={modelWarning} onDismiss={() => setModelWarning(null)} />
             <ToolsField value={tools} onChange={setTools} />
             <NetworkField value={network} onChange={setNetwork} />
             <div>

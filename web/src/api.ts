@@ -23,6 +23,8 @@ export interface Version {
   created_at: number;
   // Per-lesson provenance keyed by lesson text (see CONTRACT.md "Lesson provenance").
   lesson_meta?: Record<string, LessonMeta>;
+  /** Only on save responses: the model is not available on its provider right now (CONTRACT.md "Settings"). */
+  warning?: string;
 }
 
 export interface PruneNote {
@@ -65,6 +67,7 @@ export interface SuggestedPrompt {
 
 export interface AgentCreated extends Agent {
   api_key: string;
+  warning?: string;
 }
 
 export interface Feedback {
@@ -423,6 +426,8 @@ export interface EvalResults {
   holdout?: Score;
   repeats?: number;
   results: ({ case_id: string } & CaseResult)[];
+  /** Set when the eval stopped early because the version's model was not found. */
+  error?: string | null;
 }
 
 export interface Template {
@@ -470,9 +475,12 @@ export interface NewEvalBody {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The JSON `detail` of the error response, when it was not a plain string (e.g. per key settings errors). */
+  detail?: unknown;
+  constructor(status: number, message: string, detail?: unknown) {
     super(message);
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -484,17 +492,20 @@ function withShare(path: string, share?: string): string {
 
 async function parseError(res: Response): Promise<ApiError> {
   let msg = `${res.status} ${res.statusText}`;
+  let detail: unknown;
   try {
     const body = await res.json();
+    detail = body?.detail;
     if (body && typeof body.detail === "string") msg = body.detail;
+    else if (body?.detail && typeof body.detail.message === "string") msg = body.detail.message;
     else if (body && body.detail) msg = JSON.stringify(body.detail);
   } catch {
     /* non JSON error */
   }
-  return new ApiError(res.status, msg);
+  return new ApiError(res.status, msg, detail);
 }
 
-async function request<T>(method: string, path: string, body?: unknown, share?: string): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown, share?: string): Promise<T> {
   const headers: Record<string, string> = {};
   let payload: BodyInit | undefined;
   if (body instanceof FormData) {

@@ -4,6 +4,7 @@ import { Bot, Plus } from "lucide-react";
 import { api, errMsg, type Agent, type AgentCreated } from "../api";
 import NewAgentForm from "../components/NewAgentForm";
 import ApiKeyCallout from "../components/ApiKeyCallout";
+import ModelWarning from "../components/settings/ModelWarning";
 import { Badge, Empty, ErrorBox, Loading, Modal } from "../components/ui";
 
 export default function AgentsPage() {
@@ -43,6 +44,7 @@ export default function AgentsPage() {
           onDismiss={() => setCreated(null)}
         />
       )}
+      {created?.warning && <ModelWarning text={created.warning} />}
       <ErrorBox error={error} />
 
       {agents === null && !error && <Loading />}

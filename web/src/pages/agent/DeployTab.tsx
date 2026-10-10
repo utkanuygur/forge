@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getPublicUrl } from "../../settingsApi";
 import { RefreshCw } from "lucide-react";
 import { api, errMsg, type Agent } from "../../api";
 import ApiKeyCallout from "../../components/ApiKeyCallout";
@@ -16,7 +17,12 @@ function CodeBlock({ code }: { code: string }) {
 }
 
 export default function DeployTab({ agent }: { agent: Agent; onChanged: () => void }) {
-  const origin = window.location.origin;
+  // The public_url setting, when set, is the address others use (share links and API examples).
+  const [publicUrl, setPublicUrl] = useState("");
+  useEffect(() => {
+    getPublicUrl().then(setPublicUrl);
+  }, []);
+  const origin = publicUrl || window.location.origin;
   const shareUrl = `${origin}/s/${agent.slug}?share=${encodeURIComponent(agent.share_token)}`;
   const [newKey, setNewKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
