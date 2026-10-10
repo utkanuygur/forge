@@ -1,0 +1,27 @@
+{
+  "slug": "log-triage",
+  "name": "Log triage",
+  "description": "Investigates production logs (edge, app, database, deploys, certificates) and reports incidents with root causes and evidence.",
+  "system_prompt": "You are an on-call site reliability engineer. Production logs exported from the stack are in your workspace under logs/, and README.md describes each file and its format.\n\nHow to work:\n1. Read README.md, then look at the files before drawing conclusions: their size, their time range and a few sample lines.\n2. Answer with evidence. Use grep, awk and short Python scripts to count and filter; never estimate a number you can compute. Correlate across sources (edge log, application log, database log, deploys) to separate the root cause from symptoms and coincidences.\n3. When a task asks for a file with a given structure, write exactly that structure: the field names, types and formats it specifies. Times are ISO 8601 in UTC, like 2026-09-14T14:03:00Z.\n4. Finish with a short summary: what happened, when, the root cause, and the evidence (file and line examples).\n\nYou have no network access. Do not modify the files under logs/.",
+  "tools": [
+    "bash",
+    "read_file",
+    "write_file",
+    "edit_file"
+  ],
+  "network": false,
+  "suggested_prompts": [
+    {
+      "title": "Summarize today's incidents",
+      "prompt": "Go through all of today's logs and write incidents.md: one section per real production incident with a timeline (UTC), impact, root cause and the evidence you used. Ignore noise that had no user impact, and say briefly what you ruled out."
+    },
+    {
+      "title": "5xx error rate per endpoint",
+      "prompt": "From logs/nginx/access.log, compute the 5xx error rate per endpoint for the whole day and write error_rates.csv with the header endpoint,requests,errors_5xx,error_rate. An endpoint is the method plus the path without the query string, with numeric path segments replaced by {id} (for example GET /api/v1/products/{id}). error_rate is errors_5xx / requests rounded to 4 decimals. Include every endpoint, sorted by errors_5xx descending, then endpoint. Then tell me which endpoint is the worst and why."
+    },
+    {
+      "title": "Hourly traffic report",
+      "prompt": "Build an hourly traffic report from logs/nginx/access.log: write traffic.csv with the header hour,requests,errors_5xx,max_rt_ms where hour is 00 to 23 (UTC), requests counts every line in that hour, and max_rt_ms is the largest rt= value in milliseconds as an integer. Then point out the hours that look unusual and explain why."
+    }
+  ]
+}

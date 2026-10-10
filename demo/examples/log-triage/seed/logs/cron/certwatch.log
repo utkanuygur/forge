@@ -1,0 +1,24 @@
+2026-09-14T00:00:01Z certwatch INFO  host=www.acme.example port=443 issuer="R11" not_after=2026-12-02T11:04:31Z days_left=79
+2026-09-14T00:00:01Z certwatch INFO  host=api.acme.example port=443 issuer="R11" not_after=2026-12-02T11:04:31Z days_left=79
+2026-09-14T00:00:01Z certwatch WARN  host=payments.acme.example port=443 issuer="DigiCert Global G2 TLS RSA SHA256 2020 CA1" not_after=2026-09-21T23:59:59Z days_left=7 msg="certificate expires soon, renew"
+2026-09-14T00:00:01Z certwatch WARN  host=grafana.internal.acme.example port=443 issuer="Acme Internal CA" not_after=2026-10-03T08:30:00Z days_left=19 msg="certificate expires soon, renew"
+2026-09-14T00:00:01Z certwatch INFO  host=status.acme.example port=443 issuer="R10" not_after=2026-10-16T09:00:00Z days_left=32
+2026-09-14T00:00:01Z certwatch INFO  host=cdn.acme.example port=443 issuer="Amazon RSA 2048 M02" not_after=2027-03-18T00:00:00Z days_left=184
+2026-09-14T06:00:01Z certwatch INFO  host=www.acme.example port=443 issuer="R11" not_after=2026-12-02T11:04:31Z days_left=79
+2026-09-14T06:00:01Z certwatch INFO  host=api.acme.example port=443 issuer="R11" not_after=2026-12-02T11:04:31Z days_left=79
+2026-09-14T06:00:01Z certwatch WARN  host=payments.acme.example port=443 issuer="DigiCert Global G2 TLS RSA SHA256 2020 CA1" not_after=2026-09-21T23:59:59Z days_left=7 msg="certificate expires soon, renew"
+2026-09-14T06:00:01Z certwatch WARN  host=grafana.internal.acme.example port=443 issuer="Acme Internal CA" not_after=2026-10-03T08:30:00Z days_left=19 msg="certificate expires soon, renew"
+2026-09-14T06:00:01Z certwatch INFO  host=status.acme.example port=443 issuer="R10" not_after=2026-10-16T09:00:00Z days_left=32
+2026-09-14T06:00:01Z certwatch INFO  host=cdn.acme.example port=443 issuer="Amazon RSA 2048 M02" not_after=2027-03-18T00:00:00Z days_left=184
+2026-09-14T12:00:01Z certwatch INFO  host=www.acme.example port=443 issuer="R11" not_after=2026-12-02T11:04:31Z days_left=78
+2026-09-14T12:00:01Z certwatch INFO  host=api.acme.example port=443 issuer="R11" not_after=2026-12-02T11:04:31Z days_left=78
+2026-09-14T12:00:01Z certwatch WARN  host=payments.acme.example port=443 issuer="DigiCert Global G2 TLS RSA SHA256 2020 CA1" not_after=2026-09-21T23:59:59Z days_left=7 msg="certificate expires soon, renew"
+2026-09-14T12:00:01Z certwatch WARN  host=grafana.internal.acme.example port=443 issuer="Acme Internal CA" not_after=2026-10-03T08:30:00Z days_left=18 msg="certificate expires soon, renew"
+2026-09-14T12:00:01Z certwatch INFO  host=status.acme.example port=443 issuer="R10" not_after=2026-10-16T09:00:00Z days_left=31
+2026-09-14T12:00:01Z certwatch INFO  host=cdn.acme.example port=443 issuer="Amazon RSA 2048 M02" not_after=2027-03-18T00:00:00Z days_left=184
+2026-09-14T18:00:01Z certwatch INFO  host=www.acme.example port=443 issuer="R11" not_after=2026-12-02T11:04:31Z days_left=78
+2026-09-14T18:00:01Z certwatch INFO  host=api.acme.example port=443 issuer="R11" not_after=2026-12-02T11:04:31Z days_left=78
+2026-09-14T18:00:01Z certwatch WARN  host=payments.acme.example port=443 issuer="DigiCert Global G2 TLS RSA SHA256 2020 CA1" not_after=2026-09-21T23:59:59Z days_left=7 msg="certificate expires soon, renew"
+2026-09-14T18:00:01Z certwatch WARN  host=grafana.internal.acme.example port=443 issuer="Acme Internal CA" not_after=2026-10-03T08:30:00Z days_left=18 msg="certificate expires soon, renew"
+2026-09-14T18:00:01Z certwatch INFO  host=status.acme.example port=443 issuer="R10" not_after=2026-10-16T09:00:00Z days_left=31
+2026-09-14T18:00:01Z certwatch INFO  host=cdn.acme.example port=443 issuer="Amazon RSA 2048 M02" not_after=2027-03-18T00:00:00Z days_left=184
