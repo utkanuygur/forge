@@ -1,16 +1,27 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { Bot, Plus } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Bot, Plus, Sparkles } from "lucide-react";
 import { api, errMsg, type Agent, type AgentCreated } from "../api";
 import NewAgentForm from "../components/NewAgentForm";
 import ApiKeyCallout from "../components/ApiKeyCallout";
 import { Badge, Empty, ErrorBox, Loading, Modal } from "../components/ui";
+import { ExamplesEmptyCard, ExamplesModal, installAllMessage, type InstallAllResult } from "../components/Examples";
+import { useToast } from "../components/Toast";
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<AgentCreated | null>(null);
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const navigate = useNavigate();
+  const toast = useToast();
+
+  function examplesAdded(r: InstallAllResult) {
+    setExamplesOpen(false);
+    toast(installAllMessage(r));
+    load();
+  }
 
   async function load() {
     try {
@@ -31,9 +42,14 @@ export default function AgentsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
           <p className="text-sm text-neutral-500 dark:text-neutral-400">Build, deploy, and improve general purpose agents.</p>
         </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" /> New agent
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button className="btn-secondary" onClick={() => setExamplesOpen(true)}>
+            <Sparkles className="h-4 w-4" /> Examples
+          </button>
+          <button className="btn-primary" onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" /> New agent
+          </button>
+        </div>
       </div>
 
       {created && (
@@ -46,7 +62,12 @@ export default function AgentsPage() {
       <ErrorBox error={error} />
 
       {agents === null && !error && <Loading />}
-      {agents && agents.length === 0 && <Empty>No agents yet. Create one from scratch or start from a template.</Empty>}
+      {agents && agents.length === 0 && (
+        <>
+          <ExamplesEmptyCard onInstalledAll={examplesAdded} onChoose={() => setExamplesOpen(true)} />
+          <Empty>No agents yet. Add the examples above, or create one from scratch or a template.</Empty>
+        </>
+      )}
       {agents && agents.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {agents.map((a) => (
@@ -80,6 +101,18 @@ export default function AgentsPage() {
             </Link>
           ))}
         </div>
+      )}
+
+      {examplesOpen && (
+        <ExamplesModal
+          onClose={() => setExamplesOpen(false)}
+          onInstalledAll={examplesAdded}
+          onInstalled={(a) => {
+            setExamplesOpen(false);
+            toast(`Added ${a.name}`);
+            navigate(`/agents/${a.slug}`);
+          }}
+        />
       )}
 
       {creating && (
