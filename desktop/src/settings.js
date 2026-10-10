@@ -1,8 +1,10 @@
-// Settings in userData/settings.json. The API key is encrypted with safeStorage (Keychain backed)
-// and stored only as ciphertext; it is never written in plain text or logged.
+// Settings in userData/settings.json. API keys are encrypted with safeStorage (Keychain backed) and stored
+// only as ciphertext; they are never written in plain text or logged. Every other setting lives in the
+// server (web Settings page, /v1/settings); see keys.js for the pure helpers.
 const fs = require('fs');
 const { safeStorage } = require('electron');
 const paths = require('./paths');
+const keys = require('./keys');
 
 function read() {
   try {
@@ -19,8 +21,7 @@ function write(data) {
   fs.renameSync(`${file}.tmp`, file);
 }
 
-function apiKey() {
-  const enc = read().anthropicApiKeyEncrypted;
+function decrypt(enc) {
   if (!enc) return '';
   try {
     return safeStorage.decryptString(Buffer.from(enc, 'base64'));
@@ -29,39 +30,47 @@ function apiKey() {
   }
 }
 
-// What the server needs: { apiKey, defaultModel, graderModel }
-function forServer() {
-  const s = read();
-  return { apiKey: apiKey(), defaultModel: s.defaultModel || '', graderModel: s.graderModel || '' };
+function encrypt(text) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage is not available, so the key was not saved.');
+  return safeStorage.encryptString(text).toString('base64');
 }
 
-// What the Settings window may see: never the key itself.
+function apiKey() {
+  return decrypt(read().anthropicApiKeyEncrypted);
+}
+
+function secrets() {
+  const out = {};
+  for (const [name, enc] of Object.entries(read().secretsEncrypted || {})) {
+    const value = decrypt(enc);
+    if (value) out[name] = value;
+  }
+  return out;
+}
+
+// What the server needs: { apiKey, secrets: { NAME: key } }
+function forServer() {
+  return { apiKey: apiKey(), secrets: secrets() };
+}
+
+// What the Settings window may see: never a key itself.
 function forWindow() {
   const s = read();
   const key = s.anthropicApiKeyEncrypted ? apiKey() : '';
+  const names = Object.keys(s.secretsEncrypted || {});
   return {
     hasKey: Boolean(key),
     keyHint: key ? key.slice(-4) : '',
-    defaultModel: s.defaultModel || '',
-    graderModel: s.graderModel || '',
+    hasOpenaiKey: names.includes('OPENAI_API_KEY'),
+    endpointKeys: names.filter((n) => n !== 'OPENAI_API_KEY').sort(),
     firstRun: !s.anthropicApiKeyEncrypted && !s.dismissedKeyPrompt,
     encryptionAvailable: safeStorage.isEncryptionAvailable(),
   };
 }
 
-// update: { apiKey?: string (empty keeps the saved one), clearKey?: bool, defaultModel, graderModel }
+// update: see keys.applyKeyUpdate
 function save(update) {
-  const s = read();
-  if (update.clearKey) delete s.anthropicApiKeyEncrypted;
-  const key = String(update.apiKey || '').trim();
-  if (key) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage is not available, so the key was not saved.');
-    s.anthropicApiKeyEncrypted = safeStorage.encryptString(key).toString('base64');
-  }
-  s.defaultModel = String(update.defaultModel || '').trim();
-  s.graderModel = String(update.graderModel || '').trim();
-  s.dismissedKeyPrompt = true;
-  write(s);
+  write({ ...keys.applyKeyUpdate(read(), update, encrypt), dismissedKeyPrompt: true });
 }
 
 function dismissFirstRun() {
@@ -69,4 +78,13 @@ function dismissFirstRun() {
   if (!s.dismissedKeyPrompt) write({ ...s, dismissedKeyPrompt: true });
 }
 
-module.exports = { forServer, forWindow, save, apiKey, dismissFirstRun };
+// Models chosen in the old native window move to the server once (PATCH /v1/settings), then leave this file.
+function legacyModels() {
+  return keys.legacyModels(read());
+}
+
+function dropLegacyModels() {
+  write(keys.withoutLegacyModels(read()));
+}
+
+module.exports = { forServer, forWindow, save, apiKey, dismissFirstRun, legacyModels, dropLegacyModels };

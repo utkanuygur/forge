@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('forgeSettings', {
   save: (values) => ipcRenderer.invoke('settings:save', values),
   test: (apiKey) => ipcRenderer.invoke('settings:test', String(apiKey || '')),
   close: () => ipcRenderer.send('settings:close'),
+  openAll: () => ipcRenderer.send('settings:openAll'),
 });

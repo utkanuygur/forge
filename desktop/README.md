@@ -55,7 +55,8 @@ takes a few minutes, then opens Settings to ask for a Claude API key.
 | Main process | `src/main.js` | Startup flow, windows, menus, settings IPC, quit cleanup |
 | Docker | `src/docker.js` | `docker info`, `docker image inspect`, first-run `docker build` |
 | Server | `src/server.js` | Picks a free port, spawns the server, polls `/healthz`, writes the log |
-| Settings | `src/settings.js` | `settings.json` with the key encrypted by `safeStorage` |
+| Settings | `src/settings.js`, `src/keys.js` | `settings.json` with API keys encrypted by `safeStorage`; pure key helpers (`npm test`) |
+| Main window bridge | `src/preload-main.js` | `window.forgeDesktop` for the web Settings page: open the keys window, restart the server |
 | Public link | `src/tunnel.js` | `cloudflared tunnel --url http://127.0.0.1:<port>` |
 | Pages | `src/ui/` | Startup and Settings windows (local HTML, no remote content) |
 | Server entry | `../forge/desktop_entry.py` | Runs uvicorn on `--host`/`--port`; exits if the app process is gone |
@@ -69,31 +70,43 @@ GUI apps on macOS get a minimal PATH, so the app looks for `docker`, `cloudflare
 
 The server binary is a PyInstaller onedir build in `Forge.app/Contents/Resources/forge-server`. It
 listens on 127.0.0.1 only and gets this environment: `FORGE_DATA_DIR`, `FORGE_EXECUTOR=docker`,
-the PATH above, `ANTHROPIC_API_KEY` (when saved), `FORGE_DEFAULT_MODEL` and `FORGE_GRADER_MODEL`
-(when set in Settings). Its working directory is the data folder, so a `.env` file placed there is
+the PATH above, `FORGE_DESKTOP=1`, the saved API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and any
+endpoint key variables) and `FORGE_DESKTOP_SECRETS` naming them. Every other setting (models, sandbox,
+evaluations and so on) lives in the server and is changed on the Settings page of the Forge window, so the
+app sets no other variables that would make those settings read only. Models saved by older versions of
+the native Settings window are moved there once at startup. Its working directory is the data folder, so a `.env` file placed there is
 also read. `forge/schema.sql` and `web/dist` are bundled as data at the paths `forge/db.py` and
 `forge/server/app.py` compute from `__file__`, so nothing in the server changes when frozen.
 
 | Location | Contents |
 |---|---|
 | `~/Library/Application Support/Forge/data` | Forge database and run artifacts (File > Open Data Folder) |
-| `~/Library/Application Support/Forge/settings.json` | Models and the encrypted API key |
+| `~/Library/Application Support/Forge/settings.json` | The encrypted API keys |
 | `~/Library/Application Support/Forge/window-state.json` | Main window size and position |
 | `~/Library/Logs/Forge/server.log` | Server output, rotated at 5 MB, 3 old files kept (Help > Show Logs) |
 
-The API key is encrypted with Electron `safeStorage`, whose key lives in the macOS Keychain item
-"Forge Safe Storage". Only ciphertext is written to disk and the key is never logged. Settings can
-test a key against `GET https://api.anthropic.com/v1/models`. Saving restarts the server. Without a
-key Forge still works for agents on local models (OpenAI compatible servers such as Ollama).
+API keys are encrypted with Electron `safeStorage`, whose key lives in the macOS Keychain item
+"Forge Safe Storage". Only ciphertext is written to disk and keys are never logged. The native
+Settings window (Forge > Settings) holds keys only: the Claude key (Test checks it against
+`GET https://api.anthropic.com/v1/models`), the OpenAI compatible key and named endpoint keys such as
+`VLLM_API_KEY`. Saving restarts the server. Open all settings shows the web Settings page in the
+main window. Without a key Forge still works for agents on local models (OpenAI compatible servers
+such as Ollama).
+
+Restart: when a setting marked Needs restart changes, the web Settings page shows Restart required
+with a Restart button. The button calls `window.forgeDesktop.restartServer()` (preload, IPC
+`main:restartServer`, accepted only from the main window), and the main process runs the normal
+startup flow again, which stops the server it owns, starts it with the same keys and reloads the
+window on `/settings`. The server has no restart endpoint; outside the app it is restarted by hand.
 
 Share > Start Public Link runs a Cloudflare quick tunnel and shows the `trycloudflare.com` address.
 Requests through the tunnel carry proxy headers, so the server treats them as remote: share links
 and the API with an agent key work, the builder does not. Share > Stop Public Link ends it.
 
 Security: every window uses `contextIsolation`, a sandboxed renderer and no Node integration. The
-main window has no preload and may only navigate within the local server origin; other links open
-in the default browser and new windows are refused. The Startup and Settings windows get small
-preloads exposing only their own actions. The only web permission granted is clipboard writing.
+main window may only navigate within the local server origin; other links open in the default
+browser and new windows are refused. Every window's preload exposes only its own actions (the main
+window: open the keys window and restart the server), and each IPC handler checks the sender. The only web permission granted is clipboard writing.
 
 Quitting stops the tunnel and the server with SIGTERM, then SIGKILL after 5 seconds. If the app is
 killed outright, the server notices its parent is gone (`FORGE_PARENT_PID`) and exits by itself.
@@ -114,7 +127,8 @@ while you work; screenshots come from `webContents.capturePage`. Flags:
 | `--out <dir>` | Where screenshots and `results.json` go (default `build/verify`) |
 
 It checks Docker and the server start, saves a dummy key and confirms it is stored encrypted,
-creates an agent on `fake:hello`, runs it in a Docker sandbox, takes screenshots, quits, and fails if
+checks the main window bridge, sets the default model to `fake:hello` through `PATCH /v1/settings`,
+creates an agent on it, runs it in a Docker sandbox, takes screenshots, quits, and fails if
 any server or cloudflared process is left behind.
 
 ## Limits

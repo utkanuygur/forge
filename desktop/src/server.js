@@ -5,6 +5,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const paths = require('./paths');
 const { toolPath, findExecutable, stopProcess } = require('./proc');
+const { secretEnv } = require('./keys');
 
 const HOST = '127.0.0.1';
 const LOG_LIMIT = 5 * 1024 * 1024;
@@ -77,7 +78,8 @@ function command(port) {
   return { cmd: bin, args: ['--host', HOST, '--port', String(port)], cwd: paths.dataDir(), group: false };
 }
 
-// settings: { apiKey, defaultModel, graderModel }
+// settings: { apiKey, secrets: { NAME: key } } from settings.forServer(). Only keys are passed; every other
+// setting is saved by the server itself (web Settings page), so nothing here makes it read only there.
 function start(port, settings) {
   fs.mkdirSync(paths.dataDir(), { recursive: true });
   openLog();
@@ -88,16 +90,16 @@ function start(port, settings) {
     FORGE_DATA_DIR: paths.dataDir(),
     FORGE_EXECUTOR: 'docker',
     FORGE_PARENT_PID: String(process.pid),
+    FORGE_DESKTOP: '1', // the web Settings page offers Restart and Manage keys through the desktop bridge
     PYTHONUNBUFFERED: '1',
   };
-  for (const k of ['ANTHROPIC_API_KEY', 'FORGE_DEFAULT_MODEL', 'FORGE_GRADER_MODEL']) {
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'FORGE_DEFAULT_MODEL', 'FORGE_GRADER_MODEL']) {
     if (!paths.isDev) delete env[k];
   }
-  if (settings.apiKey) env.ANTHROPIC_API_KEY = settings.apiKey;
-  if (settings.defaultModel) env.FORGE_DEFAULT_MODEL = settings.defaultModel;
-  if (settings.graderModel) env.FORGE_GRADER_MODEL = settings.graderModel;
+  Object.assign(env, secretEnv(settings.apiKey, settings.secrets));
 
-  note(`starting ${path.basename(cmd)} ${args.join(' ')} (api key ${settings.apiKey ? 'set' : 'not set'})`);
+  note(`starting ${path.basename(cmd)} ${args.join(' ')} (api key ${settings.apiKey ? 'set' : 'not set'}, ` +
+    `${Object.keys(settings.secrets || {}).length} other keys)`);
   child = spawn(cmd, args, { cwd, env, detached: group, stdio: ['ignore', 'pipe', 'pipe'] });
   child.group = group;
   child.stdout.on('data', (d) => log(String(d)));

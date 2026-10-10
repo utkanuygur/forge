@@ -122,7 +122,8 @@ function dockerProblem(result) {
 
 // ---------------------------------------------------------------- boot
 
-async function boot({ title = 'Starting Forge' } = {}) {
+// page: where the main window lands once the server is ready (e.g. '/settings' after a restart from there).
+async function boot({ title = 'Starting Forge', page = '' } = {}) {
   const id = ++bootId;
   const current = () => id === bootId;
   ui = { title, steps: STEPS.map((label) => ({ label, state: 'pending', detail: '' })), problem: null };
@@ -201,9 +202,10 @@ async function boot({ title = 'Starting Forge' } = {}) {
   }
   if (!current()) return false;
   setStep(3, 'done');
+  await migrateLegacyModels(base);
 
-  if (mainWin && !mainWin.isDestroyed()) mainWin.loadURL(base);
-  else createMainWindow();
+  if (mainWin && !mainWin.isDestroyed()) mainWin.loadURL(base + page);
+  else createMainWindow(page);
   closeStartupWindow();
   buildMenu();
   return true;
@@ -243,7 +245,28 @@ function saveWindowState() {
   }
 }
 
-function createMainWindow() {
+// Models chosen in the old native Settings window now live in the server (web Settings page). Move them
+// once; a 422 (for example the environment owns the setting in dev mode) also ends the move.
+async function migrateLegacyModels(origin) {
+  const body = settings.legacyModels();
+  if (!body) return;
+  try {
+    const res = await fetch(`${origin}/v1/settings`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok || res.status === 422) {
+      settings.dropLegacyModels();
+      server.note(`moved saved models to the server settings (${res.status})`);
+    }
+  } catch (err) {
+    server.note(`could not move saved models yet: ${err.message}`);
+  }
+}
+
+function createMainWindow(page = '') {
   const state = loadWindowState();
   mainWin = new BrowserWindow({
     width: 1360,
@@ -254,7 +277,7 @@ function createMainWindow() {
     title: 'Forge',
     show: false,
     backgroundColor: '#f6f5f2',
-    webPreferences: secureWebPreferences(null),
+    webPreferences: secureWebPreferences('preload-main.js'),
   });
   let saveTimer = null;
   const queueSave = () => {
@@ -271,7 +294,42 @@ function createMainWindow() {
     reveal(mainWin);
     if (settings.forWindow().firstRun) openSettings();
   });
-  mainWin.loadURL(base);
+  mainWin.loadURL(base + page);
+}
+
+// ---------------------------------------------------------------- main window bridge (preload-main.js)
+
+function fromMain(e) {
+  if (!mainWin || mainWin.isDestroyed() || e.sender !== mainWin.webContents) throw new Error('not allowed');
+}
+
+ipcMain.on('main:openKeySettings', (e) => {
+  try {
+    fromMain(e);
+  } catch {
+    return;
+  }
+  openSettings();
+});
+
+// Restart path for restart settings: the web Settings page asks, the main process restarts the server it
+// owns (boot stops it, starts it again with the same keys and reloads this window on /settings).
+ipcMain.handle('main:restartServer', async (e) => {
+  fromMain(e);
+  server.note('restart requested from the Settings page');
+  const ok = await boot({ title: 'Restarting Forge', page: '/settings' });
+  return ok ? { ok: true } : { ok: false, error: 'The server did not restart. See the Forge window for details.' };
+});
+
+function showAllSettings() {
+  if (!base) return;
+  if (mainWin && !mainWin.isDestroyed()) {
+    mainWin.loadURL(`${base}/settings`);
+    reveal(mainWin);
+    focus(mainWin);
+  } else {
+    createMainWindow('/settings');
+  }
 }
 
 // Only the local server origin and our own bundled pages may load inside the app.
@@ -319,7 +377,7 @@ function openSettings() {
   }
   settingsWin = new BrowserWindow({
     width: 520,
-    height: 536,
+    height: 690,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -350,12 +408,19 @@ ipcMain.handle('settings:get', (e) => {
 
 ipcMain.handle('settings:save', async (e, values) => {
   fromSettings(e);
+  const str = (v) => (typeof v === 'string' ? v : '');
+  const add = {};
+  if (values.add && typeof values.add === 'object') {
+    for (const [k, v] of Object.entries(values.add)) add[str(k)] = str(v);
+  }
   try {
     settings.save({
-      apiKey: typeof values.apiKey === 'string' ? values.apiKey : '',
+      apiKey: str(values.apiKey),
       clearKey: values.clearKey === true,
-      defaultModel: typeof values.defaultModel === 'string' ? values.defaultModel : '',
-      graderModel: typeof values.graderModel === 'string' ? values.graderModel : '',
+      openaiKey: str(values.openaiKey),
+      clearOpenaiKey: values.clearOpenaiKey === true,
+      add,
+      remove: Array.isArray(values.remove) ? values.remove.map(str) : [],
     });
   } catch (err) {
     return { ok: false, error: err.message };
@@ -388,6 +453,11 @@ ipcMain.handle('settings:test', async (e, typed) => {
 
 ipcMain.on('settings:close', (e) => {
   if (settingsWin && e.sender === settingsWin.webContents) settingsWin.close();
+});
+
+ipcMain.on('settings:openAll', (e) => {
+  if (!settingsWin || e.sender !== settingsWin.webContents) return;
+  showAllSettings();
 });
 
 // ---------------------------------------------------------------- public link

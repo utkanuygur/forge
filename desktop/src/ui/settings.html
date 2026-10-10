@@ -9,7 +9,7 @@
 <body>
   <div class="drag"></div>
   <main>
-    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>Settings</h1></div>
+    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>API keys</h1></div>
     <div class="notice" id="first-run" hidden>
       Add your Claude API key to run agents with Claude. Without a key, Forge still works for agents that use local models, such as one served by Ollama.
     </div>
@@ -18,21 +18,30 @@
       <input type="password" id="key" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
       <div class="hint" id="key-hint">Stored encrypted in your macOS Keychain. Get a key at console.anthropic.com.</div>
 
-      <label for="default-model">Default agent model</label>
-      <input type="text" id="default-model" spellcheck="false" placeholder="anthropic:claude-sonnet-5-5">
-      <div class="hint">Used for new agents. Leave empty for the built in default.</div>
+      <label for="openai-key">OpenAI compatible API key</label>
+      <input type="password" id="openai-key" autocomplete="off" spellcheck="false" placeholder="Optional">
+      <div class="hint">Sent to OpenAI compatible endpoints, such as vLLM, that do not name their own key variable.</div>
 
-      <label for="grader-model">Grader model</label>
-      <input type="text" id="grader-model" spellcheck="false" placeholder="Same as the default agent model">
-      <div class="hint">Judges evaluation runs and proposes improvements.</div>
+      <label for="add-name">Endpoint keys</label>
+      <ul class="keys" id="endpoint-keys"></ul>
+      <div class="pair">
+        <input type="text" id="add-name" spellcheck="false" placeholder="VLLM_API_KEY" aria-label="Key variable">
+        <input type="password" id="add-value" autocomplete="off" spellcheck="false" placeholder="Key" aria-label="Key">
+      </div>
+      <div class="hint">For an endpoint whose key variable is set in Settings. Every key is kept in the Keychain.</div>
 
       <div class="status" id="status" role="status"></div>
       <div class="row">
-        <button type="button" id="clear" hidden>Remove key</button>
+        <button type="button" id="clear" hidden>Remove Claude key</button>
+        <button type="button" id="clear-openai" hidden>Remove OpenAI key</button>
         <span class="spacer"></span>
         <button type="button" id="test">Test key</button>
         <button type="button" id="cancel">Close</button>
         <button type="submit" class="primary" id="save">Save</button>
+      </div>
+      <div class="row">
+        <button type="button" id="open-all">Open all settings</button>
+        <span class="hint inline">Models, sandbox, evaluations and more are in the Settings page of the Forge window.</span>
       </div>
     </form>
   </main>

@@ -129,7 +129,6 @@ try {
     await shot(app, settingsWin, 'settings.png');
     const dummy = 'sk-ant-api03-DUMMYVERIFYKEY-0000000000';
     await setValue(settingsWin, '#key', dummy);
-    await setValue(settingsWin, '#default-model', 'fake:hello');
     await click(settingsWin, '#save');
     await waitFor(settingsWin, () => document.querySelector('#status.ok'), null, 120000);
     log('settings saved:', await settingsWin.evaluate(() => document.querySelector('#status').textContent));
@@ -148,13 +147,18 @@ try {
     // Create an agent and run it in Docker through the local API (the main window is a localhost client).
     const page = await windowWhere(app, (u) => u.startsWith(origin));
     await page.waitForLoadState('load');
+    const bridge = await page.evaluate(() => typeof window.forgeDesktop?.restartServer === 'function');
+    if (!bridge) fail('the main window has no desktop bridge for the Settings page');
     const run = await page.evaluate(async () => {
-      const post = async (url, body) => {
-        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const post = async (url, body, method = 'POST') => {
+        const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
         const j = await r.json();
         if (!r.ok) throw new Error(`${url} ${r.status} ${JSON.stringify(j)}`);
         return j;
       };
+      // The default model is a server setting now (web Settings page), saved without a restart.
+      const s = await post('/v1/settings', { default_model: 'fake:hello' }, 'PATCH');
+      if (!s.desktop) throw new Error('the server does not know it runs in the desktop app');
       const agent = await post('/v1/agents', { slug: 'hello-desktop', name: 'Hello desktop', system_prompt: 'Write and run hello.py.' });
       const run = await post(`/v1/agents/${agent.slug}/runs`, { input: 'Say hello', wait: true });
       const events = await (await fetch(`/v1/runs/${run.id}/events.json`)).json();
