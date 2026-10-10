@@ -39,6 +39,8 @@ def _free_port() -> int:
         start = int(worker[2:]) % len(ports) if worker[2:].isdigit() else 0
         for port in ports[start:] + ports[:start]:
             with socket.socket() as s:
+                # Like uvicorn: a port whose old connections are in TIME_WAIT is free to listen on again.
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
                     s.bind(("127.0.0.1", port))
                 except OSError:
