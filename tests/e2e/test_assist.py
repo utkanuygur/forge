@@ -52,7 +52,7 @@ def test_share_token_works_hides_builder_fields_and_is_rate_limited(api, make_ag
 
 
 def test_eval_case_and_eval_cases_create_nothing_until_added_and_checkers_fail_on_the_seed(api, make_agent):
-    """GEN6: eval_case and eval_cases only return drafts; adding the batch creates exactly those cases, and the
+    """GEN7: eval_case and eval_cases only return drafts; adding the batch creates exactly those cases, and the
     generated shell checkers FAIL on the untouched workspace when evaluated in the sandbox."""
     from tests.e2e.helpers import wait_evals
 
@@ -78,7 +78,7 @@ def test_eval_case_and_eval_cases_create_nothing_until_added_and_checkers_fail_o
 
 
 def test_eval_case_from_run_uses_its_input_and_feedback_then_save_as_eval(api, make_agent):
-    """GEN6: from_run_id drafts a case from a run and its feedback (input verbatim); saving it is a separate call."""
+    """GEN7: from_run_id drafts a case from a run and its feedback (input verbatim); saving it is a separate call."""
     agent = make_agent("genrun", model="fake:echo")
     slug = agent["slug"]
     run = api.post(f"/agents/{slug}/runs", json={"input": "Explain how the workspace is laid out.",
@@ -100,7 +100,7 @@ def test_eval_case_from_run_uses_its_input_and_feedback_then_save_as_eval(api, m
 
 
 def test_cron_from_plain_english_with_next_fire_times(api, make_agent):
-    """GEN7: cron turns plain English into an expression the schedule trigger accepts, with 3 next fire times."""
+    """GEN9: cron turns plain English into an expression the schedule trigger accepts, with 3 next fire times."""
     import time
 
     agent = make_agent("gencron", model="fake:echo")
