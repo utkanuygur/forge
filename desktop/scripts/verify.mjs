@@ -167,6 +167,12 @@ try {
     if (run.model !== 'fake:hello') fail('default model setting did not reach the server');
     if (run.status !== 'succeeded' || !run.tool.some((t) => t.includes('hello from forge'))) fail('run did not succeed in the sandbox');
 
+    // The bundled example agents (forge/examples.py reads _internal/demo when frozen).
+    const examples = await page.evaluate(async () => (await fetch('/v1/examples')).json());
+    results.examples = Array.isArray(examples) ? examples.map((e) => `${e.key}:${e.eval_cases}`) : examples;
+    log('examples', results.examples);
+    if (!Array.isArray(examples) || examples.length < 4 || examples.some((e) => !e.eval_cases)) fail('example agents are not bundled');
+
     await page.goto(`${origin}/runs/${run.id}`);
     await page.waitForTimeout(1500);
     await shot(app, page, 'run.png');

@@ -41,9 +41,16 @@ def test_every_router_is_mounted_before_the_spa_catch_all(client):
          200, "is_error"),                                                            # tools
         ("get", "/v1/agents/r1/triggers", None, 200, None),                           # triggers builder
         ("post", "/v1/hooks/github/tr_missing", {}, 404, "trigger not found"),        # triggers hooks
+        ("get", "/v1/agents/r1/sessions", None, 200, None),                           # playground sessions
+        ("post", "/v1/runs/r_missing/cancel", None, 404, "run not found"),            # run cancel
+        ("get", "/v1/runs/r_missing/files", None, 404, None),                         # workspace files
+        ("post", "/v1/assist/nope", {}, 404, "unknown assist kind"),                  # assist
+        ("get", "/v1/examples", None, 200, None),                                     # examples
     ]
     for method, path, body, status, needle in checks:
         r = getattr(client, method)(path, **({"json": body} if body is not None else {}))
+        if r.status_code == 404 and status == 404:  # a route's own 404 (not the catch-all's "not found")
+            assert r.json() != {"detail": "not found"}, path
         assert r.status_code == status, (path, r.status_code, r.text[:200])
         assert "SPA" not in r.text and r.json() != {"detail": "not found"}, path
         if needle:

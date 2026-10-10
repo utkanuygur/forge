@@ -3,6 +3,11 @@
 Forge ships four example agents, each with starter prompts you can run right away and evaluation cases with
 known correct answers. Every agent runs in the Docker sandbox with no network.
 
+The quickest way needs no terminal: on the Agents page (web or desktop app), click **Add all** on the
+"Add example agents" card that an empty server shows, or open **Examples** in the page header to pick
+examples one at a time and choose their model (server default, a Claude model, or local Qwen through
+Ollama). From a terminal:
+
 ```bash
 make serve                                     # in one terminal
 make examples                                  # or: uv run python demo/load_examples.py --base-url http://localhost:8000

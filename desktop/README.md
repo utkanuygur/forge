@@ -74,6 +74,14 @@ the PATH above, `ANTHROPIC_API_KEY` (when saved), `FORGE_DEFAULT_MODEL` and `FOR
 also read. `forge/schema.sql` and `web/dist` are bundled as data at the paths `forge/db.py` and
 `forge/server/app.py` compute from `__file__`, so nothing in the server changes when frozen.
 
+Example agents ship inside the bundle too, so the Agents page can add them with one click (the
+"Add example agents" card on an empty Agents page, or the Examples button). `build-server.sh` runs
+`python -m forge.examples stage build/examples-data/demo`, which copies only what an install needs
+(each example's `agent.json`, `evals.json` and seed files, plus `demo/repo-maintainer.json`,
+`demo/evals.json` and `demo/acme-orders`), and bundles that folder as `_internal/demo`. Reference
+solutions, build scripts, `prompt_checks.json` and caches are left out. When frozen,
+`forge/examples.py` reads from `sys._MEIPASS/demo`; `FORGE_EXAMPLES_DIR` overrides the location.
+
 | Location | Contents |
 |---|---|
 | `~/Library/Application Support/Forge/data` | Forge database and run artifacts (File > Open Data Folder) |

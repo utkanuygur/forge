@@ -17,7 +17,7 @@ if [[ "${SKIP_WEB_BUILD:-0}" != "1" ]]; then
 fi
 [[ -f web/dist/index.html ]] || { echo "web/dist/index.html is missing; build the web app first" >&2; exit 1; }
 
-rm -rf "$OUT/server" "$WORK"
+rm -rf "$OUT/server" "$WORK" "$OUT/examples-data"
 mkdir -p "$OUT/server" "$OUT/sandbox"
 cp sandbox/Dockerfile "$OUT/sandbox/Dockerfile"
 
@@ -32,6 +32,16 @@ export UV_PYTHON_PREFERENCE=only-managed
 uv python install 3.12
 uv sync --frozen --no-dev --python 3.12
 
+# Example agents (Agents page, "Add example agents"): forge/examples.py reads _internal/demo when frozen.
+# Stage only what an install needs (agent.json, evals.json, seed files, demo/repo-maintainer.json,
+# demo/evals.json and demo/acme-orders); reference solutions, build scripts and caches stay out.
+EXAMPLES_STAGE="$OUT/examples-data/demo"
+uv run --no-sync python -m forge.examples stage "$EXAMPLES_STAGE"
+[[ -f "$EXAMPLES_STAGE/examples/log-triage/agent.json" ]] || { echo "example staging failed" >&2; exit 1; }
+if find "$EXAMPLES_STAGE" -path '*/solutions/*' | grep -q .; then
+  echo "staged examples contain solutions/" >&2; exit 1
+fi
+
 # forge/db.py reads schema.sql next to its own __file__, and app.py serves web/dist from
 # parents[2] of forge/server/app.py. Frozen, both resolve inside _internal, so place the data there.
 uv run --no-sync --with pyinstaller pyinstaller \
@@ -44,6 +54,7 @@ uv run --no-sync --with pyinstaller pyinstaller \
   --specpath "$WORK" \
   --add-data "$REPO/forge/schema.sql:forge" \
   --add-data "$REPO/web/dist:web/dist" \
+  --add-data "$EXAMPLES_STAGE:demo" \
   --collect-submodules forge \
   --collect-submodules uvicorn \
   --collect-submodules sse_starlette \

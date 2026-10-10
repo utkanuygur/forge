@@ -33,7 +33,8 @@ make rehearse
 ```
 
 Or load all four example agents (log triage, data analyst, docs writer, repo maintainer) with starter
-prompts and verified eval cases: `make examples`, then see [docs/test-cases.md](docs/test-cases.md).
+prompts and verified eval cases: click **Examples** on the Agents page (or **Add all** on the empty Agents
+page, also in the desktop app), or run `make examples`, then see [docs/test-cases.md](docs/test-cases.md).
 
 Expose it to others: `cloudflared tunnel --url http://localhost:8000`.
 
