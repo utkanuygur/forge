@@ -1,0 +1,57 @@
+/* Forge assistant side panel. Light and dark follow prefers-color-scheme. */
+
+.cp-panel {
+  @apply fixed z-30 flex flex-col border-neutral-200 bg-white text-sm shadow-xl dark:border-neutral-800 dark:bg-neutral-900;
+}
+.cp-panel[hidden] { display: none; }
+/* Beside the page on tablets and up: below the 3.5rem header, full height. */
+.cp-panel-wide { @apply bottom-0 right-0 top-14 border-l; }
+/* Phones: a full screen sheet over the page. */
+.cp-panel-sheet { @apply inset-0 z-50; }
+
+.cp-resizer {
+  @apply absolute inset-y-0 -left-1 w-2 cursor-col-resize focus:outline-none focus-visible:bg-accent-500/30 hover:bg-accent-500/20;
+}
+.cp-header {
+  @apply flex items-center gap-1 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800;
+}
+.cp-icon {
+  @apply rounded-md p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 focus:outline-none
+    focus-visible:ring-2 focus-visible:ring-accent-500/40 dark:hover:bg-neutral-800 dark:hover:text-neutral-200;
+}
+.cp-history {
+  @apply max-h-64 overflow-y-auto border-b border-neutral-200 bg-neutral-50 py-1 dark:border-neutral-800 dark:bg-neutral-950/50;
+}
+.cp-history-item {
+  @apply flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs text-neutral-700 hover:bg-neutral-100
+    dark:text-neutral-300 dark:hover:bg-neutral-800;
+}
+.cp-scroll { @apply min-h-0 flex-1 overflow-y-auto px-3 py-3 text-[12.5px]; }
+.cp-conv { @apply space-y-2.5; }
+.cp-user {
+  @apply ml-auto w-fit max-w-[90%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-600 px-3 py-1.5
+    font-sans text-[13px] text-white;
+}
+.cp-text { @apply font-sans text-[13px]; }
+.cp-note { @apply font-sans text-xs italic text-neutral-500 dark:text-neutral-400; }
+.cp-step { @apply text-[12px]; }
+.cp-links { @apply mt-0.5 flex flex-wrap gap-x-3 pl-4; }
+.cp-link { @apply font-sans text-xs text-accent-600 hover:underline dark:text-accent-400; }
+.cp-confirm {
+  @apply rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 font-sans text-[13px]
+    dark:border-amber-800 dark:bg-amber-950/40;
+}
+.cp-empty { @apply space-y-3 py-2; }
+.cp-starters { @apply flex flex-wrap gap-1.5; }
+.cp-starters-inline { @apply border-t border-neutral-100 px-3 py-2 dark:border-neutral-800; }
+.cp-starter {
+  @apply rounded-full border border-neutral-200 px-2.5 py-1 font-sans text-xs text-neutral-700 hover:border-accent-300
+    hover:bg-accent-50/50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-accent-700
+    dark:hover:bg-accent-900/20;
+}
+.cp-composer { @apply border-t border-neutral-200 p-2 dark:border-neutral-800; }
+.cp-toggle {
+  @apply ml-auto inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-neutral-600 hover:bg-neutral-100
+    hover:text-neutral-900 aria-pressed:bg-accent-50 aria-pressed:text-accent-700 dark:text-neutral-400
+    dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:aria-pressed:bg-accent-900/30 dark:aria-pressed:text-accent-300;
+}
