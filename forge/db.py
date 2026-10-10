@@ -15,7 +15,7 @@ from typing import Any, Iterator
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
-JSON_COLUMNS = {"lessons", "lesson_meta", "tools", "http_tools", "seed_files", "payload", "summary"}
+JSON_COLUMNS = {"lessons", "lesson_meta", "tools", "http_tools", "seed_files", "payload", "summary", "suggested_prompts"}
 BOOL_COLUMNS = {"auto_promote", "network", "passed"}
 
 # ---------------------------------------------------------------- basics
@@ -65,7 +65,10 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 # Columns added after the first schema; CREATE TABLE IF NOT EXISTS does not add them to existing databases.
 ADDED_COLUMNS = {
-    "agents": {"eval_repeats": "INTEGER"},
+    "agents": {
+        "eval_repeats": "INTEGER",
+        "suggested_prompts": "TEXT NOT NULL DEFAULT '[]'",  # JSON list[{title, prompt}]
+    },
     "runs": {"cache_read_tokens": "INTEGER NOT NULL DEFAULT 0", "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0"},
     "eval_results": {"passes": "INTEGER", "runs": "INTEGER"},
     "improvements": {"kind": "TEXT NOT NULL DEFAULT 'improve'"},
@@ -139,13 +142,15 @@ def _update(table: str, key: str, key_value: Any, fields: dict[str, Any]) -> Non
 # ---------------------------------------------------------------- agents
 
 
-def create_agent(slug: str, name: str, description: str = "", auto_promote: bool = False) -> tuple[dict, str]:
+def create_agent(slug: str, name: str, description: str = "", auto_promote: bool = False,
+                 suggested_prompts: list[dict] | None = None) -> tuple[dict, str]:
     """Returns (agent row, plaintext api key)."""
     key = new_api_key()
     row = {
         "id": new_id("ag"), "slug": slug, "name": name, "description": description, "prod_version_id": None,
         "auto_promote": auto_promote, "api_key_hash": hash_key(key),
         "share_token": _secrets.token_urlsafe(16), "created_at": now(),
+        "suggested_prompts": suggested_prompts or [],
     }
     _insert("agents", row)
     return get_agent(row["id"]), key  # type: ignore[return-value]

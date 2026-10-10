@@ -19,6 +19,7 @@ separately by the live layer.
 | 3 | Full stack | `make test-e2e` | Docker | Real server + Docker + fake models: run lifecycle, SSE, uploads, versions, auth, feedback, secrets, limits, webhook, local CLI, **full improvement loop including regression blocking and auto-promotion**, observability metrics, cost, search, timelines, health and Prometheus endpoints | 1 to 3 min |
 | 4 | Web | `make test-web` | Docker, Chromium (Playwright) | Component and hook logic (Vitest); browser flows against the real backend: create, run, feedback, versions, evaluate, improve, promote, share page hides config, dashboard, monitoring, run filters, step timeline, phone width | 1 to 3 min |
 | 5 | Demo validity | `make test-demo` | Docker | Each demo eval case FAILS on the untouched repo, FAILS on a correct but convention-violating fix, PASSES on the reference fix (21 expectations) | ~1 min |
+| 5b | Example validity | `make test-examples` | Docker | Every example agent's shell checker (eval cases and suggested prompt checks) FAILS on the seed, FAILS on a plausible wrong answer where one exists, PASSES on the reference solution (50 expectations); `--judge` also grades the 4 judge cases with the real grader | ~30 s |
 | 6 | Live models | `make test-live` | `ANTHROPIC_API_KEY`; optional Ollama, `FORGE_VLLM_URL` | Real Claude completes a task in the sandbox; judge gives sensible verdicts; local and GPU models emit valid tool calls | 1 to 2 min, costs tokens |
 
 `make test` runs layers 1 to 3 (skipping Docker tests automatically if Docker is unavailable).

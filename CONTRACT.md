@@ -17,7 +17,7 @@ Change any of these only with a note in this file and updates to every implement
 | `forge/improve.py` | improve | Eval runner, judge, optimizer, promotion rule |
 | `forge/cli.py` | cli | `forge` Typer app |
 | `web/` | web | React + Vite + Tailwind single-page app |
-| `demo/` | demo | `acme-orders` seed repo, `repo-maintainer` agent definition, eval cases |
+| `demo/` | demo | `acme-orders` seed repo, `repo-maintainer` agent definition, eval cases; `examples/` example agents (`load_examples.py`, `verify_examples.py`) |
 | `tests/` | each owner | `tests/test_<area>.py` |
 
 ## Conventions
@@ -394,3 +394,25 @@ with `improvement_id` and the judged `run_id`), `improvement_runs` (eval runs st
 `runs(created_at)`. All are `CREATE ... IF NOT EXISTS`, so existing databases upgrade in place (columns added after the first schema,
 such as `runs.cache_read_tokens`, go through `forge.db.ADDED_COLUMNS`, applied by `_migrate` on connect). Promotions before
 this change are not known; an agent without records shows one synthetic promotion at its creation time.
+
+## Suggested prompts (additive)
+
+Starter tasks a person can run immediately, shown as clickable chips above the run input (Runs tab, and the
+Playground). They belong to the agent, not to a version: they describe what to try, not how the agent behaves,
+so changing them never creates a version and never affects evals.
+
+```jsonc
+// Agent gains
+"suggested_prompts": [{"title": "Find the 5xx root cause", "prompt": "Investigate the logs in /workspace ..."}]
+```
+
+| Where | Behavior |
+|---|---|
+| `POST /agents` | optional `suggested_prompts` |
+| `PATCH /agents/{slug}` | optional `suggested_prompts`; when present it replaces the list (`[]` clears it), when absent it is kept |
+| `POST /agents/{slug}/versions` | optional `suggested_prompts`, same replace semantics as PATCH; the Version object does not carry it |
+| `GET /agents`, `GET /agents/{slug}`, Agent responses | always include `suggested_prompts` (`[]` when none). Share token callers do not get it. |
+
+Validation: at most 12 items; `title` 1 to 80 characters, `prompt` 1 to 20000 characters; otherwise 422.
+Storage: `agents.suggested_prompts` (JSON text, default `'[]'`), added to existing databases by the guarded
+`ADDED_COLUMNS` migration in `forge/db.py`.
