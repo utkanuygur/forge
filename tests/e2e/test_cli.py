@@ -22,7 +22,8 @@ def forge_cli(*args: str, home: Path) -> subprocess.CompletedProcess:
     uv = shutil.which("uv")
     if not uv:
         pytest.skip("uv not on PATH")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("FORGE_")}
+    # CI sets FORCE_COLOR for readable logs; these assertions are about the plain (non-TTY) transcript.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("FORGE_") and k not in ("FORCE_COLOR", "NO_COLOR")}
     env.update({
         "HOME": str(home),
         "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR") or str(Path.home() / ".cache" / "uv"),
