@@ -38,3 +38,16 @@ test("FR4: save a new version, see it in history, and move Production with Promo
   expect(prod.n).toBe(2);
   expect(prod.system_prompt).toBe("Revised instructions for v2.");
 });
+
+test("FR9: Eval repeats setting PATCHes the agent", async ({ page, request }) => {
+  const slug = uniqueSlug("rep");
+  await createAgent(request, { slug, system_prompt: "Repeat me." });
+  await page.goto(`/agents/${slug}/configure`);
+  const repeats = page.getByLabel("Eval repeats");
+  await expect(repeats).toHaveValue("3");
+  await repeats.selectOption("5");
+  await expect(page.getByRole("status").filter({ hasText: "now run 5 times" })).toBeVisible();
+  expect((await (await request.get(`/v1/agents/${slug}`)).json()).eval_repeats).toBe(5);
+  await page.reload();
+  await expect(page.getByLabel("Eval repeats")).toHaveValue("5");
+});

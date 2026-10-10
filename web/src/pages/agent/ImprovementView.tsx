@@ -13,10 +13,29 @@ export function ScoreText({ score }: { score: Score }) {
   );
 }
 
-export function PassCell({ passed, reason, runId }: { passed: boolean; reason?: string; runId?: string | null }) {
+/** "2/3" when the verdict is a majority over several runs; null for a single run or unknown counts. */
+export function passFraction(passes?: number, runs?: number): string | null {
+  return runs && runs > 1 && passes !== undefined ? `${passes}/${runs}` : null;
+}
+
+export function PassCell({
+  passed,
+  reason,
+  runId,
+  passes,
+  runs,
+}: {
+  passed: boolean;
+  reason?: string;
+  runId?: string | null;
+  passes?: number;
+  runs?: number;
+}) {
+  const fraction = passFraction(passes, runs);
+  const verdict = passed ? "passed" : "failed";
   const body = (
     <span
-      title={reason || (passed ? "passed" : "failed")}
+      title={(fraction ? `${verdict} ${fraction} runs (majority). ` : "") + (reason || verdict)}
       className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${
         passed
           ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
@@ -25,6 +44,11 @@ export function PassCell({ passed, reason, runId }: { passed: boolean; reason?: 
     >
       {passed ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
       {passed ? "pass" : "fail"}
+      {fraction && (
+        <span data-testid="pass-fraction" className="font-mono tabular-nums opacity-80">
+          {fraction}
+        </span>
+      )}
       {runId && <ExternalLink className="h-3 w-3 opacity-60" />}
     </span>
   );
@@ -33,7 +57,7 @@ export function PassCell({ passed, reason, runId }: { passed: boolean; reason?: 
 
 function Cell({ r }: { r: CaseResult | null }) {
   if (!r) return <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />;
-  return <PassCell passed={r.passed} reason={r.reason} runId={r.run_id} />;
+  return <PassCell passed={r.passed} reason={r.reason} runId={r.run_id} passes={r.passes} runs={r.runs} />;
 }
 
 function ScoreCard({ split, im }: { split: "train" | "holdout"; im: Improvement }) {
@@ -161,7 +185,7 @@ export default function ImprovementView({
             </thead>
             <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {sortedCases.map((c) => (
-                <tr key={c.case_id}>
+                <tr key={c.case_id} data-testid="improvement-case" data-name={c.name}>
                   <td className="td font-mono text-xs">{c.name}</td>
                   <td className="td">
                     <SplitBadge split={c.split} />

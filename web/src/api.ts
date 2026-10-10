@@ -30,6 +30,7 @@ export interface Agent {
   description: string;
   prod_version: number;
   auto_promote: boolean;
+  eval_repeats?: number; // runs per eval case (k); a case passes on a strict majority
   share_token: string;
   created_at: number;
   versions?: Version[];
@@ -97,9 +98,11 @@ export interface Score {
 }
 
 export interface CaseResult {
-  passed: boolean;
+  passed: boolean; // majority verdict over `runs`
   reason: string;
   run_id: string | null;
+  passes?: number;
+  runs?: number;
 }
 
 export interface ImprovementCase {
@@ -142,7 +145,8 @@ export interface EvalResults {
   running?: boolean;
   train?: Score;
   holdout?: Score;
-  results: { case_id: string; passed: boolean; reason: string; run_id: string | null }[];
+  repeats?: number;
+  results: ({ case_id: string } & CaseResult)[];
 }
 
 export interface Template {
@@ -244,7 +248,7 @@ export const api = {
   listAgents: () => request<Agent[]>("GET", "/agents"),
   getAgent: (slug: string, share?: string) => request<Agent>("GET", `/agents/${enc(slug)}`, undefined, share),
   createAgent: (body: CreateAgentBody) => request<AgentCreated>("POST", "/agents", body),
-  patchAgent: (slug: string, body: { name?: string; description?: string; auto_promote?: boolean }) =>
+  patchAgent: (slug: string, body: { name?: string; description?: string; auto_promote?: boolean; eval_repeats?: number }) =>
     request<Agent>("PATCH", `/agents/${enc(slug)}`, body),
   createVersion: (slug: string, body: NewVersionBody) =>
     request<Version>("POST", `/agents/${enc(slug)}/versions`, body),

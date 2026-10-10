@@ -186,7 +186,10 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
                 <div key={s} data-testid={`eval-score-${s}`} className="card flex items-center gap-3 px-4 py-2.5">
                   <SplitBadge split={s} />
                   <ScoreText score={results[s]!} />
-                  <span className="text-xs text-neutral-500">v{results.version}</span>
+                  <span className="text-xs text-neutral-500">
+                    v{results.version}
+                    {results.repeats && results.repeats > 1 ? `, majority of ${results.repeats} runs` : ""}
+                  </span>
                 </div>
               ) : null,
             )}
@@ -227,7 +230,7 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
                       </td>
                       <td className="td">
                         {r ? (
-                          <PassCell passed={r.passed} reason={r.reason} runId={r.run_id} />
+                          <PassCell passed={r.passed} reason={r.reason} runId={r.run_id} passes={r.passes} runs={r.runs} />
                         ) : evaluating ? (
                           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
                         ) : (
