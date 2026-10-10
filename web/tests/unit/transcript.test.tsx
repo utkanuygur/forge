@@ -352,3 +352,57 @@ describe("transcript", () => {
     expect(screen.getByText(/row999/)).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------- governance in the transcript
+
+describe("approvals in the transcript", () => {
+  const request = () =>
+    ev("approval_requested", {
+      id: "ap_1",
+      tool_call_id: "c0",
+      name: "bash",
+      args: { cmd: "rm -rf build" },
+      rule: { label: "rm -rf", description: "rm -rf: bash matching /rm/" },
+      expires_at: 9999999999,
+    });
+
+  it("renders the approval card at its step with Approve and Deny for builders", () => {
+    const events = [ev("run_started", {}), ...tool("bash", { cmd: "rm -rf build" }), request()];
+    render(<Transcript events={events} live input="clean" canApprove />);
+    const item = screen.getByTestId("transcript-approval");
+    const c = within(item).getByTestId("approval-card");
+    expect(c).toHaveAttribute("data-state", "pending");
+    expect(c).toHaveTextContent("rm -rf build");
+    expect(within(c).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(c).getByRole("button", { name: "Deny" })).toBeInTheDocument();
+    // the card follows the paused tool call
+    const rows = [...document.querySelectorAll('[data-testid="tool-card"], [data-testid="transcript-approval"]')];
+    expect(rows.map((r) => r.getAttribute("data-testid"))).toEqual(["tool-card", "transcript-approval"]);
+  });
+
+  it("hides the buttons for share visitors and shows the resolved state", () => {
+    const events = [...tool("bash", { cmd: "rm -rf build" }), request()];
+    const { rerender } = render(<Transcript events={events} live input="clean" />);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    const resolved = [
+      ...events,
+      ev("approval_resolved", { id: "ap_1", tool_call_id: "c0", decision: "deny", note: "not now", by: "ui" }),
+    ];
+    rerender(<Transcript events={resolved} live input="clean" canApprove />);
+    const c = screen.getByTestId("approval-card");
+    expect(c).toHaveAttribute("data-state", "denied");
+    expect(c).toHaveTextContent("not now");
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
+  it("shows budget warnings inline", () => {
+    render(
+      <Transcript
+        events={[ev("budget_warning", { scope: "run", limit_usd: 0.05, spent_usd: 0.04, fraction: 0.8 })]}
+        live={false}
+        input="x"
+      />,
+    );
+    expect(screen.getByTestId("budget-warning")).toBeInTheDocument();
+  });
+});

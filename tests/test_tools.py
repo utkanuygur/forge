@@ -529,3 +529,45 @@ async def test_fake_tools_scenario_calls_non_builtin_tools_then_reports():
     assert not r.tool_calls and r.text == "Tool results:\nA\n---\nB"
     r = await p.complete("", [Message(role="user", text="hi")], specs)
     assert r.tool_calls[0].name == "mcp__s__add"  # no hint: the first non-builtin tool
+
+
+# ---------------------------------------------------------------- run webhooks use the same SSRF-safe client
+
+
+async def test_webhooks_refuse_private_targets_and_redirects_and_are_signed(public_dns, tmp_path, monkeypatch):
+    import hashlib
+    import hmac
+
+    from forge.server.runs import post_webhook
+
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("FORGE_ALLOW_PRIVATE_HTTP", raising=False)
+    agent, _ = db.create_agent("hooked", "Hooked")
+    seen: list[httpx.Request] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        seen.append(r)
+        if r.headers["host"] == "redirector.example":
+            return httpx.Response(307, headers={"location": "http://10.1.2.3/hook"})
+        return httpx.Response(200)
+
+    mock = httpx.MockTransport(handler)
+    assert not await post_webhook("http://127.0.0.1:9/hook", {"a": 1}, retries=0, agent_id=agent["id"], transport=mock)
+    public_dns["metadata.example"] = ["169.254.169.254"]
+    assert not await post_webhook("http://metadata.example/x", {"a": 1}, retries=0, transport=mock)
+    assert seen == []  # nothing was sent to a private address
+    assert not await post_webhook("https://redirector.example/hook", {"a": 1}, retries=0, transport=mock)
+    assert [r.headers["host"] for r in seen] == ["redirector.example"]  # the private hop was never requested
+
+    seen.clear()
+    body = {"id": "r_1", "status": "succeeded"}
+    assert await post_webhook("https://hooks.example/forge", body, retries=0, agent_id=agent["id"], transport=mock,
+                              event="run.awaiting_approval")
+    [req] = seen
+    secret = db.webhook_secret(agent["id"])
+    assert secret.startswith("whsec_") and db.get_agent(agent["id"])["webhook_secret"] == secret
+    want = "sha256=" + hmac.new(secret.encode(), req.content, hashlib.sha256).hexdigest()
+    assert hmac.compare_digest(req.headers["x-forge-signature-256"], want)
+    assert json.loads(req.content) == body and req.headers["x-forge-event"] == "run.awaiting_approval"
+    assert len(req.headers["x-forge-delivery"]) == 32
+    assert db.webhook_secret(agent["id"], rotate=True) != secret

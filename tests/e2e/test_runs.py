@@ -148,10 +148,13 @@ def test_model_failure_ends_run_failed_with_error_event(api, make_agent):
 
 class _Receiver(BaseHTTPRequestHandler):
     bodies: list[dict] = []
+    raw: list[tuple[dict, bytes]] = []
 
     def do_POST(self) -> None:
         n = int(self.headers.get("content-length") or 0)
-        type(self).bodies.append(json.loads(self.rfile.read(n)))
+        data = self.rfile.read(n)
+        type(self).raw.append((dict(self.headers), data))
+        type(self).bodies.append(json.loads(data))
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"ok")
@@ -163,6 +166,7 @@ class _Receiver(BaseHTTPRequestHandler):
 @pytest.fixture
 def webhook_receiver():
     _Receiver.bodies = []
+    _Receiver.raw = []
     srv = HTTPServer(("127.0.0.1", 0), _Receiver)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
@@ -171,10 +175,28 @@ def webhook_receiver():
     srv.server_close()
 
 
-def test_webhook_receives_final_run_json(api, make_agent, webhook_receiver):
-    """FR14: an async run with callback_url POSTs the final Run JSON to the callback when it finishes."""
+@pytest.fixture(scope="module")
+def private_api(tmp_path_factory):
+    """A server that may call local receivers (FORGE_ALLOW_PRIVATE_HTTP=1); the shared one keeps the SSRF block."""
+    import httpx
+
+    from tests.e2e.conftest import start_server
+
+    with start_server(tmp_path_factory.mktemp("forge-e2e-hooks"), {"FORGE_ALLOW_PRIVATE_HTTP": "1"}) as srv:
+        with httpx.Client(base_url=srv.url + "/v1", timeout=60) as c:
+            yield c
+
+
+def test_webhook_receives_final_run_json(private_api, webhook_receiver):
+    """FR14: an async run with callback_url POSTs the final Run JSON to the callback when it finishes, signed with
+    the agent's webhook secret (X-Forge-Signature-256) and carrying X-Forge-Event and X-Forge-Delivery."""
+    import hashlib
+    import hmac
+
+    api = private_api
     url, bodies = webhook_receiver
-    agent = make_agent("hook")
+    agent = api.post("/agents", json={"slug": "hook-signed", "name": "h", "system_prompt": "s",
+                                      "model": "fake:hello"}).json()
     run = api.post(f"/agents/{agent['slug']}/runs", json={"input": "go", "callback_url": url},
                    headers=bearer(agent)).json()
     assert run["status"] in ("queued", "running")
@@ -186,6 +208,22 @@ def test_webhook_receives_final_run_json(api, make_agent, webhook_receiver):
     assert {k: body[k] for k in ("status", "output", "turns", "version_n")} == \
         {k: final[k] for k in ("status", "output", "turns", "version_n")}
     assert len(bodies) == 1
+    headers, raw = _Receiver.raw[0]
+    h = {k.lower(): v for k, v in headers.items()}
+    secret = api.get(f"/agents/{agent['slug']}/webhook-secret").json()["secret"]
+    want = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    assert hmac.compare_digest(h["x-forge-signature-256"], want)
+    assert h["x-forge-event"] == "run.finished" and len(h["x-forge-delivery"]) == 32
+
+
+def test_private_callback_urls_are_refused_by_default(api, make_agent):
+    """SSRF: without FORGE_ALLOW_PRIVATE_HTTP a callback_url on a private, loopback or link-local address, or a
+    non-http scheme, is a 400 at request time."""
+    agent = make_agent("hook-ssrf")
+    for url in ("http://127.0.0.1:9/hook", "http://169.254.169.254/latest/meta-data", "http://10.0.0.5/x",
+                "file:///etc/passwd", "http://localhost:8000/v1/agents"):
+        r = api.post(f"/agents/{agent['slug']}/runs", json={"input": "go", "callback_url": url}, headers=bearer(agent))
+        assert r.status_code == 400 and "callback_url not allowed" in r.json()["detail"], (url, r.text)
 
 
 def test_unauthenticated_remote_client_is_rejected(api, make_agent):

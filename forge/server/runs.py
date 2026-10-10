@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
+import json
 import logging
 import os
 import time
+import uuid
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -224,13 +228,14 @@ class RunManager:
         if run:
             obslog.finished(run, agent["slug"], version.get("model"))
         if run and run["callback_url"]:
-            await post_webhook(run["callback_url"], run_view(run))
+            await post_webhook(run["callback_url"], run_view(run), agent_id=agent["id"])
 
     async def _notify_approval(self, run_id: str, approval: dict) -> None:
         """Posts the Run (status awaiting_approval) plus the pending `approval` to the run's callback_url."""
         run = db.get_run(run_id)
         if run and run["callback_url"]:
-            t = asyncio.create_task(post_webhook(run["callback_url"], {**run_view(run), "approval": approval}))
+            t = asyncio.create_task(post_webhook(run["callback_url"], {**run_view(run), "approval": approval},
+                                                 agent_id=run["agent_id"], event="run.awaiting_approval"))
             self.background.add(t)
             t.add_done_callback(self.background.discard)
 
@@ -256,17 +261,39 @@ class RunManager:
                                float(run.get("cost_usd") or 0) + float(run.get("child_cost_usd") or 0))
 
 
-async def post_webhook(url: str, body: dict, retries: int = 3, backoff: float = 1.0) -> bool:
-    async with httpx.AsyncClient(timeout=10) as client:
-        for attempt in range(retries + 1):
-            try:
-                r = await client.post(url, json=body)
-                if r.status_code < 400:
-                    return True
-            except httpx.HTTPError:
-                pass
-            if attempt < retries:
-                await asyncio.sleep(backoff * 2**attempt)
+WEBHOOK_SIGNATURE = "X-Forge-Signature-256"
+
+
+def sign_webhook(secret: str, body: bytes) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+async def post_webhook(url: str, body: dict, retries: int = 3, backoff: float = 1.0, *, agent_id: str | None = None,
+                       event: str = "run.finished", transport: httpx.AsyncBaseTransport | None = None) -> bool:
+    """Delivers a signed webhook through the SSRF-safe client of forge/tools/http.py (resolved addresses must be
+    public, the connection is pinned to the checked IP and every redirect hop is re-checked;
+    FORGE_ALLOW_PRIVATE_HTTP=1 opts out). Headers: X-Forge-Event, X-Forge-Delivery (one id for all retries) and
+    X-Forge-Signature-256: sha256=<hex HMAC-SHA256 of the raw body with the agent's webhook secret>."""
+    from forge.tools.http import ToolError, send_request
+
+    raw = json.dumps(body, separators=(",", ":"), default=str).encode()
+    headers = {"Content-Type": "application/json", "User-Agent": "forge-webhooks", "X-Forge-Event": event,
+               "X-Forge-Delivery": uuid.uuid4().hex}
+    if agent_id:
+        headers[WEBHOOK_SIGNATURE] = sign_webhook(db.webhook_secret(agent_id), raw)
+    for attempt in range(retries + 1):
+        try:
+            status, *_ = await send_request("POST", url, headers=headers, params={}, json_body=None, timeout=10,
+                                            content=raw, transport=transport)
+            if status < 400:
+                return True
+        except ToolError as exc:  # a blocked or malformed destination never becomes reachable by retrying
+            log.warning("webhook %s refused: %s", url, exc)
+            return False
+        except httpx.HTTPError:
+            pass
+        if attempt < retries:
+            await asyncio.sleep(backoff * 2**attempt)
     log.warning("webhook %s failed after %d retries", url, retries)
     return False
 

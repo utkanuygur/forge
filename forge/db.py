@@ -73,7 +73,8 @@ def connect() -> Iterator[sqlite3.Connection]:
 ADDED_COLUMNS = {
     "agents": {"eval_repeats": "INTEGER",
                "monthly_budget_usd": "REAL",  # governance: null = no monthly budget
-               "suggested_prompts": "TEXT NOT NULL DEFAULT '[]'"},  # examples: JSON list[{title, prompt}]
+               "suggested_prompts": "TEXT NOT NULL DEFAULT '[]'",  # examples: JSON list[{title, prompt}]
+               "webhook_secret": "TEXT"},  # signs callback_url deliveries; created on demand for older agents
     "runs": {"cache_read_tokens": "INTEGER NOT NULL DEFAULT 0", "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
              # The one stored run cost in USD (NULL = unknown price); written after each model turn by
              # forge.governance.RunGovernor and re-priced whenever token counts are written (update_run).
@@ -187,9 +188,24 @@ def create_agent(slug: str, name: str, description: str = "", auto_promote: bool
         "auto_promote": auto_promote, "api_key_hash": hash_key(key),
         "share_token": _secrets.token_urlsafe(16), "created_at": now(),
         "suggested_prompts": suggested_prompts or [],
+        "webhook_secret": new_webhook_secret(),
     }
     _insert("agents", row)
     return get_agent(row["id"]), key  # type: ignore[return-value]
+
+
+def new_webhook_secret() -> str:
+    return "whsec_" + _secrets.token_hex(24)
+
+
+def webhook_secret(agent_id: str, *, rotate: bool = False) -> str:
+    """The agent's webhook signing secret (created for agents from before webhook signing)."""
+    agent = get_agent(agent_id)
+    secret = agent.get("webhook_secret") if agent else None
+    if rotate or not secret:
+        secret = new_webhook_secret()
+        _update("agents", "id", agent_id, {"webhook_secret": secret})
+    return secret
 
 
 def get_agent(agent_id: str) -> dict | None:

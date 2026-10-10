@@ -192,7 +192,8 @@ def _origin(url: str) -> tuple[str, str, int]:
 
 async def send_request(method: str, url: str, *, headers: dict[str, str], params: dict[str, Any],
                        json_body: Any, timeout: float,
-                       transport: httpx.AsyncBaseTransport | None = None) -> tuple[int, str, str, str]:
+                       transport: httpx.AsyncBaseTransport | None = None,
+                       content: bytes | None = None) -> tuple[int, str, str, str]:
     """Sends the request, following up to MAX_REDIRECTS redirects with a fresh SSRF check on each hop.
 
     Returns (status, reason, content type, body text). Configured headers are dropped when a redirect leaves
@@ -208,7 +209,8 @@ async def send_request(method: str, url: str, *, headers: dict[str, str], params
             host, ip = await check_destination(current)
             target, extra_headers, ext = _pinned(current, ip)
             req = client.build_request(method, target, headers={**hdrs, **extra_headers},
-                                       json=body if body is not None else None, extensions=ext)
+                                       json=body if body is not None and content is None else None,
+                                       content=content if method != "GET" else None, extensions=ext)
             resp = await client.send(req, stream=True)
             try:
                 if resp.is_redirect and "location" in resp.headers:
@@ -216,7 +218,7 @@ async def send_request(method: str, url: str, *, headers: dict[str, str], params
                         raise ToolError(f"too many redirects (more than {MAX_REDIRECTS})")
                     nxt = str(httpx.URL(current).join(resp.headers["location"]))
                     if resp.status_code == 303 or (resp.status_code in (301, 302) and method not in ("GET", "HEAD")):
-                        method, body = "GET", None
+                        method, body, content = "GET", None, None
                     if _origin(nxt) != origin:
                         hdrs = {}
                     current = nxt

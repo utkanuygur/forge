@@ -285,6 +285,21 @@ async def put_secrets(slug: str, request: Request, body: dict[str, str | None] =
     return {"names": db.set_secrets(agent["id"], body)}
 
 
+@api.get("/agents/{slug}/webhook-secret")
+async def get_webhook_secret(slug: str, request: Request) -> dict:
+    """Builder only: the secret that signs this agent's callback_url deliveries (X-Forge-Signature-256)."""
+    agent = agent_or_404(slug)
+    authorize(request, agent, allow_share=False)
+    return {"secret": db.webhook_secret(agent["id"]), "header": runs.WEBHOOK_SIGNATURE}
+
+
+@api.post("/agents/{slug}/webhook-secret/rotate")
+async def rotate_webhook_secret(slug: str, request: Request) -> dict:
+    agent = agent_or_404(slug)
+    authorize(request, agent, allow_share=False)
+    return {"secret": db.webhook_secret(agent["id"], rotate=True), "header": runs.WEBHOOK_SIGNATURE}
+
+
 @api.post("/agents/{slug}/rotate-key")
 async def rotate_key(slug: str, request: Request) -> dict:
     agent = agent_or_404(slug)
@@ -397,6 +412,22 @@ def extract_tarball(data: bytes) -> dict[str, bytes]:
     return out
 
 
+async def checked_callback_url(url: Any) -> str | None:
+    """400 unless `url` is an http(s) URL whose host resolves only to public addresses (the same SSRF check as
+    HTTP tools; FORGE_ALLOW_PRIVATE_HTTP=1 allows private targets). Deliveries re-check on every attempt."""
+    if url is None:
+        return None
+    if not isinstance(url, str) or len(url) > 2000:
+        raise HTTPException(400, "callback_url must be a URL string")
+    from forge.tools.http import ToolError, check_destination
+
+    try:
+        await check_destination(url.strip())
+    except ToolError as exc:
+        raise HTTPException(400, f"callback_url not allowed: {exc}") from exc
+    return url.strip()
+
+
 async def parse_run_request(request: Request) -> tuple[dict[str, Any], dict[str, bytes]]:
     ctype = request.headers.get("content-type", "")
     if ctype.startswith("multipart/form-data") or ctype.startswith("application/x-www-form-urlencoded"):
@@ -437,9 +468,9 @@ async def create_run(slug: str, request: Request) -> dict:
     if not isinstance(text, str) or not text.strip():
         raise HTTPException(400, "input is required")
     version = version_or_404(agent, fields.get("version") or "prod")
+    callback_url = await checked_callback_url(fields.get("callback_url") or None)
     mgr = runs.get_manager()
-    run_id = await mgr.start_run(agent, version, text, source, seed_overrides=seeds,
-                                 callback_url=fields.get("callback_url") or None)
+    run_id = await mgr.start_run(agent, version, text, source, seed_overrides=seeds, callback_url=callback_url)
     texts = {}
     for p, c in seeds.items():
         try:

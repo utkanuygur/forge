@@ -36,7 +36,8 @@ test("GOV10: approval card appears live, shows the matched rule, and Approve let
   await page.getByTestId("pending-approvals").click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
 
-  const card = page.getByTestId("approval-card");
+  // The default run view is the transcript: the card sits inline at the paused step, live over SSE.
+  const card = page.getByTestId("transcript").getByTestId("approval-card");
   await expect(card).toHaveAttribute("data-state", "pending", { timeout: RUN_TIMEOUT });
   await expect(card).toContainText("rm -rf build");
   await expect(card).toContainText("rm -rf: bash matching");
@@ -103,7 +104,28 @@ test("GOV11: policy editor presets, run cap and monthly budget save; a spent bud
   await expect(page.getByTestId("budget-meter")).toHaveAttribute("data-state", "exceeded");
 
   await page.getByRole("tab", { name: "Runs" }).click();
-  await page.getByLabel("Task").fill("hello");
+  await page.getByLabel("Task", { exact: true }).fill("hello");
   await page.getByRole("button", { name: "Run" }).click();
   await expect(page.getByText(/Monthly budget of \$0.00 reached/)).toBeVisible();
+});
+
+test("GOV10: a Playground turn pauses on an ask rule; the transcript card approves it and the turn finishes", async ({
+  page,
+  request,
+}) => {
+  const slug = uniqueSlug("gov-pg");
+  await riskyAgent(request, slug);
+  await page.goto(`/agents/${slug}/playground`);
+  const pg = page.getByTestId("playground");
+  const box = pg.getByRole("textbox", { name: "Message" });
+  await box.fill("clean the build");
+  await box.press("Enter");
+  const turn = pg.getByTestId("turn").first();
+  const card = turn.getByTestId("approval-card");
+  await expect(card).toHaveAttribute("data-state", "pending", { timeout: RUN_TIMEOUT });
+  await expect(pg.getByTestId("status-line")).toContainText("Waiting for approval");
+  await card.getByRole("button", { name: "Approve" }).click();
+  await expect(card).toHaveAttribute("data-state", "approved", { timeout: RUN_TIMEOUT });
+  await expect(turn).toHaveAttribute("data-status", "succeeded", { timeout: RUN_TIMEOUT });
+  await expect(turn.locator('[data-testid="narration"][data-kind="final"]')).toContainText("Removed the build directory.");
 });

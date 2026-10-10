@@ -111,7 +111,11 @@ export function StatusLine({
   if (live) {
     const parts = [fmtElapsed(Math.max(0, now - start))];
     if (tokens) parts.push(`${fmtTokens(tokens)} tokens`);
-    const waiting = run?.status === "awaiting_approval";
+    // Paused on a reviewer: from the run row, or live from an approval_requested event not yet resolved.
+    const resolved = new Set(events.filter((e) => e.type === "approval_resolved").map((e) => str(e.payload.id)));
+    const waiting =
+      run?.status === "awaiting_approval" ||
+      events.some((e) => e.type === "approval_requested" && !resolved.has(str(e.payload.id)));
     return (
       <div className="tx-status" data-testid="status-line" data-state="running">
         <span className="tx-star animate-pulse" aria-hidden="true">

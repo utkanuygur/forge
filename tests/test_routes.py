@@ -76,3 +76,22 @@ def test_trigger_and_agent_sources_are_production_metrics_and_filters(client):
     text = client.get("/metrics").text
     for src in ("schedule", "github", "slack", "agent"):
         assert f'source="{src}"' in text, src
+
+
+def test_callback_url_validation_and_webhook_secret_endpoints(client, monkeypatch):
+    """callback_url must be http(s) to a public address (400 otherwise, FORGE_ALLOW_PRIVATE_HTTP=1 opts out); the
+    webhook secret is builder only and can be rotated."""
+    monkeypatch.delenv("FORGE_ALLOW_PRIVATE_HTTP", raising=False)
+    for url in ("http://127.0.0.1/x", "ftp://example.com/x", "http://[::1]/x"):
+        r = client.post("/v1/agents/r1/runs", json={"input": "x", "callback_url": url})
+        assert r.status_code == 400 and "callback_url not allowed" in r.json()["detail"], url
+    monkeypatch.setenv("FORGE_ALLOW_PRIVATE_HTTP", "1")
+    assert client.post("/v1/agents/r1/runs", json={"input": "x", "callback_url": "http://127.0.0.1:9/x",
+                                                   "wait": True}).status_code == 200
+    s1 = client.get("/v1/agents/r1/webhook-secret").json()
+    assert s1["secret"].startswith("whsec_") and s1["header"] == "X-Forge-Signature-256"
+    assert client.post("/v1/agents/r1/webhook-secret/rotate").json()["secret"] != s1["secret"]
+    a = db.get_agent_by_slug("r1")
+    remote = TestClient(client.app, client=("203.0.113.9", 5000))
+    assert remote.get("/v1/agents/r1/webhook-secret", params={"share": a["share_token"]}).status_code == 401
+    assert "webhook_secret" not in client.get("/v1/agents/r1").json()

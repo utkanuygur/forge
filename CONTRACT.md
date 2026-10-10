@@ -124,6 +124,19 @@ Auth amendments (server implementation):
 - Builder routes require a localhost client or that agent's API key; `GET/POST /agents` are localhost only; `/templates` is open; `FORGE_TRUST_ALL=1` disables checks.
 - A share token may `GET /agents/{slug}` (only `id, slug, name, description, suggested_prompts`) and its versions (for the share page) and start/read its own share runs; it gets 401 on builder, eval and improve routes. With a share token, `GET /agents/{slug}/runs` lists only share-sourced runs.
 - Share page URL: `/s/{slug}?share=<token>`.
+- Share tokens reach only share runs: every run-scoped endpoint (`/runs/{id}`, its events, events.json,
+  artifacts, diff, files, feedback and approvals) answers **404** (not 401, so ids are not confirmed) when a share
+  token asks for a run whose `source` is not `share`. Timeline, cancel, save-as-eval and Playground sessions are
+  builder only.
+- Webhooks (`callback_url`, run completion and governance's `awaiting_approval` notification): the URL must be
+  `http` or `https` and its host must resolve only to public addresses, else **400** at request time. Deliveries
+  go through the HTTP tools' SSRF-safe client (forge/tools/http.py: every resolved address checked, the
+  connection pinned to the checked IP, every redirect hop re-checked, at most 5); `FORGE_ALLOW_PRIVATE_HTTP=1`
+  disables the address check for local testing. Each delivery is `POST` with the Run JSON as body and headers
+  `X-Forge-Event` (`run.finished` or `run.awaiting_approval`), `X-Forge-Delivery` (one id per delivery, kept
+  across its retries) and `X-Forge-Signature-256: sha256=<hex HMAC-SHA256 of the raw body>` keyed with the
+  agent's webhook secret. Builders read it with `GET /agents/{slug}/webhook-secret` (`{secret, header}`) and
+  replace it with `POST /agents/{slug}/webhook-secret/rotate`; it is never part of the Agent object.
 - Extras: Run includes `eval_case_id`; eval results include `"running": bool`; `PUT secrets` with an empty value deletes it.
 - Narration (additive): `ModelResponse.notes: list[str]` carries the model's between-tool-call progress updates
   (Claude: `thinking.display: "updates"` summaries). The loop emits each note, then any text, as `assistant` events

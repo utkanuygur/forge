@@ -40,6 +40,7 @@ def gov(tmp_path_factory: pytest.TempPathFactory) -> Iterator[httpx.Client]:
            if (not k.startswith("FORGE_") or k == "FORGE_SANDBOX_IMAGE") and k != "ANTHROPIC_API_KEY"}
     env.update({"FORGE_DATA_DIR": str(root / "data"), "FORGE_EXECUTOR": "docker", "FORGE_DEFAULT_MODEL": "fake:hello",
                 "FORGE_GRADER_MODEL": "fake:grader", "FORGE_PRICES": json.dumps(PRICES), "PYTHONUNBUFFERED": "1",
+                "FORGE_ALLOW_PRIVATE_HTTP": "1",  # the approval webhook goes to a local receiver
                 "PYTHONPATH": os.pathsep.join(p for p in (str(REPO), os.environ.get("PYTHONPATH", "")) if p)})
     before = sandbox_containers()
     logf = log.open("w")
