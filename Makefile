@@ -4,7 +4,7 @@ PY    := uv run
 PTH   := .venv/lib/python3.12/site-packages
 
 .PHONY: help setup image fix-pth test test-unit test-docker test-e2e test-web test-web-unit test-web-e2e \
-        test-demo test-live test-all lint preflight rehearse serve web dev clean
+        test-demo test-live test-all lint preflight rehearse serve web dev clean examples test-examples
 
 help:  ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
