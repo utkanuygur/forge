@@ -1,6 +1,6 @@
 # Forge testing workflow
 
-Forge is tested in six layers, ordered from fastest to slowest. Every deterministic layer runs without
+Forge is tested in six layers (plus 5b for the example agents), ordered from fastest to slowest. Every deterministic layer runs without
 API keys, because the model is replaced by `ScenarioProvider` (`fake:<scenario>` model strings), which
 makes runs, judging and optimization reproducible while everything else (server, database, Docker
 sandboxes, streaming, CLI, browser) is real.
@@ -16,15 +16,23 @@ separately by the live layer.
 |---|---|---|---|---|---|
 | 1 | Unit | `make test-unit` | nothing | Loop logic, tool semantics, truncation, redaction, providers' message mapping, retry, lesson validation, promotion rule, DB helpers, API handlers with fakes | seconds |
 | 2 | Sandbox | `make test-docker` | Docker, `forge-sandbox` image | Network isolation, resource limits, file persistence, diff and archive export, timeouts kill processes, no leaked containers | ~10 s |
-| 3 | Full stack | `make test-e2e` | Docker | Real server + Docker + fake models: run lifecycle, SSE, uploads, versions, auth, feedback, secrets, limits, webhook, local CLI, **full improvement loop including regression blocking and auto-promotion**, observability metrics, cost, search, timelines, health and Prometheus endpoints | 1 to 3 min |
-| 4 | Web | `make test-web` | Docker, Chromium (Playwright) | Component and hook logic (Vitest); browser flows against the real backend: create, run, feedback, versions, evaluate, improve, promote, share page hides config, dashboard, monitoring, run filters, step timeline, phone width | 1 to 3 min |
+| 3 | Full stack | `make test-e2e` | Docker | Real server + Docker + fake models: run lifecycle, SSE, uploads, versions, auth, feedback, secrets, limits, webhook, local CLI, **full improvement loop including regression blocking and auto-promotion**, repeated evals (majority of k), agent drafting, lesson pruning, example agent loader, observability metrics, cost, search, timelines, health and Prometheus endpoints | 1 to 3 min |
+| 4 | Web | `make test-web` | Docker, Chromium (Playwright) | Component and hook logic (Vitest); browser flows against the real backend: create (blank, template, described and drafted), run, suggested prompt chips, feedback, versions, evaluate (k repeats), improve, prune, promote, share page hides config, dashboard, monitoring, run filters, step timeline, phone width | 1 to 3 min |
 | 5 | Demo validity | `make test-demo` | Docker | Each demo eval case FAILS on the untouched repo, FAILS on a correct but convention-violating fix, PASSES on the reference fix (21 expectations) | ~1 min |
 | 5b | Example validity | `make test-examples` | Docker | Every example agent's shell checker (eval cases and suggested prompt checks) FAILS on the seed, FAILS on a plausible wrong answer where one exists, PASSES on the reference solution (50 expectations); `--judge` also grades the 4 judge cases with the real grader | ~30 s |
 | 6 | Live models | `make test-live` | `ANTHROPIC_API_KEY`; optional Ollama, `FORGE_VLLM_URL` | Real Claude completes a task in the sandbox; judge gives sensible verdicts; local and GPU models emit valid tool calls | 1 to 2 min, costs tokens |
 
 `make test` runs layers 1 to 3 (skipping Docker tests automatically if Docker is unavailable).
-`make test-all` runs every deterministic layer (1 to 5). Live tests never run unless asked
-(`-m live` or `FORGE_LIVE=1`).
+`make test-all` runs the deterministic layers 1 to 5; run `make test-examples` (5b) as well after changing
+`demo/examples/`. Live tests never run unless asked (`-m live` or `FORGE_LIVE=1`).
+
+CI (`.github/workflows/ci.yml`) runs one job on every pull request and every push to `master`: layers 1 to 3
+(`pytest -m "not live"`), 4a, 4b and 5 on Ubuntu with the sandbox image built fresh. Layer 5b and the desktop
+build are not in CI yet; live tests never run there.
+
+The desktop app has its own checks outside these layers: `desktop/scripts/build-server.sh` fails the build when
+any bundled binary needs a macOS newer than the app's minimum (`check-min-macos.sh`), and `cd desktop && npm run
+verify` drives the app headless with Playwright's Electron support (see [desktop/README.md](desktop/README.md)).
 
 ## Fake model scenarios
 
@@ -48,7 +56,7 @@ report fixed token counts.
 |---|---|---|
 | While coding | `make test-unit` (or `uv run pytest tests/test_<area>.py`) | Must pass |
 | Before each commit | `make test` | Must pass |
-| Before merging or demoing | `make test-all` | Must pass |
+| Before merging or demoing | `make test-all` (and `make test-examples` when examples changed) | Must pass |
 | After changing prompts, the optimizer or the demo | `make test-demo`, then `make rehearse` | Rehearsal must print `OK: held-out improved` |
 | Before a live demo | `make serve` in one terminal, `make preflight` in another | Every line PASS (WARN only for optional GPU and local model) |
 
@@ -78,7 +86,7 @@ Requirement IDs are defined in the technical design document. Each row names the
 | FR12 Model choice: stop reasons and prompt caching | 1: refusal fails with `Model declined: <category>` and runs no tool calls, max_tokens without tool calls fails, truncated last call is not executed, OpenAI finish_reason mapping, `cache_control` on system and newest message block, cache usage parsed and summed into `run_finished` (`tests/test_reliability.py`); 6: second and later Claude turns report cache reads |
 | FR13 Local runner | 1: path confinement, ask mode; 3: `forge run` creates files locally and syncs a `local` run that never affects eval results |
 | FR14 Webhook | 3: receiver gets the final Run JSON |
-| FR15 HTTP tools | Not implemented (P2); no test |
+| FR15 HTTP tools | Not on master: `http_tools` is stored on versions but not offered to the model; no test |
 | NFR1 Isolation | 2: network none, non-root user, limits; 3: no leaked containers after the suite |
 | NFR2 Reproducibility | 3: every run and eval result records its version |
 | NFR3 Live trace | 3: SSE delivers events before the run ends; 4: trace renders live |

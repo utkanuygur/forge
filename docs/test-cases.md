@@ -8,7 +8,7 @@ make serve                                     # in one terminal
 make examples                                  # or: uv run python demo/load_examples.py --base-url http://localhost:8000
 ```
 
-Open an agent, go to the Runs tab (or the Playground), and click one of the chips above the input. Each
+Open an agent, go to the Runs tab, and click one of the chips above the input. Each
 suggested prompt below says what a correct result looks like; the ones marked **checked** also have a shell
 checker in `demo/examples/<slug>/prompt_checks.json` that you can run against the run's workspace.
 
