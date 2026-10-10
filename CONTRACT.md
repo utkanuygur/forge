@@ -159,6 +159,16 @@ its share token); a share token may only browse runs whose `source` is `share` (
   path, mtime and size.
 - Deleted files are not in the archive, so they never appear in the listing; see `/runs/{id}/diff`.
 
+### `forge chat` (client of the sessions API)
+
+`forge chat <slug>[@vN] [--session <id>] [--url <server>]` opens a REPL: it creates a session
+(`POST /agents/{slug}/sessions`, `{version}` when pinned) or resumes one (`GET /sessions/{id}`), sends each line with
+`POST /sessions/{id}/messages`, and renders the turn's `GET /runs/{id}/events` stream (reconnecting with `?after=<seq>`).
+Ctrl+C during a turn calls `POST /runs/{id}/cancel`; a second Ctrl+C at the prompt, Ctrl+D or `/exit` leaves.
+`/new`, `/files` and `/open <path>` (the latest turn's workspace, via the endpoints above) and `/help` are built in.
+The transcript renderer lives in `forge/cli_render.py` (plain ANSI; honors `NO_COLOR`; the live status line is drawn
+only on terminals).
+
 ## Repeated evals (amendment)
 
 Each eval case runs `k` times per version, `k` = the agent's `eval_repeats` (PATCH, 1..9); unset agents use
