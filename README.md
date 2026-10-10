@@ -7,9 +7,9 @@ Docker sandbox and leaves a complete trace. Feedback and failing evaluations tur
 version, and a candidate is promoted only when it passes more cases, including held-out cases it never
 saw, with zero regressions.
 
-- **Create:** instructions, model, tools (bash, file read/write/edit), network policy, secrets, seed files.
+- **Create:** instructions, model, tools (bash, file read/write/edit), network policy, secrets, seed files; or describe the agent in plain words and review a drafted configuration with starter evaluation cases.
 - **Deploy:** immutable versions with a production pointer; REST API with per-agent keys; share links for colleagues; webhooks; a `forge` CLI that runs agents locally against your own files.
-- **Improve:** feedback from every surface, evaluation suites with train and held-out splits, an optimizer that proposes evidence-linked lessons, and a no-regression promotion rule.
+- **Improve:** feedback from every surface, evaluation suites with train and held-out splits, an optimizer that proposes evidence-linked lessons, and a no-regression promotion rule. Lesson pruning retires lessons that never helped (leave-one-out ablation, kept only at equal quality), and every lesson records where it came from.
 - **Models:** Claude, an open-source model served on GPUs with vLLM (`gpu/vllm_modal.py`), or a local model through any OpenAI-compatible server such as Ollama.
 
 ## Quick start

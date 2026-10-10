@@ -32,7 +32,7 @@ separately by the live layer.
 | `fake:hello` | Writes `hello.py`, runs it with bash, finishes | Run lifecycle, traces, diffs, CLI |
 | `fake:echo` | Finishes immediately echoing the input | Fast API and UI tests |
 | `fake:lessons` | Creates `MARKER.txt` only when a lesson says so | Improvement loop: v1 fails `test -f MARKER.txt`, v2 passes |
-| `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs | Grader and optimizer without API calls |
+| `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs. With the drafting prompt (`forge.drafting.DRAFT_SYSTEM`): returns the fixed, valid `FAKE_DRAFT` ("Issue triager", network on, `GITHUB_TOKEN`, 3 train and 1 holdout case) whatever the description | Grader, optimizer and agent drafting without API calls |
 | `fake:loop` | Calls bash forever | Turn limit and `timeout` status |
 | `fake:error` | Raises like a failed API | `failed` status and error events |
 
@@ -78,6 +78,24 @@ Requirement IDs are defined in the technical design document. Each row names the
 | NFR6 Secret redaction | 1: redaction helper; 3: secret absent from stored events and output |
 | NFR7 Single machine | Implicit: every layer runs on one laptop with one process and one database file |
 | NFR8 Vendor independence | 1: both adapters; 6: three model sources |
+| AUTH1 Drafting uses structured output | 1: Claude request has `output_config.format` json_schema, no temperature, user-only messages; schema avoids unsupported constraints |
+| AUTH2 Draft validation | 1: slug, known tools, prompt and rubric length, secret names, case count, unique names, splits |
+| AUTH3 Retry once on invalid draft | 1: one fresh retry listing the problems; second invalid reply raises |
+| AUTH4 Deterministic drafting fake | 1: `fake:grader` returns `FAKE_DRAFT` for the drafting prompt only |
+| AUTH5 Drafting prompt asks for specific prompts | 1: prompt states role, working method, output, avoid, pass/fail rubrics, two thirds train |
+| AUTH6 Draft endpoint creates nothing | 1: draft returned, no agent created, free slug, 400 on empty, 401 remote; 3: fake draft over the real server |
+| AUTH7 Create agent with selected cases | 1 and 3: `POST /agents` with `eval_cases` creates the agent and exactly those cases |
+| AUTH8 Draft review UI | 4: Vitest describe step, prefilled fields, case checkboxes and edits, secrets; Playwright drafting end to end |
+| PRUNE1 Pruning preconditions | 1: 400 with fewer than 2 lessons or no train case, nothing created; human lessons get provenance |
+| PRUNE2 Unhelpful means no train loss | 1: `classify` (ties unhelpful, incomplete unknown) |
+| PRUNE3 Ablation cap, oldest first | 1: `select_for_ablation` |
+| PRUNE4 Pruning rule | 1: `is_eligible_prune` accepts ties, rejects holdout regressions and swaps |
+| PRUNE5 Lesson provenance | 1: `apply_lesson_edits_meta` records version and evidence, keeps carried entries |
+| PRUNE6 Prune removes the useless lesson | 3: MARKER lesson helpful, useless lesson removed, candidate eligible, prod unchanged |
+| PRUNE7 Cached results reused | 3: candidate train results are the identical ablation version's runs |
+| PRUNE8 Pruning verdicts in provenance | 3: base and candidate `lesson_meta.pruning` |
+| PRUNE9 Prune regression rejected | 3: removing two individually unhelpful lessons regresses every case and is rejected |
+| PRUNE10 Prune UI | 4: Playwright Prune lessons, removal evidence, pruning rule, promote, Configure origin and "kept after pruning" |
 
 ## Adding a test
 
