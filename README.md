@@ -8,10 +8,11 @@ version, and a candidate is promoted only when it passes more cases, including h
 saw, with zero regressions.
 
 - **Create:** instructions, model, tools (bash, file read/write/edit), network policy, secrets, seed files; or describe the agent in plain words and review a drafted configuration with starter evaluation cases.
-- **Deploy:** immutable versions with a production pointer; REST API with per-agent keys; share links for colleagues; webhooks; a `forge` CLI that runs agents locally against your own files.
-- **Improve:** feedback from every surface, evaluation suites with train and held-out splits, an optimizer that proposes evidence-linked lessons, and a no-regression promotion rule. Lesson pruning retires lessons that never helped (leave-one-out ablation, kept only at equal quality), and every lesson records where it came from.
+- **Deploy:** immutable versions with a production pointer; REST API with per-agent keys; share links for colleagues; webhooks (`callback_url`); a `forge` CLI that runs agents locally against your own files.
+- **Improve:** feedback from every surface, evaluation suites with train and held-out splits, each case run k times (3 by default) and judged by majority, an optimizer that proposes evidence-linked lessons, and a no-regression promotion rule. Lesson pruning retires lessons that never helped (leave-one-out ablation, kept only at equal quality), and every lesson records where it came from.
 - **Observe:** a dashboard and per-agent monitoring (version health next to eval pass rates, cost per run, version and improvement cycle, failure breakdown, tool statistics), run search, step timelines, `/healthz`, Prometheus `/metrics` and JSON run logs, all from Forge's own database.
-- **Models:** Claude, an open-source model served on GPUs with vLLM (`gpu/vllm_modal.py`), or a local model through any OpenAI-compatible server such as Ollama.
+- **Models:** Claude (agents default to `anthropic:claude-sonnet-5-5`; `.env.example` sets the grader, which judges evals, runs the optimizer and drafts agents, to `anthropic:claude-opus-5-5`), an open-source model served on GPUs with vLLM (`gpu/vllm_modal.py`), or a local model through any OpenAI-compatible server such as Ollama.
+- **Examples:** four example agents (log triage, data analyst, docs writer, repo maintainer) with suggested prompts shown as one-click chips and verified eval cases.
 
 ## Quick start
 
@@ -21,7 +22,7 @@ Requirements: [uv](https://docs.astral.sh/uv/), Node 20+, Docker.
 make setup                 # Python + web dependencies, sandbox image
 cp .env.example .env       # add ANTHROPIC_API_KEY
 make serve                 # http://localhost:8000
-make preflight             # checks the environment end to end
+make preflight             # in another terminal: checks the environment end to end
 ```
 
 Load the reference agent and its evaluation suite, then watch it improve:
@@ -34,32 +35,61 @@ make rehearse
 Or load all four example agents (log triage, data analyst, docs writer, repo maintainer) with starter
 prompts and verified eval cases: `make examples`, then see [docs/test-cases.md](docs/test-cases.md).
 
-Expose it to others: `cloudflared tunnel --url http://localhost:8000`.
+Expose it to others: `cloudflared tunnel --url http://localhost:8000`. Requests through a tunnel count as
+remote: share links and the API with an agent key work, the builder UI does not.
+
+### Local models
+
+Run an agent on a local model with [Ollama](https://ollama.com):
+
+```bash
+ollama pull qwen3:8b
+```
+
+Then set the agent's model to `openai_compat:http://localhost:11434/v1|qwen3:8b` (it is one of the presets in
+the model picker). Any OpenAI-compatible server works the same way: `openai_compat:<base_url>|<model>`.
+
+### Command line
+
+`uv sync` installs the `forge` command. It runs any agent version on your own machine against a directory,
+asking before each command or write, and syncs the trace back to the server (local runs never count toward
+evals):
+
+```bash
+uv run forge login http://localhost:8000 <agent-api-key>
+uv run forge run repo-maintainer "add a refund endpoint" --dir .   # --auto, --sandbox, --model, --no-sync
+```
+
+`forge feedback` rates a run, and `forge sync` uploads traces buffered while the server was unreachable.
 
 ## Documentation
 
 | File | Contents |
 |---|---|
 | [CONTRACT.md](CONTRACT.md) | HTTP API, objects, conventions, promotion rule |
-| [TESTING.md](TESTING.md) | Six test layers, commands and requirement traceability |
+| [TESTING.md](TESTING.md) | Test layers, commands, CI and requirement traceability |
 | [demo/README.md](demo/README.md) | The reference agent, its conventions and evaluation cases |
 | [docs/test-cases.md](docs/test-cases.md) | What to try first: example agents, suggested prompts, expected results, eval splits |
+| [desktop/README.md](desktop/README.md) | The macOS app: build, install, how it works, testing |
+| [.env.example](.env.example) | Every environment variable Forge reads |
 
 ## Tests
 
-`make test-all` runs every deterministic layer (no API keys needed: models are replaced by scripted
-`fake:` scenarios while the server, database, sandboxes, CLI and browser are real). `make test-live`
-runs against real models.
+`make test-all` runs the deterministic layers 1 to 5 (no API keys needed: models are replaced by scripted
+`fake:` scenarios while the server, database, sandboxes, CLI and browser are real); `make test-examples`
+checks the example agents' checkers. `make test-live` runs against real models. CI
+(`.github/workflows/ci.yml`) runs layers 1 to 5 on every push to master and every pull request.
 
 ## Desktop app
 
-`desktop/` packages Forge as a macOS app for Apple Silicon: it checks Docker, builds the sandbox image on
-first run, starts a bundled server on 127.0.0.1 and opens the UI in a native window, with the Claude API
-key kept encrypted in the Keychain and an optional public link through cloudflared.
+`desktop/` packages Forge as a macOS app for Apple Silicon (macOS 12 or later): it checks Docker, builds the
+sandbox image on first run, starts a bundled server on 127.0.0.1 and opens the UI in a native window, with
+the Claude API key kept encrypted in the Keychain and an optional public link through cloudflared.
 
 ```bash
 cd desktop && npm install && npm run dist    # desktop/dist/Forge-<version>-arm64.dmg
 ```
 
-The app is not notarized, so the first launch needs right click > Open, or
+Built apps are published on this repository's Releases page. The app is not notarized, so the first launch
+needs Open Anyway in System Settings > Privacy & Security, or
 `xattr -dr com.apple.quarantine /Applications/Forge.app`. See [desktop/README.md](desktop/README.md).
