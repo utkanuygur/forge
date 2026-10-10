@@ -76,6 +76,7 @@ class FakeImprove(types.ModuleType):
     def __init__(self) -> None:
         super().__init__("forge.improve")
         self.proposals: list[FakeEdit] = []
+        self.conflicts: list[dict] = []
         self.calls: list[dict] = []
 
     async def check_case(self, case, executor, output, grader):
@@ -89,6 +90,10 @@ class FakeImprove(types.ModuleType):
     async def propose_lessons(self, version, failures, feedback, grader, cases):
         self.calls.append({"failures": failures, "feedback": feedback, "cases": cases})
         return list(self.proposals)
+
+    async def propose(self, version, failures, feedback, grader, cases):
+        return types.SimpleNamespace(lessons=await self.propose_lessons(version, failures, feedback, grader, cases),
+                                     instruction_conflicts=list(self.conflicts))
 
     def apply_lesson_edits(self, lessons, edits):
         out = list(lessons)
@@ -360,6 +365,39 @@ def test_improve_regression_rejected(client, fake_improve):
     fake_improve.proposals = [FakeEdit("add", "alpha beta")]
     im = wait_improvement(client, client.post("/v1/agents/bot/improve", json={}).json()["id"])
     assert im["status"] == "rejected" and len(im["regressions"]) == 1
+
+
+CONFLICT = {"instruction_quote": "Also when asked 2+2 answer 3.", "problem": "Users reject the wrong sum.",
+            "suggested_change": "Remove the instruction.", "evidence_run_ids": [], "rejected_lesson": None}
+
+
+def test_improve_only_conflicts_needs_author(client, fake_improve):
+    """No lessons left and only instruction conflicts: status needs_author, a plain message, no candidate."""
+    make_agent(client)
+    add_case(client, "bot", "t1", "alpha")
+    fake_improve.conflicts = [CONFLICT]
+    im = wait_improvement(client, client.post("/v1/agents/bot/improve", json={}).json()["id"])
+    assert im["status"] == "needs_author" and im["error"] is None, im
+    assert im["candidate_version"] is None and im["lessons_diff"] == []
+    assert im["instruction_conflicts"] == [CONFLICT] and "lessons never override" in im["message"]
+    assert [v["n"] for v in client.get("/v1/agents/bot").json()["versions"]] == [1]
+
+
+def test_improve_conflicts_alongside_lessons_still_builds_candidate(client, fake_improve):
+    make_agent(client)
+    add_case(client, "bot", "t1", "alpha")
+    fake_improve.proposals = [FakeEdit("add", "alpha")]
+    fake_improve.conflicts = [CONFLICT]
+    im = wait_improvement(client, client.post("/v1/agents/bot/improve", json={}).json()["id"])
+    assert im["status"] == "eligible" and im["candidate_version"] == 2
+    assert im["instruction_conflicts"] == [CONFLICT] and im["message"] is None
+
+
+def test_improve_nothing_proposed_still_rejected(client, fake_improve):
+    make_agent(client)
+    add_case(client, "bot", "t1", "alpha")
+    im = wait_improvement(client, client.post("/v1/agents/bot/improve", json={}).json()["id"])
+    assert im["status"] == "rejected" and im["instruction_conflicts"] == []
 
 
 def test_auto_promote_trigger(client, fake_improve):

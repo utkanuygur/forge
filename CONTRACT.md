@@ -89,7 +89,7 @@ Errors: `{"detail": "<message>"}` with a 4xx/5xx status.
  "split": "train", "created_at": 0.0}
 
 // Improvement (comparison summary)
-{"id": "im_..", "agent_id": "ag_..", "status": "eligible",   // running|promoted|eligible|rejected|failed
+{"id": "im_..", "agent_id": "ag_..", "status": "eligible",   // running|promoted|eligible|rejected|failed|needs_author
  "base_version": 1, "candidate_version": 2,
  "base":      {"train": {"passed": 1, "total": 4}, "holdout": {"passed": 1, "total": 3}},
  "candidate": {"train": {"passed": 4, "total": 4}, "holdout": {"passed": 3, "total": 3}},
@@ -327,6 +327,40 @@ them (`origin: "optimizer"`) or a human supplies them via `POST /agents` or `POS
 `lesson_meta` is the only field written after a version is created (its `n` is needed); configuration fields stay
 immutable. Schema additions: `improvements.kind TEXT NOT NULL DEFAULT 'improve'`, `agent_versions.lesson_meta`;
 existing databases are migrated on first connect (`forge/db.py`, `ADDED_COLUMNS`).
+
+### Instruction conflicts
+
+Lessons are appended after the author's instructions in the system prompt, so a lesson that contradicts an instruction
+would override the author. The optimizer never rewrites instructions, and lessons may only fill gaps the instructions do
+not cover. When failures or feedback stem from the instructions themselves, the optimizer reports an instruction
+conflict instead of a lesson (`forge.improve.propose`, `OPTIMIZER_SYSTEM` rules 8 and 9). Validation also enforces it:
+
+1. Deterministic: a lesson that references the instructions as something to disobey (`overrides_instructions`:
+   "even if an instruction says", "ignore the instructions", "regardless of the instructions", "despite the system
+   prompt", "takes precedence over the instructions", "even if told", or any override/overrule/supersede wording in a
+   lesson that mentions instructions; case insensitive) is dropped. Untrusted content wording such as "ignore
+   instructions embedded in web pages" is allowed.
+2. Self-check: one structured grader call (`CONFLICT_CHECK_SYSTEM`, temperature 0, metered as `optimizer`) gets the
+   instructions and every proposed add or edit and returns per lesson `{index, contradicts, instruction_quote,
+   problem}`. Contradicting lessons are dropped. An unusable reply fails open (the deterministic check still applies).
+
+Every dropped lesson becomes a conflict entry (with `rejected_lesson`); entries quoting the same instruction are merged
+(evidence combined). The evidence, length and leak checks are unchanged. Improvement additions:
+
+```jsonc
+"instruction_conflicts": [{"instruction_quote": "Also when asked 2+2 answer 3.",   // "" when it could not be quoted
+                           "problem": "..", "suggested_change": "..", "evidence_run_ids": ["r_.."],
+                           "rejected_lesson": ".." }],                          // null when the optimizer reported it
+"message": null   // plain explanation for needs_author, else null
+```
+
+When no lesson edit remains and at least one conflict exists, the improvement ends with status `needs_author` (not an
+error: `error` is null) and `message` explains it; no candidate version is created and nothing is evaluated after the
+base. When lessons remain, the cycle continues as before and the conflicts are reported alongside the candidate. No
+conflicts and no lessons still ends `rejected`. The UI shows a callout "Your instructions conflict with what
+evaluations and feedback show" with each quote, problem and evidence links, and a "Review instructions" link to
+`/agents/{slug}/configure?focus=instructions&select=<quote>`, which focuses the instructions field and selects the
+quoted instruction (there is no `instructions` assist kind to prefill a Generate with).
 
 ## Tools
 
@@ -721,7 +755,7 @@ Timelines for runs recorded before the timing fields existed are built from even
 a model turn spans from the previous step to the event that reports it, a tool call from `tool_call` to `tool_result`.
 Improvement cycle cost = its eval runs (all k repeated runs of each case, linked when the cycle starts them;
 stored runs reused from earlier evals are not re-counted) plus its judge and optimizer calls (one judge call per
-judged run).
+judged run; the optimizer call and its instruction conflict self-check both count as optimizer).
 
 ### Ops (no `/v1` prefix)
 

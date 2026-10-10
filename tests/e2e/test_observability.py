@@ -203,9 +203,10 @@ def test_improvement_cycle_cost_and_promotion_marker(api, make_agent):
     m = api.get(f"/agents/{slug}/metrics").json()
     cyc = next(c for c in m["cost"]["improvements"] if c["id"] == im["id"])
     # 2 cases x 2 versions x k runs; one judge call per run of the judge case (2 versions x k) plus the optimizer
-    assert cyc["eval_runs"] == 4 * k and cyc["grader_calls"] == 2 * k + 1
+    # and its instruction conflict self-check (both metered as optimizer)
+    assert cyc["eval_runs"] == 4 * k and cyc["grader_calls"] == 2 * k + 2
     assert cyc["judge_cost_usd"] == pytest.approx(2 * k * (50 * 100 + 10 * 500) / 1e6)
-    assert cyc["optimizer_cost_usd"] == pytest.approx((200 * 100 + 40 * 500) / 1e6)
+    assert cyc["optimizer_cost_usd"] == pytest.approx((200 * 100 + 40 * 500 + 150 * 100 + 20 * 500) / 1e6)
     # base: 2k one-turn runs (10 in, 5 out); candidate: 2k two-turn runs (20 in, 10 out), at $1000 / $2000
     assert cyc["eval_cost_usd"] == pytest.approx(k * ((2 * 0.02) + (2 * 0.04)))
     assert cyc["total_cost_usd"] == pytest.approx(cyc["eval_cost_usd"] + cyc["judge_cost_usd"]

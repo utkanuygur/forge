@@ -13,7 +13,7 @@ export type RunStatus =
   | "budget_exceeded";
 export type Split = "train" | "holdout";
 export type CreatedBy = "human" | "optimizer";
-export type ImprovementStatus = "running" | "promoted" | "eligible" | "rejected" | "failed";
+export type ImprovementStatus = "running" | "promoted" | "eligible" | "rejected" | "failed" | "needs_author";
 export type EventType =
   | "run_started"
   | "assistant"
@@ -537,6 +537,18 @@ export interface Improvement {
   ended_at: number | null;
   kind?: "improve" | "prune";
   ablations?: Ablation[];
+  // Where the author's instructions themselves cause failures or feedback (lessons never override them).
+  instruction_conflicts?: InstructionConflict[];
+  // Plain explanation for statuses that need one (needs_author).
+  message?: string | null;
+}
+
+export interface InstructionConflict {
+  instruction_quote: string;
+  problem: string;
+  suggested_change: string;
+  evidence_run_ids: string[];
+  rejected_lesson?: string | null;
 }
 
 export interface Ablation {

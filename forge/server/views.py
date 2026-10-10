@@ -86,6 +86,7 @@ def improvement_view(im: dict) -> dict:
         "base": s.get("base", empty), "candidate": s.get("candidate", empty), "cases": s.get("cases", []),
         "newly_passing": s.get("newly_passing", []), "regressions": s.get("regressions", []),
         "lessons_diff": s.get("lessons_diff", []), "error": s.get("error"),
+        "instruction_conflicts": s.get("instruction_conflicts", []), "message": s.get("message"),
         "created_at": im["created_at"], "ended_at": im["ended_at"],
         "kind": im.get("kind") or "improve", "ablations": s.get("ablations", []),
     }

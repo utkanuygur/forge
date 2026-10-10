@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
-import { Check, ExternalLink, Minus, Pencil, Plus, X } from "lucide-react";
-import type { Ablation, CaseResult, Improvement, LessonDiff, Score } from "../../api";
+import { AlertTriangle, Check, ExternalLink, Minus, Pencil, Plus, X } from "lucide-react";
+import type { Ablation, CaseResult, Improvement, InstructionConflict, LessonDiff, Score } from "../../api";
 import StatusPill from "../../components/StatusPill";
 import { Badge, ErrorBox, SplitBadge } from "../../components/ui";
 
@@ -157,14 +157,84 @@ function LessonOp({ d }: { d: LessonDiff }) {
   );
 }
 
+/** Configure with the instructions field focused and, when given, the quoted instruction selected. */
+export function reviewInstructionsHref(slug: string, quote?: string): string {
+  const q = new URLSearchParams({ focus: "instructions" });
+  if (quote) q.set("select", quote);
+  return `/agents/${slug}/configure?${q.toString()}`;
+}
+
+/** Instruction conflicts: failures or feedback that come from the author's own instructions. Lessons never
+ * override instructions, so the optimizer reports these here instead of writing a lesson. */
+export function InstructionConflicts({ conflicts, slug }: { conflicts: InstructionConflict[]; slug?: string }) {
+  if (conflicts.length === 0) return null;
+  const firstQuote = conflicts.find((c) => c.instruction_quote)?.instruction_quote;
+  return (
+    <div
+      data-testid="instruction-conflicts"
+      role="note"
+      className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40"
+    >
+      <div className="flex flex-wrap items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" />
+        <div className="min-w-0 flex-1">
+          <h4 className="text-sm font-medium text-amber-900 dark:text-amber-200">
+            Your instructions conflict with what evaluations and feedback show
+          </h4>
+          <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300">
+            Lessons never override your instructions, so the optimizer did not write a lesson for these. Only you can change the
+            instructions.
+          </p>
+        </div>
+        {slug && (
+          <Link to={reviewInstructionsHref(slug, firstQuote)} className="btn-secondary shrink-0" data-testid="review-instructions">
+            Review instructions
+          </Link>
+        )}
+      </div>
+      <ul className="space-y-2">
+        {conflicts.map((c, i) => (
+          <li
+            key={i}
+            data-testid="instruction-conflict"
+            className="space-y-1.5 rounded-md border border-amber-200 bg-white/70 p-3 text-sm dark:border-amber-900 dark:bg-neutral-950/40"
+          >
+            {c.instruction_quote ? (
+              <blockquote data-testid="conflict-quote" className="border-l-2 border-amber-400 pl-2 font-mono text-xs text-neutral-800 dark:text-neutral-200">
+                {c.instruction_quote}
+              </blockquote>
+            ) : (
+              <p className="text-xs text-neutral-500">The conflicting instruction could not be quoted.</p>
+            )}
+            <p className="text-neutral-800 dark:text-neutral-200">{c.problem}</p>
+            {c.suggested_change && <p className="text-xs text-neutral-600 dark:text-neutral-400">Suggestion: {c.suggested_change}</p>}
+            {c.evidence_run_ids.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                <span className="text-neutral-500">Evidence:</span>
+                {c.evidence_run_ids.map((id) => (
+                  <Link key={id} to={`/runs/${id}`} className="font-mono text-accent-600 hover:underline dark:text-accent-400">
+                    {id}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function ImprovementView({
   im,
   prodVersion,
   onPromote,
+  slug,
 }: {
   im: Improvement;
   prodVersion: number;
   onPromote: (n: number) => void;
+  slug?: string;
 }) {
   const name = (id: string) => im.cases.find((c) => c.case_id === id)?.name ?? id;
   const sortedCases = [...im.cases].sort((a, b) => (a.split === b.split ? a.name.localeCompare(b.name) : a.split === "train" ? -1 : 1));
@@ -206,7 +276,13 @@ export default function ImprovementView({
             : "Rejected: the candidate did not pass more cases than base without regressions."}
         </p>
       )}
+      {im.status === "needs_author" && (
+        <p data-testid="needs-author" className="text-sm text-amber-800 dark:text-amber-300">
+          {im.message || "No lessons were added because the problem is in your instructions. Review the conflicts below."}
+        </p>
+      )}
       <ErrorBox error={im.error} />
+      <InstructionConflicts conflicts={im.instruction_conflicts ?? []} slug={slug} />
 
       {(im.base || im.candidate) && (
         <div className="grid gap-4 sm:grid-cols-2">
