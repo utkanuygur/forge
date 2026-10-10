@@ -22,6 +22,12 @@ npm run build:server        # web/dist + PyInstaller server into build/server/fo
 npm run dist                # build:server, then dist/Forge-<version>-arm64.dmg
 ```
 
+`build:server` freezes the server with uv's prebuilt (python-build-standalone) CPython 3.12 in a dedicated
+environment (`~/Library/Caches/forge-desktop/build-venv`, or `FORGE_BUILD_VENV`), never the developer's
+interpreter, with `MACOSX_DEPLOYMENT_TARGET` set to `build.mac.minimumSystemVersion` from `package.json`
+(12.0). It then runs `scripts/check-min-macos.sh`, which fails the build if any bundled binary needs a newer
+macOS or links a library outside the system and the bundle (Homebrew, pyenv).
+
 `npm run build` makes only the `.app`, without a dmg, and `npm run package` repackages without
 rebuilding the server. Packaging runs in `~/Library/Caches/forge-desktop/dist` (where the `.app`
 stays) and only the dmg is copied to `desktop/dist`: folders synced by iCloud Drive, such as
@@ -33,6 +39,15 @@ Desktop, add Finder attributes to app bundles, which breaks their code signature
 For fast iteration, `npm run dev` starts Electron from this folder and runs the server with
 `uv run uvicorn forge.server.app:app` from the repo instead of the frozen binary. Dev mode keeps its
 own settings in `~/Library/Application Support/Forge Dev` and logs in `~/Library/Logs/Forge Dev`.
+
+## Releases
+
+Built dmgs are published on the Releases page of this code repository (not on the website repository),
+one release per version tag (`v0.1.1`, `v0.1.2`, ...), with the dmg attached, release notes listing what is
+new, the requirements, install steps, what was verified for that build, and the dmg's SHA-256. Before
+publishing: run `npm run dist`, install the dmg, and run `npm run verify -- --app
+/Applications/Forge.app`. The `version` in `package.json` sets the dmg name and the version the app reports,
+so bump it for each release.
 
 ## Install and first launch
 

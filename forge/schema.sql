@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS runs (
   version_id     TEXT NOT NULL REFERENCES agent_versions(id),
   source         TEXT NOT NULL,     -- ui | share | api | eval | local | agent | schedule | github | slack
   input          TEXT NOT NULL,
-  status         TEXT NOT NULL,     -- queued | running | awaiting_approval | succeeded | failed | timeout | budget_exceeded
+  status         TEXT NOT NULL,     -- queued | running | awaiting_approval | succeeded | failed | timeout | budget_exceeded | cancelled
   output         TEXT NOT NULL DEFAULT '',
   error          TEXT,
   artifact_path  TEXT,

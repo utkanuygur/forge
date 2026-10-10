@@ -26,13 +26,14 @@ class Event(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     # Payload shapes by type:
     #   run_started:  {"version_id", "model", "input"}
-    #   assistant:    {"text", "kind"}  kind: "progress" (narration before tool calls) | "final" (answer)
+    #   assistant:    {"text", "kind"}  kind: "progress" (narration before tool calls) | "final" (answer);
+    #                 a tool-only turn without narration emits no assistant event
     #   tool_call:    {"id", "name", "args"}
     #   tool_result:  {"id", "name", "output", "is_error"}; non-builtin tools add "source"
     #                 ("http" | "mcp" | "agent") and agent tools add "child_run_id"
     #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out", "cache_read_tokens",
     #                  "cache_write_tokens"}
-    #   error:        {"message"}
+    #   error:        {"message"}  (model failure, refusal "Model declined: ...", max_tokens cut off, runtime bug)
     # Additive observability fields (optional; absent on events recorded before they existed):
     #   assistant:    "turn", "duration_ms" (model call latency), "tokens_in", "tokens_out" (this turn)
     #   tool_call:    "turn"; the first call of a turn without text also has "model_duration_ms",
@@ -154,6 +155,8 @@ class ModelResponse(BaseModel):
 
 
 class Provider(Protocol):
+    # `temperature` is a request, not a guarantee: AnthropicProvider drops it for models that reject sampling
+    # parameters (forge.providers.accepts_temperature).
     async def complete(
         self,
         system: str,

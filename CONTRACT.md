@@ -1,7 +1,8 @@
-# Forge contract (frozen)
+# Forge contract
 
 Shared by every component. Python types live in `forge/types.py`, the database in `forge/schema.sql`.
-Change any of these only with a note in this file and updates to every implementer.
+Change any of these only with a note in this file and updates to every implementer. Sections marked
+amendment or additive extend the objects and endpoints above; where both describe one object, both apply.
 
 ## Repository layout and ownership
 
@@ -16,6 +17,10 @@ Change any of these only with a note in this file and updates to every implement
 | `forge/db.py` | server | SQLite access layer (sync `sqlite3`, called via `asyncio.to_thread` where needed) |
 | `forge/server/*.py` | server | FastAPI app `forge.server.app:app`, run manager, SSE |
 | `forge/improve.py` | improve | Eval runner, judge, optimizer, promotion rule |
+| `forge/drafting.py`, `forge/pruning.py`, `forge/provenance.py`, `forge/server/authoring.py` | improve | Agent drafts, lesson pruning, lesson provenance (see Authoring) |
+| `forge/metrics.py`, `forge/pricing.py`, `forge/server/observability.py`, `forge/server/obslog.py` | server | Observability (see Observability) |
+| `forge/desktop_entry.py`, `desktop/` | desktop | macOS app and its frozen server entry point |
+| `gpu/` | runtime | vLLM on Modal for GPU served open models |
 | `forge/cli.py` | cli | `forge` Typer app |
 | `web/` | web | React + Vite + Tailwind single-page app |
 | `demo/` | demo | `acme-orders` seed repo, `repo-maintainer` agent definition, eval cases; `examples/` example agents (`load_examples.py`, `verify_examples.py`) |
@@ -23,17 +28,26 @@ Change any of these only with a note in this file and updates to every implement
 
 ## Conventions
 
-- IDs: prefixed random hex, `ag_`, `v_`, `r_`, `fb_`, `ec_`, `im_` + 12 hex chars.
+- IDs: prefixed random hex, `ag_`, `v_`, `r_`, `fb_`, `ec_`, `im_`, `ap_` (approvals), `tr_`/`tf_` (triggers and
+  fires), `s_` (sessions) + 12 hex chars.
 - Times: unix seconds as float.
-- Model strings: `anthropic:<model-id>` or `openai_compat:<base_url>|<model>`, e.g. `openai_compat:http://localhost:11434/v1|qwen3:8b`.
+- Agent API keys: `fk_` + random URL-safe characters, stored hashed and shown once.
+- Model strings: `anthropic:<model-id>` or `openai_compat:<base_url>|<model>`, e.g. `openai_compat:http://localhost:11434/v1|qwen3:8b`
+  (after `ollama pull qwen3:8b`); `fake:<scenario>` selects a deterministic test model (TESTING.md).
 - Data directory: `$FORGE_DATA_DIR` (default `./data`): `forge.db`, `runs/<run_id>/workspace.tar.gz`, `runs/<run_id>/diff.patch`.
 - Secrets are redacted in event payloads by replacing each secret value with `[REDACTED]` before `emit`.
-- Default models: `$FORGE_DEFAULT_MODEL` for agents, `$FORGE_GRADER_MODEL` for judge and optimizer.
+- Default models: `$FORGE_DEFAULT_MODEL` for agents (default `anthropic:claude-sonnet-5-5`), `$FORGE_GRADER_MODEL`
+  for judge, optimizer and agent drafting (falls back to the agent default; `.env.example` sets
+  `anthropic:claude-opus-5-5`). Judge and optimizer request temperature 0, which is sent only to models that accept
+  sampling parameters (`forge.providers.accepts_temperature`; current Claude models do not).
+- `http_tools` (`forge.types.HttpTool`), `mcp_servers` and `callable_agents` are offered to the model as tools
+  (see Tools).
 
 ## HTTP API (prefix `/v1`)
 
-Auth for runtime endpoints: `Authorization: Bearer <api_key>` or `?share=<share_token>` (also header `X-Share-Token`).
-Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<message>"}` with a 4xx/5xx status.
+Auth: `Authorization: Bearer <api_key>` (one key per agent) or `?share=<share_token>` (also header `X-Share-Token`);
+requests from localhost without either act as the local builder. The full rules are under "Auth" below.
+Errors: `{"detail": "<message>"}` with a 4xx/5xx status.
 
 ### Objects
 
@@ -41,6 +55,7 @@ Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<mes
 // Agent
 {"id": "ag_..", "slug": "repo-maintainer", "name": "Repo maintainer", "description": "",
  "prod_version": 1, "auto_promote": false, "eval_repeats": 3, "share_token": "..", "created_at": 0.0,
+ "suggested_prompts": [],               // see "Suggested prompts"
  "versions": [Version, ...]}            // versions only on GET /agents/{slug}
 
 // Version  (AgentVersion fields, JSON)
@@ -52,7 +67,9 @@ Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<mes
 
 // Run
 {"id": "r_..", "agent_id": "ag_..", "version_id": "v_..", "version_n": 1, "source": "api",
+   // api|ui|share|eval|local|playground|agent|schedule|github|slack
  "input": "..", "status": "succeeded", "output": "..", "error": null,
+   // status: queued|running|awaiting_approval (not terminal)|succeeded|failed|timeout|budget_exceeded|cancelled
   "turns": 7, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "cache_write_tokens": 0,
  "has_artifacts": true,
  "parent_run_id": null,                  // set when an agent__ tool started this run
@@ -118,11 +135,18 @@ with the agent (used to create a reviewed draft and its selected starter cases i
 | GET | `/runs/{id}/diff` | | `text/plain` |
 | POST | `/runs/{id}/feedback` | `{rating: 1 or -1, comment?}` | `Feedback` |
 
-Builder UI calls runtime endpoints without auth when the request comes from localhost.
+### Auth
 
-Auth amendments (server implementation):
-- Builder routes require a localhost client or that agent's API key; `GET/POST /agents` are localhost only; `/templates` is open; `FORGE_TRUST_ALL=1` disables checks.
-- A share token may `GET /agents/{slug}` (only `id, slug, name, description, suggested_prompts`) and its versions (for the share page) and start/read its own share runs; it gets 401 on builder, eval and improve routes. With a share token, `GET /agents/{slug}/runs` lists only share-sourced runs.
+- Localhost clients act as the builder and may call every route without a key. A request carrying a proxy header
+  (`CF-Connecting-IP`, `CF-Ray`, `X-Forwarded-For`, `X-Real-IP`, `Forwarded`) is remote even from 127.0.0.1, so a
+  tunnel never gets the builder bypass. `FORGE_TRUST_ALL=1` disables every check.
+- `GET/POST /agents` and `POST /agent-drafts` are localhost only; `/templates` is open; every agent-scoped builder,
+  runtime, eval and improve route also accepts that agent's API key.
+- A share token may `GET /agents/{slug}` (only `id, slug, name, description, suggested_prompts`), start runs
+  (`source: "share"`), read a share run of that agent by id (run, events, artifacts, diff, files, approvals) and
+  post feedback on it; any other run id is a 404 (see below). With a share token `GET /agents/{slug}/runs` lists
+  only share-sourced runs. It gets 401 on versions, local runs, builder, eval, improve, observability, Playground
+  and webhook-secret routes.
 - Share page URL: `/s/{slug}?share=<token>`.
 - Share tokens reach only share runs: every run-scoped endpoint (`/runs/{id}`, its events, events.json,
   artifacts, diff, files, feedback and approvals) answers **404** (not 401, so ids are not confirmed) when a share
@@ -150,7 +174,7 @@ Auth amendments (server implementation):
 | POST | `/agents/{slug}/evals` | `{name, input, seed_files?, checker_type, checker, split}` | `EvalCase` |
 | DELETE | `/evals/{id}` | | `{"ok": true}` |
 | POST | `/runs/{id}/save-as-eval` | `{name?, checker_type?, checker?, split?}` (default judge rubric from feedback comment) | `EvalCase` |
-| POST | `/agents/{slug}/evals/run` | `{version?: n}` | `{"version": n, "results": [...]}` runs (cached) eval of one version, async; poll via GET below |
+| POST | `/agents/{slug}/evals/run` | `{version?: n}` | Same shape as GET results below (`running: true`); starts a cached eval of one version in the background; poll via GET |
 | GET | `/agents/{slug}/evals/results?version=n` | | `{"version": n, "train": {...}, "holdout": {...}, "repeats": k, "results": [{case_id, passed, reason, run_id, passes, runs}]}` |
 | POST | `/agents/{slug}/improve` | `{}` | `Improvement` (status `running`; poll) |
 | GET | `/improvements/{id}` | | `Improvement` |
@@ -806,7 +830,7 @@ Local CLI runs are not governed.
 ## Suggested prompts (additive)
 
 Starter tasks a person can run immediately, shown as clickable chips above the run input (Runs tab, the
-Playground, and the share page). They belong to the agent, not to a version: they describe what to try, not how the agent behaves,
+Playground and the share page). They belong to the agent, not to a version: they describe what to try, not how the agent behaves,
 so changing them never creates a version and never affects evals.
 
 ```jsonc

@@ -66,6 +66,10 @@ For every case, on a fresh git-initialized copy of `acme-orders`, the checker mu
 FAIL on the untouched seed, FAIL on `solutions/<case>/naive.py` (works, but breaks a
 convention the way a capable newcomer would), and PASS on `solutions/<case>/reference.py`.
 `solutions/` is for verification only and is never seeded into the agent's workspace.
+`make test-demo` runs the same check (21 expectations: 7 cases times 3).
+
+The other example agents (log triage, data analyst, docs writer) live in `examples/`; load them with
+`make examples` and see [docs/test-cases.md](../docs/test-cases.md).
 
 ## Suggested flow
 

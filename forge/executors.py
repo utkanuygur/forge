@@ -293,7 +293,7 @@ class LocalExecutor:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_idx = Path(tmp) / "index"
             if idx_path.exists():
-                shutil.copy(idx_path, tmp_idx)
+                shutil.copy2(idx_path, tmp_idx)  # keep the mtime: git trusts it to spot same-second edits
             env = {**os.environ, "GIT_INDEX_FILE": str(tmp_idx)}
             _check(await self._git("add", "-A", ".", env=env), "git add")
             res = _check(await self._git("diff", "--cached", "--binary", self.baseline, "--", ".", env=env), "git diff")

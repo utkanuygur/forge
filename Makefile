@@ -7,7 +7,7 @@ PTH   := .venv/lib/python3.12/site-packages
         test-demo test-live test-all lint preflight rehearse serve web dev clean examples test-examples
 
 help:  ## Show targets
-	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
+	@grep -E '^[a-z0-9-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
 setup: ## Install Python and web dependencies, build the sandbox image
 	uv sync
@@ -49,15 +49,15 @@ test-live: fix-pth ## Layer 6: real model APIs (needs ANTHROPIC_API_KEY; optiona
 test: fix-pth ## Default gate: layers 1 to 3 (everything that needs no API key or browser)
 	$(PY) pytest -q -m "not live"
 
-test-all: test test-web test-demo ## Every deterministic layer; run before each commit to main
+test-all: test test-web test-demo ## Deterministic layers 1 to 5 (5b is test-examples); run before merging
 
-lint: ## Static checks
+lint: ## Static checks: byte-compile forge/, type check web/
 	$(PY) python -m compileall -q forge
 	cd web && npx tsc -b
 
 # ---------------------------------------------------------------- run and rehearse
 
-preflight: fix-pth ## Pre-demo checklist: environment, services, keys, end-to-end smoke
+preflight: fix-pth ## Pre-demo checklist: environment, models, server, end to end smoke (needs make serve)
 	@bash scripts/preflight.sh
 
 rehearse: fix-pth ## Real improvement loop on the demo agent with Claude (needs server + key)
@@ -78,10 +78,8 @@ clean: ## Remove local data and leftover sandbox containers
 
 # ---------------------------------------------------------------- example agents
 
-.PHONY: examples test-examples
-
 examples: fix-pth ## Load the example agents, suggested prompts and eval cases (needs a running server; BASE_URL=...)
 	$(PY) python demo/load_examples.py --base-url $(or $(BASE_URL),http://localhost:8000)
 
-test-examples: ## Example eval and suggested prompt checkers fail on the seed and pass on reference solutions
+test-examples: fix-pth ## Layer 5b: example eval and suggested prompt checkers fail on the seed and pass on reference solutions
 	$(PY) python demo/verify_examples.py
