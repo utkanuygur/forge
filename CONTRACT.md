@@ -146,12 +146,14 @@ with the agent (used to create a reviewed draft and its selected starter cases i
   (`source: "share"`), read a share run of that agent by id (run, events, artifacts, diff, files, approvals) and
   post feedback on it; any other run id is a 404 (see below). With a share token `GET /agents/{slug}/runs` lists
   only share-sourced runs. It gets 401 on versions, local runs, builder, eval, improve, observability, Playground
-  and webhook-secret routes.
+  and webhook-secret routes. Amendment ("Share and API conversations"): a share token may also hold
+  conversations through the session endpoints and stop its own turns, all scoped to a visitor id; a share run
+  that a visitor started is readable only with that visitor id.
 - Share page URL: `/s/{slug}?share=<token>`.
 - Share tokens reach only share runs: every run-scoped endpoint (`/runs/{id}`, its events, events.json,
   artifacts, diff, files, feedback and approvals) answers **404** (not 401, so ids are not confirmed) when a share
-  token asks for a run whose `source` is not `share`. Timeline, cancel, save-as-eval and Playground sessions are
-  builder only.
+  token asks for a run whose `source` is not `share`, or for another visitor's share run. Timeline and
+  save-as-eval are builder only; cancel and sessions follow "Share and API conversations".
 - Webhooks (`callback_url`, run completion and governance's `awaiting_approval` notification): the URL must be
   `http` or `https` and its host must resolve only to public addresses, else **400** at request time. Deliveries
   go through the HTTP tools' SSRF-safe client (forge/tools/http.py: every resolved address checked, the
@@ -496,7 +498,8 @@ scheduler read the current unix time from that file.
 
 ### Sessions
 
-Playground sessions (additive). Builder-only (localhost or the agent's API key; share tokens get 401). JSON.
+Playground sessions (additive). Localhost or the agent's API key; share tokens get visitor scoped conversations
+(see "Share and API conversations"). JSON.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
@@ -876,3 +879,85 @@ Model: `model` when given (any provider string, e.g. `openai_compat:http://local
 else the example's own model, else (on replace) the current prod model, else the server default
 (`FORGE_DEFAULT_MODEL`). The version created on install has `created_by: "human"` and the rationale
 "Installed from the <key> example".
+
+## Share and API conversations (additive)
+
+Multi-turn conversations for people who use a deployed agent: share link visitors and API callers use the
+session endpoints of "Sessions" above. Code: `forge/server/sessions_api.py` (routes), `forge/share_limits.py`
+(visitors, limits, expiry), `forge/triggers/core.py` (Slack threads). Every session turn is an ordinary run with
+the session's history and the previous turn's workspace, as in the Playground.
+
+| Caller | Channel | Version | Turn `source` | Sees |
+|---|---|---|---|---|
+| Localhost builder | `playground` | any, or a draft | `playground` | every session (`?channel=` filters; default `playground`) |
+| Agent API key | `api` | any (`{version}`), or a draft | `api` | the agent's sessions (default `?channel=api`; `all` for every channel) |
+| Share token | `share` | the production version at each turn (no version or draft; either is a 400) | `share` | only its own visitor's sessions and runs |
+| Slack `app_mention` | `slack` | the trigger's pinned version or production | `slack` | (no reader; replies go to the thread) |
+
+Endpoints (all JSON, prefix `/v1`):
+
+| Method | Path | Share token behavior |
+|---|---|---|
+| POST | `/agents/{slug}/sessions` | Body `{}` (or `{title}`). Issues a visitor id when `X-Forge-Visitor` is missing or unknown for this agent, returns it as `visitor_id` and in the `X-Forge-Visitor` response header. 429 `sessions_per_visitor` |
+| GET | `/agents/{slug}/sessions?limit=20` | Only the visitor's conversations; `[]` without a visitor id |
+| GET | `/sessions/{id}` | 404 unless the session belongs to this visitor |
+| POST | `/sessions/{id}/messages` | `{input, wait?}`. 404 for another visitor's session, 410 once expired, 409 while a turn runs, 429 for a limit, 402 for the monthly budget |
+| POST | `/runs/{id}/cancel` | Allowed for the visitor's own share runs; any other run is a 404 |
+| GET | `/runs/{id}`, events, events.json, files, artifacts, diff, approvals; POST feedback | The visitor's own share runs. Share runs without a visitor (one shot runs) stay readable by id as before; every other run is a 404 |
+
+Visitor scoping:
+- A visitor id is `vis_` plus 32 random URL-safe characters, stored in `share_visitors` (per agent) and on
+  `sessions.visitor_id` and `runs.visitor_id`. Clients send it as `X-Forge-Visitor`, or as `?visitor=` where
+  headers cannot be set (EventSource streams, download links). The web share page keeps it in localStorage
+  (`forge.share.visitor.<slug>`).
+- A share token without a visitor id reaches no visitor's sessions or runs; `GET /agents/{slug}/runs` then lists
+  only share runs that no visitor owns. With a visitor id it lists only that visitor's runs.
+- Visitors never see the builder's or other visitors' sessions or runs, and session views for share callers
+  leave out `draft`, `base_version_n`, `is_draft` and `agent_id`.
+- `POST /agents/{slug}/runs` with a share token always runs production and records the visitor when the
+  request carries a known one. It counts toward the daily and concurrency limits below.
+
+Session objects gain (additive): `channel`, and for share and Slack sessions `expires_at` and `expired`; share
+sessions also `max_turns`. Share and Slack conversations idle for `FORGE_SESSION_IDLE_HOURS` (default 24) are
+read only: messages answer **410** (a Slack thread starts a new conversation instead). A running turn keeps a
+session open. Workspace archives of expired sessions stay under `runs/<run_id>/` like every run's (there is no
+automatic retention yet).
+
+Limits per share link (429 `{"detail", "limit", "retry_after"}` plus a `Retry-After` header, in seconds):
+
+| `limit` | Default | Env (global default) | Counted | Retry-After |
+|---|---|---|---|---|
+| `session_turns` | 20 | `FORGE_SHARE_SESSION_TURNS` | turns in one conversation (cancelled included) | 0: start a new conversation |
+| `sessions_per_visitor` | 3 | `FORGE_SHARE_SESSIONS_PER_VISITOR` | the visitor's conversations that have not expired | until the oldest one expires |
+| `daily_turns` | 200 | `FORGE_SHARE_DAILY_TURNS` | runs with source `share` created since 00:00 UTC (one shot share runs included) | until the next 00:00 UTC |
+| `concurrent_turns` | 2 | `FORGE_SHARE_CONCURRENT_TURNS` | share runs `queued`, `running` or `awaiting_approval` | 15 |
+
+- The daily message is exactly "You've reached today's limit for this link. Try again tomorrow."
+- Per agent overrides: `PATCH /agents/{slug} {"share_limits": {"daily_turns": 50}}`. Keys present replace, `null`
+  clears one (back to the default), absent keys are kept; each value is 1..100000 (422 otherwise). Agent objects
+  carry `share_limits` (overrides, null when unset), `share_limits_effective`, `share_limit_defaults` and
+  `session_idle_hours`. The Deploy tab edits them next to the share link.
+- Checks run on the server before the run row exists, without an await between the check and the insert, so
+  concurrent requests on the single server process cannot both pass.
+- Governance applies to every share turn: the monthly budget (402; share callers get "This agent has reached its
+  usage limit for this month. Try again later." without figures) and the version's per-run cap
+  (`budget_exceeded`). Builder and API sessions have no share limits and do not expire.
+
+Slack threads: an `app_mention` continues the conversation keyed by trigger id, channel and `thread_ts` (the
+mention's own `ts` for a top-level mention), so replies that mention the bot in the same thread continue it with
+history and files. The per conversation limit (`session_turns`) applies; a full thread, or a thread with a turn
+still running, gets a short note posted in the thread (bot token required), the fire is recorded as `skipped`
+and the hook answers 200 `{"ok": true, "skipped": "<reason>"}` so Slack does not retry. Slash commands carry no
+thread, so each starts its own run as before. A Slack session expires after the same idle time; the next mention
+in that thread starts a fresh conversation.
+
+API example:
+
+```bash
+SESSION=$(curl -s $FORGE/v1/agents/my-agent/sessions -H "Authorization: Bearer $FORGE_API_KEY" \
+  -H "Content-Type: application/json" -d '{"version": 2}' | jq -r .id)
+curl -s $FORGE/v1/sessions/$SESSION/messages -H "Authorization: Bearer $FORGE_API_KEY" \
+  -H "Content-Type: application/json" -d '{"input": "Create notes.md with three ideas", "wait": true}'
+curl -s $FORGE/v1/sessions/$SESSION/messages -H "Authorization: Bearer $FORGE_API_KEY" \
+  -H "Content-Type: application/json" -d '{"input": "Now expand the second idea", "wait": true}'
+```

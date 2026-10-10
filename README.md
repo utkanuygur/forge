@@ -39,6 +39,16 @@ Or load all four example agents (log triage, data analyst, docs writer, repo mai
 prompts and verified eval cases: click **Examples** on the Agents page (or **Add all** on the empty Agents
 page, also in the desktop app), or run `make examples`, then see [docs/test-cases.md](docs/test-cases.md).
 
+Share links are conversations: a colleague who opens `/s/<slug>?share=<token>` chats with the production version,
+follow up messages keep the earlier answers and files, and each visitor only ever sees their own conversations.
+Every link is limited per conversation (20 messages), per visitor (3 open conversations), per day (200
+messages) and in concurrency (2 at once); change them per agent in the Deploy tab or globally with
+`FORGE_SHARE_SESSION_TURNS`, `FORGE_SHARE_SESSIONS_PER_VISITOR`, `FORGE_SHARE_DAILY_TURNS` and
+`FORGE_SHARE_CONCURRENT_TURNS` (conversations go read only after `FORGE_SESSION_IDLE_HOURS`, default 24). API
+callers hold conversations with the same endpoints (`POST /v1/agents/<slug>/sessions`, then
+`POST /v1/sessions/<id>/messages`), and a Slack thread that mentions the bot continues one conversation. See
+CONTRACT.md "Share and API conversations".
+
 Expose it to others: `cloudflared tunnel --url http://localhost:8000`. Requests through a tunnel count as
 remote: share links, the API with an agent key and trigger hooks (`/v1/hooks/github|slack/{id}`, checked by
 their signatures) work, the builder UI does not.
