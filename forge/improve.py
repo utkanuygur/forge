@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Literal
 
@@ -10,9 +11,13 @@ from pydantic import BaseModel, Field, ValidationError
 
 from forge.types import AgentVersion, Executor, Message, Provider
 
+log = logging.getLogger("forge.improve")
+
 MAX_LESSONS = 15
 MAX_LESSON_CHARS = 300
 LEAK_NGRAM = 6
+MAX_CONFLICTS = 10
+MAX_CONFLICT_CHARS = 600
 
 
 class LessonEdit(BaseModel):
@@ -21,6 +26,24 @@ class LessonEdit(BaseModel):
     old_text: str | None = None  # for edit: the lesson being replaced
     evidence_run_ids: list[str] = Field(default_factory=list)
     rationale: str = ""
+
+
+class InstructionConflict(BaseModel):
+    """A place where the author's instructions themselves cause the failures or feedback. Lessons never override
+    instructions, so these are reported to the author instead of being turned into lessons."""
+
+    instruction_quote: str  # the instruction, quoted from the system prompt ("" when the check could not quote it)
+    problem: str
+    suggested_change: str = ""
+    evidence_run_ids: list[str] = Field(default_factory=list)
+    rejected_lesson: str | None = None  # set when this conflict came from a lesson that was dropped
+
+
+class Proposal(BaseModel):
+    """Validated optimizer output: lesson edits to apply and instruction conflicts to show the author."""
+
+    lessons: list[LessonEdit] = Field(default_factory=list)
+    instruction_conflicts: list[InstructionConflict] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- helpers
@@ -192,12 +215,39 @@ copy the checker's wording. Lessons must generalize; a lesson that only fixes on
 and will be rejected.
 7. If no general rule is justified, return an empty list.
 
+The system prompt holds the AUTHOR'S INSTRUCTIONS. They are authoritative, even when they look wrong to you, and \
+only the author may change them:
+8. Lessons may only fill gaps the instructions do not cover. A lesson must never contradict, override, weaken, \
+carve an exception out of, or tell the agent to ignore or work around any instruction, and must never mention \
+disobeying instructions ("even if an instruction says", "regardless of the instructions" and the like).
+9. If a failure or feedback stems from the instructions themselves (the agent did what an instruction told it \
+to, and that is what the check or the user rejected), do not write a lesson for it. Report it in \
+"instruction_conflicts" instead: quote the instruction verbatim, state the problem the evidence shows, suggest \
+how the author could change the instruction, and cite the run_ids. These go to the author, never to the agent.
+
 Respond with ONLY a JSON object, no prose and no code fences:
 {"lessons": [
   {"op": "add", "text": "<new lesson>", "evidence_run_ids": ["r_..."], "rationale": "<root cause it addresses>"},
   {"op": "edit", "old_text": "<existing lesson, verbatim>", "text": "<replacement>", "evidence_run_ids": ["r_..."], "rationale": "..."},
   {"op": "remove", "text": "<existing lesson, verbatim>", "evidence_run_ids": [], "rationale": "..."}
+],
+ "instruction_conflicts": [
+  {"instruction_quote": "<instruction, verbatim from the system prompt>", "problem": "<what the evidence shows>", \
+"suggested_change": "<how the author could change it>", "evidence_run_ids": ["r_..."]}
 ]}"""
+
+CONFLICT_CHECK_SYSTEM = """You check proposed LESSONS for an AI agent against its AUTHOR'S INSTRUCTIONS. Lessons are \
+appended after the instructions in the agent's system prompt, so a lesson that contradicts an instruction would \
+silently override the author. The instructions are authoritative even when they look wrong; do not judge them.
+
+For each lesson decide whether it contradicts an instruction: following the lesson would mean not following an \
+instruction, or the lesson overrides, weakens, carves an exception out of, or tells the agent to ignore or work \
+around an instruction. A lesson that only adds behavior the instructions do not address does not contradict them, \
+and neither does one that restates or sharpens an instruction.
+
+Respond with ONLY a JSON object, no prose and no code fences, with one entry per lesson in order:
+{"checks": [{"index": 1, "contradicts": true or false, "instruction_quote": "<the contradicted instruction, \
+verbatim, or empty>", "problem": "<one sentence, or empty>"}]}"""
 
 
 def _item_trace(item: dict) -> str:
@@ -254,6 +304,168 @@ def _valid_edit(e: LessonEdit, run_ids: set[str], cases: list[dict]) -> bool:
     return bool(text and e.evidence_run_ids) and len(text) <= MAX_LESSON_CHARS and not _leaks(text, cases)
 
 
+def _parse_conflicts(text: str, run_ids: set[str]) -> list[InstructionConflict]:
+    """The optimizer's `instruction_conflicts`, keeping entries with a quote and a problem; unknown run ids dropped."""
+    obj = _first_json_object(text) or {}
+    raw = obj.get("instruction_conflicts")
+    out: list[InstructionConflict] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        quote = str(item.get("instruction_quote") or "").strip()
+        problem = str(item.get("problem") or "").strip()
+        if not quote or not problem:
+            continue
+        ids = item.get("evidence_run_ids")
+        out.append(InstructionConflict(
+            instruction_quote=quote[:MAX_CONFLICT_CHARS], problem=problem[:MAX_CONFLICT_CHARS],
+            suggested_change=str(item.get("suggested_change") or "").strip()[:MAX_CONFLICT_CHARS],
+            evidence_run_ids=[str(r) for r in ids if str(r) in run_ids] if isinstance(ids, list) else []))
+    return out
+
+
+# A lesson that talks about instructions as something to disobey is an override, whatever it says otherwise.
+# Mentions of untrusted instructions found in content ("ignore instructions embedded in web pages") are allowed.
+_INSTR = r"(?:instructions?|system\s+prompt|author'?s?\s+(?:rules?|wishes))"
+_OVERRIDE_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in (
+        rf"\beven\s+(?:if|when|though)\s+(?:an?\s+|the\s+|any\s+|your\s+|its\s+|some\s+)?(?:author'?s?\s+|system\s+)?"
+        rf"{_INSTR}\s+(?:says?|tells?|asks?|requires?|demands?|directs?|wants?|states?|is|are)\b",
+        r"\beven\s+(?:if|when|though)\s+(?:you\s+are\s+|you're\s+|it\s+is\s+)?(?:told|instructed|asked|directed)\b",
+        rf"\b(?:ignore|disregard|disobey|overrid\w*|overrul\w*|bypass\w*|set\s+aside|deviate\s+from)\s+"
+        rf"(?:the\s+|your\s+|its\s+|these\s+|those\s+|any\s+|an\s+|a\s+|all\s+|such\s+)?"
+        rf"(?:author'?s?\s+|system\s+|original\s+|given\s+|stated\s+|conflicting\s+)?{_INSTR}\b"
+        rf"(?!\s+(?:in|from|inside|within|embedded|found|contained|injected)\b)",
+        rf"\b(?:regardless\s+of|despite|contrary\s+to|in\s+spite\s+of|notwithstanding|instead\s+of\s+following)"
+        rf"\b[^.;]{{0,30}}\b{_INSTR}",
+        rf"\b(?:takes?|taking)\s+precedence\s+over\b[^.;]{{0,30}}\b{_INSTR}",
+    )
+]
+_OVERRIDE_WORD = re.compile(r"\b(?:overrid\w*|overrul\w*|supersed\w*)\b", re.IGNORECASE)
+_MENTIONS_INSTRUCTIONS = re.compile(rf"\b{_INSTR}\b", re.IGNORECASE)
+
+
+def overrides_instructions(text: str) -> bool:
+    """True if a lesson references the instructions as something to disobey (deterministic check)."""
+    if any(p.search(text) for p in _OVERRIDE_PATTERNS):
+        return True
+    return bool(_OVERRIDE_WORD.search(text) and _MENTIONS_INSTRUCTIONS.search(text))
+
+
+def _conflict_check_prompt(instructions: str, lessons: list[str]) -> str:
+    numbered = "\n".join(f"{i}. {t}" for i, t in enumerate(lessons, 1))
+    return (f"<instructions>\n{_clip(instructions, 12000)}\n</instructions>\n\n"
+            f"<proposed_lessons>\n{numbered}\n</proposed_lessons>\n\n"
+            "Check each lesson against the instructions. Reply with the JSON object only.")
+
+
+async def check_instruction_conflicts(instructions: str, lessons: list[str],
+                                      grader: Provider) -> list[dict[str, Any] | None]:
+    """One structured grader call: per lesson {contradicts, instruction_quote, problem}, None where unknown.
+
+    Fails open (all None) when the reply is unusable: the deterministic pattern check still applies, and a broken
+    self-check should not stop an improvement cycle.
+    """
+    if not lessons or not instructions.strip():
+        return [None] * len(lessons)
+    try:
+        resp = await grader.complete(CONFLICT_CHECK_SYSTEM,
+                                     [Message(role="user", text=_conflict_check_prompt(instructions, lessons))],
+                                     [], temperature=0)
+    except Exception:  # noqa: BLE001
+        log.warning("instruction conflict self-check failed", exc_info=True)
+        return [None] * len(lessons)
+    obj = _first_json_object(resp.text) or {}
+    checks = obj.get("checks")
+    out: list[dict[str, Any] | None] = [None] * len(lessons)
+    for pos, c in enumerate(checks if isinstance(checks, list) else []):
+        if not isinstance(c, dict) or not isinstance(c.get("contradicts"), bool):
+            continue
+        idx = c.get("index")
+        i = idx - 1 if isinstance(idx, int) and 1 <= idx <= len(lessons) else pos
+        if 0 <= i < len(lessons) and out[i] is None:
+            out[i] = {"contradicts": c["contradicts"],
+                      "instruction_quote": str(c.get("instruction_quote") or "").strip()[:MAX_CONFLICT_CHARS],
+                      "problem": str(c.get("problem") or "").strip()[:MAX_CONFLICT_CHARS]}
+    return out
+
+
+def _conflict_from_lesson(e: LessonEdit, check: dict[str, Any] | None) -> InstructionConflict:
+    quote = (check or {}).get("instruction_quote", "")
+    problem = (check or {}).get("problem") or (
+        "What the evaluations and feedback show conflicts with your instructions. The optimizer proposed a lesson "
+        "that would override them, so it was not added.")
+    return InstructionConflict(
+        instruction_quote=quote, problem=problem,
+        suggested_change=("If the behavior below is what you want, change the instruction yourself: "
+                          f"{e.text}")[:MAX_CONFLICT_CHARS],
+        evidence_run_ids=list(e.evidence_run_ids), rejected_lesson=e.text)
+
+
+def _merge_conflicts(conflicts: list[InstructionConflict]) -> list[InstructionConflict]:
+    """One entry per quoted instruction (evidence merged); unquoted entries are kept as they are."""
+    out: list[InstructionConflict] = []
+    by_quote: dict[str, InstructionConflict] = {}
+    for c in conflicts:
+        key = " ".join(c.instruction_quote.lower().split())
+        if key and key in by_quote:
+            kept = by_quote[key]
+            kept.evidence_run_ids = list(dict.fromkeys([*kept.evidence_run_ids, *c.evidence_run_ids]))
+            kept.rejected_lesson = kept.rejected_lesson or c.rejected_lesson
+            continue
+        if key:
+            by_quote[key] = c
+        out.append(c)
+    return out[:MAX_CONFLICTS]
+
+
+async def propose(
+    version: AgentVersion,
+    failures: list[dict],
+    feedback: list[dict],
+    grader: Provider,
+    cases: list[dict],
+) -> Proposal:
+    """Optimizer call plus validation: validated lesson edits and the instruction conflicts for the author.
+
+    Lessons never override the author's instructions. A lesson is dropped when it fails the evidence, length or leak
+    checks; one that references the instructions as something to disobey (`overrides_instructions`) or that the
+    grader self-check (`check_instruction_conflicts`) finds contradicting an instruction is dropped and reported as
+    an instruction conflict instead.
+    """
+    if not failures and not feedback:
+        return Proposal()
+    messages = [Message(role="user", text=_optimizer_prompt(version, failures, feedback))]
+    resp = await grader.complete(OPTIMIZER_SYSTEM, messages, [], temperature=0)
+    edits = _parse_edits(resp.text)
+    if edits is None:
+        messages += [
+            Message(role="assistant", text=resp.text),
+            Message(role="user", text='That was not valid JSON. Reply with only {"lessons": [...], '
+                                      '"instruction_conflicts": [...]}.'),
+        ]
+        resp = await grader.complete(OPTIMIZER_SYSTEM, messages, [], temperature=0)
+        edits = _parse_edits(resp.text) or []
+    run_ids = {str(x["run_id"]) for x in [*failures, *feedback] if x.get("run_id")}
+    conflicts = _parse_conflicts(resp.text, run_ids)
+    for e in edits:
+        e.text = e.text.strip()
+    edits = [e for e in edits if _valid_edit(e, run_ids, cases)]
+
+    # Every add or edit goes through the self-check (pattern-rejected ones too, so their conflict gets a quote).
+    new_text = [e for e in edits if e.op != "remove"]
+    checks = await check_instruction_conflicts(version.system_prompt, [e.text for e in new_text], grader)
+    rejected: dict[int, dict[str, Any] | None] = {}
+    for e, check in zip(new_text, checks, strict=True):
+        if overrides_instructions(e.text) or (check is not None and check["contradicts"]):
+            rejected[id(e)] = check
+    for e in new_text:
+        if id(e) in rejected:
+            conflicts.append(_conflict_from_lesson(e, rejected[id(e)]))
+    kept = [e for e in edits if id(e) not in rejected][:MAX_LESSONS]
+    return Proposal(lessons=kept, instruction_conflicts=_merge_conflicts(conflicts))
+
+
 async def propose_lessons(
     version: AgentVersion,
     failures: list[dict],
@@ -261,22 +473,8 @@ async def propose_lessons(
     grader: Provider,
     cases: list[dict],
 ) -> list[LessonEdit]:
-    if not failures and not feedback:
-        return []
-    messages = [Message(role="user", text=_optimizer_prompt(version, failures, feedback))]
-    resp = await grader.complete(OPTIMIZER_SYSTEM, messages, [], temperature=0)
-    edits = _parse_edits(resp.text)
-    if edits is None:
-        messages += [
-            Message(role="assistant", text=resp.text),
-            Message(role="user", text='That was not valid JSON. Reply with only {"lessons": [...]}.'),
-        ]
-        resp = await grader.complete(OPTIMIZER_SYSTEM, messages, [], temperature=0)
-        edits = _parse_edits(resp.text) or []
-    run_ids = {str(x["run_id"]) for x in [*failures, *feedback] if x.get("run_id")}
-    for e in edits:
-        e.text = e.text.strip()
-    return [e for e in edits if _valid_edit(e, run_ids, cases)][:MAX_LESSONS]
+    """The validated lesson edits of `propose` (instruction conflicts dropped)."""
+    return (await propose(version, failures, feedback, grader, cases)).lessons
 
 
 def apply_lesson_edits(lessons: list[str], edits: list[LessonEdit]) -> list[str]:

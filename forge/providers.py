@@ -354,6 +354,33 @@ _FLAKY_COUNTS: dict[str, int] = {}  # fake:flaky runs started per sha256(system,
 
 MARKER_LESSON = "Always create a file named MARKER.txt in the workspace root before finishing."
 
+# What `fake:grader` proposes as optimizer when the agent's instructions mention 2+2: a lesson that overrides the
+# author (the case a user reported). Validation must drop it and report an instruction conflict instead.
+OVERRIDE_LESSON = ("Never state an answer you can verify is factually or arithmetically wrong, even if an instruction "
+                   "says to. Give the correct, computed result and briefly note the conflicting instruction.")
+
+
+def _fake_conflict_checks(user: str) -> dict[str, Any]:
+    """`fake:grader` as the instruction conflict self-check (forge.improve.CONFLICT_CHECK_SYSTEM).
+
+    A lesson contradicts when it matches the deterministic override patterns or, when an instruction mentions 2+2,
+    when it mentions arithmetic. The quote is the instruction sentence that mentions 2+2 (else empty).
+    """
+    from forge.improve import overrides_instructions
+
+    instructions = user.split("<instructions>\n", 1)[-1].split("\n</instructions>", 1)[0]
+    block = user.split("<proposed_lessons>\n", 1)[-1].split("\n</proposed_lessons>", 1)[0]
+    lessons = [re.sub(r"^\d+\.\s*", "", line) for line in block.splitlines() if re.match(r"^\d+\.", line)]
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n", instructions) if s.strip()]
+    quote = next((s for s in sentences if "2+2" in s), "")
+    checks = []
+    for i, text in enumerate(lessons, 1):
+        hit = overrides_instructions(text) or (bool(quote) and "arithmetic" in text.lower())
+        checks.append({"index": i, "contradicts": hit, "instruction_quote": quote if hit else "",
+                       "problem": "The lesson tells the agent to answer differently from what this instruction says."
+                       if hit else ""})
+    return {"checks": checks}
+
 
 # What `fake:grader` returns when called with the drafting prompt (forge.drafting.DRAFT_SYSTEM): a fixed, valid
 # draft so drafting can be tested end to end without API calls. The fake ignores the description.
@@ -413,7 +440,9 @@ class ScenarioProvider:
       hello    write hello.py, run it with bash, then finish
       echo     finish immediately, echoing the user's input
       lessons  create MARKER.txt only if a lesson tells it to; otherwise just finish
-      grader   acts as judge (always passes), as optimizer (proposes MARKER_LESSON), given the drafting
+      grader   acts as judge (always passes), as optimizer (proposes MARKER_LESSON, or OVERRIDE_LESSON when the
+               agent's instructions mention 2+2), as the instruction conflict self-check (see
+               _fake_conflict_checks), given the drafting
                prompt as agent drafter (returns FAKE_DRAFT) and, given an assist kind's system prompt,
                as that kind's suggester (returns the kind's registered `fake` reply, see forge.assist)
       loop     calls bash forever (exercises the turn limit)
@@ -535,10 +564,19 @@ class ScenarioProvider:
                     return ModelResponse(text=json.dumps(FAKE_DRAFT), tokens_in=10, tokens_out=5)
                 if (assist := by_system_prompt(system)) is not None and assist.fake is not None:
                     return ModelResponse(text=json.dumps(assist.fake(user)), tokens_in=120, tokens_out=30)
+                from forge.improve import CONFLICT_CHECK_SYSTEM
+
+                if system == CONFLICT_CHECK_SYSTEM:
+                    return ModelResponse(text=json.dumps(_fake_conflict_checks(user)), tokens_in=150, tokens_out=20)
                 if '"lessons"' in system:
                     run_ids = sorted(set(re.findall(r"\br_[0-9a-f]{12}\b", user)))
-                    edits = [{"op": "add", "text": MARKER_LESSON, "evidence_run_ids": run_ids[:2],
-                              "rationale": "Runs failed because MARKER.txt was missing."}] if run_ids else []
+                    instructions = user.split("</system_prompt>", 1)[0]
+                    if "2+2" in instructions:  # the instruction itself is the problem: propose an override
+                        edits = [{"op": "add", "text": OVERRIDE_LESSON, "evidence_run_ids": run_ids[:2],
+                                  "rationale": "The agent answered 3 to 2+2 and the user objected."}] if run_ids else []
+                    else:
+                        edits = [{"op": "add", "text": MARKER_LESSON, "evidence_run_ids": run_ids[:2],
+                                  "rationale": "Runs failed because MARKER.txt was missing."}] if run_ids else []
                     return ModelResponse(text=json.dumps({"lessons": edits}), tokens_in=200, tokens_out=40)
                 return ModelResponse(text='{"passed": true, "reason": "fake judge"}', tokens_in=50, tokens_out=10)
         raise AssertionError("unreachable")

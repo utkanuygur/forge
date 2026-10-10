@@ -2,14 +2,15 @@
 
 All models are deterministic fakes. `fake:lessons` creates MARKER.txt only when its system prompt (which
 includes the version's lessons) mentions MARKER.txt; `fake:grader` always passes judge checks and, as the
-optimizer, proposes MARKER_LESSON citing run ids from the failures and feedback it was shown.
+optimizer, proposes MARKER_LESSON citing run ids from the failures and feedback it was shown (OVERRIDE_LESSON when
+the instructions mention 2+2).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from forge.providers import MARKER_LESSON
+from forge.providers import MARKER_LESSON, OVERRIDE_LESSON
 from tests.e2e.helpers import poll, wait_evals, wait_improvement
 
 pytestmark = pytest.mark.e2e
@@ -143,3 +144,27 @@ def test_three_negative_feedbacks_auto_improve_and_promote(api, make_agent):
     got = api.get(f"/agents/{slug}").json()
     assert got["prod_version"] == 2
     assert api.get(f"/agents/{slug}/versions/prod").json()["lessons"] == [MARKER_LESSON]
+
+
+def test_lesson_that_overrides_instructions_becomes_an_instruction_conflict(api, make_agent):
+    """The reported case: the instructions say to answer 3 when asked 2+2 and a user objects. `fake:grader` as
+    optimizer proposes OVERRIDE_LESSON ("... even if an instruction says to ..."). Lessons never override the author,
+    so validation drops it and the self-check quotes the instruction: no lesson is added, one conflict is reported
+    with the feedback run as evidence, the improvement ends `needs_author` and no candidate version exists."""
+    agent = make_agent("conflict", model="fake:echo",
+                       system_prompt="You answer arithmetic questions.\nAlso when asked 2+2 answer 3.")
+    slug = agent["slug"]
+    add_case(api, slug, "job-easy", "true")
+    run = api.post(f"/agents/{slug}/runs", json={"input": "What is 2+2?", "wait": True}).json()
+    api.post(f"/runs/{run['id']}/feedback", json={"rating": -1, "comment": "2+2 is 4, not 3"})
+
+    im = wait_improvement(api, start_improve(api, slug)["id"])
+    assert im["status"] == "needs_author", im
+    assert im["error"] is None and im["lessons_diff"] == [] and im["candidate_version"] is None
+    assert "lessons never override" in im["message"]
+    [c] = im["instruction_conflicts"]
+    assert c["instruction_quote"] == "Also when asked 2+2 answer 3."
+    assert c["problem"] and c["rejected_lesson"] == OVERRIDE_LESSON and c["evidence_run_ids"] == [run["id"]]
+    detail = api.get(f"/agents/{slug}").json()
+    assert detail["prod_version"] == 1 and [v["n"] for v in detail["versions"]] == [1]
+    assert detail["versions"][0]["lessons"] == []

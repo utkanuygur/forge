@@ -135,6 +135,7 @@ export default function ImprovePanel({
         <ImprovementView
           im={current}
           prodVersion={agent.prod_version}
+          slug={agent.slug}
           onPromote={promote}
         />
       )}

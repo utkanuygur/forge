@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FileText, FlaskConical, Plus, Trash2 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useOpenPlayground } from "../../components/playground/Playground";
 import {
   api,
@@ -201,6 +201,24 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
   }
   useEffect(() => reset(prod), [prod?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ?focus=instructions (from "Review instructions" on an improvement) focuses the field and selects ?select=<quote>.
+  const [params, setParams] = useSearchParams();
+  const focusInstructions = params.get("focus") === "instructions";
+  const selectQuote = params.get("select") || "";
+  useEffect(() => {
+    if (!focusInstructions || !prod) return;
+    const t = setTimeout(() => {
+      const el = promptRef.current;
+      if (!el) return;
+      el.focus();
+      el.scrollIntoView?.({ block: "center" });
+      const at = selectQuote ? el.value.indexOf(selectQuote) : -1;
+      if (at >= 0) el.setSelectionRange(at, at + selectQuote.length);
+      setParams({}, { replace: true });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [focusInstructions, selectQuote, prod?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const dirty =
     !!prod &&
     (prompt !== prod.system_prompt ||
@@ -311,7 +329,7 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
                   ))}
                 </ol>
               )}
-              <p className="mt-1.5 text-xs text-neutral-500">Lessons are written by the optimizer and carried into new versions.</p>
+              <p className="mt-1.5 text-xs text-neutral-500">Lessons are written by the optimizer and carried into new versions. They only fill gaps in your instructions and never override them.</p>
             </div>
             <ModelField value={model} onChange={setModel} />
             <ModelWarning text={modelWarning} onDismiss={() => setModelWarning(null)} />

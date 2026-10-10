@@ -20,6 +20,9 @@ EVAL_CONCURRENCY = 4
 DEFAULT_EVAL_REPEATS = 3
 MAX_EVAL_REPEATS = 9
 AUTO_IMPROVE_THRESHOLD = 3
+NEEDS_AUTHOR_MESSAGE = ("No lessons were added. The failures and feedback come from your instructions themselves, and "
+                        "lessons never override your instructions. Review the conflicts below and change the "
+                        "instructions if the evidence is right.")
 
 _eval_tasks: dict[str, asyncio.Task] = {}  # version_id -> running eval
 _eval_errors: dict[str, str] = {}  # version_id -> why its last eval stopped early (model not found)
@@ -287,9 +290,16 @@ async def _improve(agent: dict, base: dict, improvement_id: str) -> None:
                      "rating": f["rating"], "comment": f["comment"], "events": _events(f["run_id"])}
                     for f in db.negative_feedback_since(agent["id"], since)]
         optimizer = MeteredProvider(grader(), grader_model(), agent["id"], "optimizer")
-        edits = await improve.propose_lessons(to_agent_version(base), failures, feedback, optimizer, train)
+        proposal = await improve.propose(to_agent_version(base), failures, feedback, optimizer, train)
+        edits = proposal.lessons
         diff = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in edits]
         summary["lessons_diff"] = diff
+        conflicts = [c.model_dump() if hasattr(c, "model_dump") else dict(c) for c in proposal.instruction_conflicts]
+        summary["instruction_conflicts"] = conflicts
+        if not edits and conflicts:  # lessons never override the author: hand the problem back instead
+            summary["message"] = NEEDS_AUTHOR_MESSAGE
+            db.update_improvement(improvement_id, status="needs_author", summary=summary, ended_at=time.time())
+            return
         if not edits:
             summary["error"] = "optimizer proposed no lesson edits"
             db.update_improvement(improvement_id, status="rejected", summary=summary, ended_at=time.time())
