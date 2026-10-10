@@ -250,28 +250,70 @@ them (`origin: "optimizer"`) or a human supplies them via `POST /agents` or `POS
 immutable. Schema additions: `improvements.kind TEXT NOT NULL DEFAULT 'improve'`, `agent_versions.lesson_meta`;
 existing databases are migrated on first connect (`forge/db.py`, `ADDED_COLUMNS`).
 
-### Sample tasks (Generate button)
+## Assist (additive)
 
-`POST /v1/agents/{slug}/sample-task` body `{version?: int, hint?: str, avoid?: [str]}` returns
-`{title, prompt, rationale}`: one realistic task a user of the agent would send, written by `FORGE_GRADER_MODEL` in
-one structured output call (`forge/sample_task.py`, `SAMPLE_TASK_SYSTEM`, schema `SAMPLE_TASK_SCHEMA`; no
-temperature). Auth: builder (localhost or the agent's API key) or the agent's share token. Share callers always use
-prod (`version` ignored), get exactly those three fields, and are limited to 10 calls per hour per token in memory
-(`FORGE_SAMPLE_TASK_SHARE_LIMIT` overrides; `429` with `Retry-After`). Builders also get `version`, `variety` and
-`context` (`files_listed`, `total_files`, `excerpts` paths, `excerpt_chars`, `system_prompt_chars`, `recent_inputs`,
-`avoid` counts).
+Generate buttons: grader-written suggestions for fields users would otherwise type by hand. Every kind goes through
+one registry (`forge/assist/registry.py`), one engine (`forge/assist/engine.py`) and one route
+(`forge/server/assist.py`). Built-in kinds: `task`.
 
-The model sees the agent name and description, the version's system prompt (over 6000 chars it is condensed to
-its opening and its end), tools, network setting and configured secret names (never values), up to 200 seed file
-paths plus excerpts of the most informative files (README, top-level modules, configs, CSV headers with row counts,
-first lines of logs; at most 12000 chars in total), the agent's `suggested_prompts` when present, the last 10
-distinct run inputs, `avoid` (up to 20), an optional `hint`, and a `variety` (task type and difficulty) cycled by
-the number of earlier generations for the agent. The reply is valid when the prompt is non-empty, under 1200
-chars, the title is under 100 chars, and the prompt is not a near duplicate (normalized text similarity at least
-0.85) of a recent input or an `avoid` entry. An invalid reply is retried once as a fresh request listing the
-problems; still invalid: `502` with the reason. Each call is recorded in `grader_calls` with kind `sample_task`
-(no improvement), and agent metrics `cost` gains `sample_tasks: {calls, tokens_in, tokens_out, cost_usd,
-cost_complete}` for the period.
+### Endpoint
+
+`POST /v1/assist/{kind}` body `{slug?, version?, input?: object, avoid?: [str]}` returns
+`{result: object, rationale: str}`. `result` is kind-specific; `input` is kind-specific context (current field
+value, a run id, a description...); `avoid` lists texts the suggestion must not repeat (the web button sends its
+earlier results). Builders (localhost or the agent's API key) also get `kind`, `version` (or null) and
+`diagnostics` (kind-specific: what the context contained). Errors: unknown kind `404`; agent or version not found
+`404`; `slug` missing for a kind that needs an agent `400`; a kind without an agent from a non-local client `401`;
+share token on a kind without `share_allowed` `401`; share budget spent `429` with `Retry-After`; model failure or
+an invalid reply after the retry `502` with the reason.
+
+Alias: `POST /v1/agents/{slug}/sample-task` body `{version?, hint?, avoid?}` is kind `task` with a flat response
+`{title, prompt, rationale}` (builders also get `version`, `variety` and `context`).
+
+### Rules (every kind)
+
+- Never saves anything: the result only fills a field; the user decides what to keep.
+- Never generates or reveals secrets: kinds see configured secret NAMES only, never values, and any secret value
+  that still appears in a result is replaced with `[REDACTED]`. No kind writes feedback or ratings.
+- Grounded in the agent: kinds with an agent build on the shared context (`forge/assist/context.py`
+  `agent_context`): the version's system prompt (over 6000 chars condensed to its opening and end), name,
+  description, tools, network setting, configured secret names, up to 200 seed file paths plus excerpts of the most
+  informative files (README, top-level modules, configs, CSV headers with row counts, first lines of logs; at most
+  12000 chars), the agent's `suggested_prompts` when present, and the last 10 distinct run inputs.
+- One grader call (`FORGE_GRADER_MODEL`) per request with structured output: Claude gets `output_config.format`
+  with the envelope schema `{result: <kind schema>, rationale}` and no temperature; other providers get the same
+  prompt and are parsed leniently. An invalid reply (bad shape, missing result keys, or the kind's validator)
+  is retried once as a fresh request listing the problems.
+- Metered: calls with an agent are recorded in `grader_calls` with kind `assist:<kind>` (no improvement), and agent
+  metrics `cost` gains `assist: {calls, kinds: {<kind>: n}, tokens_in, tokens_out, cost_usd, cost_complete}` for
+  the period. Calls without an agent (localhost only) are not metered, like drafts.
+- Share links: only kinds registered with `share_allowed`, always on prod (`version` ignored), only
+  `{result, rationale}` in the response, and at most 10 calls per hour per share token across all kinds, in memory
+  (`FORGE_ASSIST_SHARE_LIMIT` overrides; restarting the server resets it).
+
+### Kind `task`
+
+`input`: `{hint?: str, current?: str}` (`current`, the text already in the box, is avoided like `avoid`).
+`result`: `{title, prompt}`. The prompt asks for ONE concrete, self-contained task a real user would send,
+solvable in the sandbox with the given files and tools (offline when network is off, no unconfigured
+credentials), naming real files, endpoints or columns, 1 to 4 sentences phrased as a teammate's request, with a
+`variety` (type and difficulty) cycled by the number of earlier `assist:task` calls for the agent. Valid when the
+prompt is non-empty and under 1200 chars, the title is under 100 chars, and the prompt is not a near duplicate
+(normalized text similarity at least 0.85) of a recent input or an avoided text. Share links allowed.
+
+### Adding a kind
+
+1. Create `forge/assist/kinds/<kind>.py` with a system prompt (it must differ from every other kind's), a result
+   schema (object, `additionalProperties: false`, every property required, no length or range constraints),
+   `build_context(req: AssistRequest) -> Prepared(text, data, diagnostics)` (use `context.agent_context` and
+   `render_agent_context` for agent grounding, `req.input` for the kind's own fields), `validate(result, data)
+   -> [problems]`, and a deterministic `fake(user_text) -> {result, rationale}` for `fake:grader`. Finish with
+   `SPEC = register("<kind>", build_context, SYSTEM, SCHEMA, validate, share_allowed=..., needs_agent=..., fake=fake)`.
+2. Import the module in `forge/assist/kinds/__init__.py`.
+3. Web: mount `<AssistButton kind="<kind>" slug=... input={...} resultText={...} onResult={...} undoValue={value}
+   onUndo={setValue} inputRef={ref} ariaLabel="..." />` next to the field (or wrap it like `GenerateTaskButton`).
+4. Tests: validator and context unit tests, the fake through `POST /v1/assist/<kind>`, and a Vitest for the mount.
+   Document the kind's `input` and `result` here.
 
 ## Promotion rule
 

@@ -336,31 +336,6 @@ FAKE_DRAFT: dict[str, Any] = {
 }
 
 
-# What `fake:grader` returns when called with the sample task prompt (forge.sample_task.SAMPLE_TASK_SYSTEM): the
-# first of these whose prompt does not already appear in the request (recent inputs or the avoid list), so repeated
-# generations differ deterministically. When all appear it returns the first one (which then fails validation).
-FAKE_SAMPLE_TASKS: list[dict[str, str]] = [
-    {"title": "Summarize the workspace",
-     "prompt": "Can you list every file in the workspace and write SUMMARY.md with one line per file saying what "
-               "it is for?",
-     "rationale": "Exercises reading the workspace and writing a file."},
-    {"title": "Count lines of code",
-     "prompt": "Please count the lines in each file of the workspace and reply with a table sorted from largest "
-               "to smallest.",
-     "rationale": "Exercises running shell commands and reporting exact figures."},
-    {"title": "Write a hello script",
-     "prompt": "Add a hello.py that prints a greeting, run it, and tell me the output.",
-     "rationale": "Exercises creating and running a small script."},
-]
-
-
-def _fake_sample_task(user: str) -> dict[str, str]:
-    for t in FAKE_SAMPLE_TASKS:
-        if t["prompt"] not in user:
-            return t
-    return FAKE_SAMPLE_TASKS[0]
-
-
 def _call(name: str, args: dict[str, Any], i: int) -> ModelResponse:
     return ModelResponse(tool_calls=[ToolCall(id=f"call_{i}", name=name, args=args)], tokens_in=10, tokens_out=5)
 
@@ -374,8 +349,8 @@ class ScenarioProvider:
       echo     finish immediately, echoing the user's input
       lessons  create MARKER.txt only if a lesson tells it to; otherwise just finish
       grader   acts as judge (always passes), as optimizer (proposes MARKER_LESSON), given the drafting
-               prompt as agent drafter (returns FAKE_DRAFT) and, given the sample task prompt, as sample task
-               writer (returns the first of FAKE_SAMPLE_TASKS not already in the request)
+               prompt as agent drafter (returns FAKE_DRAFT) and, given an assist kind's system prompt,
+               as that kind's suggester (returns the kind's registered `fake` reply, see forge.assist)
       loop     calls bash forever (exercises the turn limit)
       error    raises, as if the model API failed
       flaky    alternates per run: the 1st, 3rd, 5th, ... run with a given (system prompt, input) creates
@@ -424,12 +399,12 @@ class ScenarioProvider:
                 return ModelResponse(text="Done.", tokens_in=10, tokens_out=5)
             case "grader":
                 from forge.drafting import DRAFT_SYSTEM
-                from forge.sample_task import SAMPLE_TASK_SYSTEM
+                from forge.assist.registry import by_system_prompt
 
                 if system == DRAFT_SYSTEM:
                     return ModelResponse(text=json.dumps(FAKE_DRAFT), tokens_in=10, tokens_out=5)
-                if system == SAMPLE_TASK_SYSTEM:
-                    return ModelResponse(text=json.dumps(_fake_sample_task(user)), tokens_in=120, tokens_out=30)
+                if (assist := by_system_prompt(system)) is not None and assist.fake is not None:
+                    return ModelResponse(text=json.dumps(assist.fake(user)), tokens_in=120, tokens_out=30)
                 if '"lessons"' in system:
                     run_ids = sorted(set(re.findall(r"\br_[0-9a-f]{12}\b", user)))
                     edits = [{"op": "add", "text": MARKER_LESSON, "evidence_run_ids": run_ids[:2],
