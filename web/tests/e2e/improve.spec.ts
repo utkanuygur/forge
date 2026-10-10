@@ -43,7 +43,9 @@ test("FR9 FR10: evaluate, improve, compare candidate on train and holdout, promo
   await expect(page.getByTestId("eval-score-holdout")).toContainText("0/1", { timeout: RUN_TIMEOUT });
   await expect(page.getByRole("button", { name: "Run evaluation (v1)" })).toBeEnabled({ timeout: RUN_TIMEOUT });
   for (const name of ["train-a", "train-b", "hold-a"]) {
-    await expect(page.locator(`[data-testid="eval-case"][data-name="${name}"]`)).toContainText("fail");
+    const row = page.locator(`[data-testid="eval-case"][data-name="${name}"]`);
+    await expect(row).toContainText("fail");
+    await expect(row.getByTestId("pass-fraction")).toHaveText("0/3"); // majority of k=3 runs
   }
 
   // Improve: the optimizer adds the MARKER lesson; candidate passes everything.
@@ -60,6 +62,8 @@ test("FR9 FR10: evaluate, improve, compare candidate on train and holdout, promo
   await expect(lesson).toContainText(MARKER_LESSON);
   await expect(lesson).toContainText("Evidence:");
   await expect(im).toContainText("Regressions (0)");
+  const row = im.locator('[data-testid="improvement-case"][data-name="train-a"]');
+  await expect(row.getByTestId("pass-fraction")).toHaveText(["0/3", "3/3"]);
 
   await im.getByRole("button", { name: "Promote v2" }).click();
   await expect(page.getByText("prod v2", { exact: true })).toBeVisible();

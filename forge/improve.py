@@ -309,17 +309,41 @@ def apply_lesson_edits(lessons: list[str], edits: list[LessonEdit]) -> list[str]
     return out[-MAX_LESSONS:]
 
 
+# ---------------------------------------------------------------- repeated runs
+
+
+def majority(passes: int, k: int) -> bool:
+    """A case passes iff a strict majority of its k runs pass (for even k a tie fails: 2/4 is not > half)."""
+    return k > 0 and 2 * passes > k
+
+
+def summarize_runs(runs: list[dict]) -> dict:
+    """Per-case verdict from its repeated runs (each {"passed", "reason", "run_id"}, in run order).
+
+    The representative run is the first failing run when the verdict is fail, else the first passing run,
+    so its trace and reason explain the verdict.
+    """
+    passes = sum(1 for r in runs if r.get("passed"))
+    passed = majority(passes, len(runs))
+    rep = next((r for r in runs if bool(r.get("passed")) == passed), runs[0] if runs else {})
+    return {"passed": passed, "reason": rep.get("reason", ""), "run_id": rep.get("run_id", ""),
+            "passes": passes, "runs": len(runs)}
+
+
 # ---------------------------------------------------------------- promotion
 
 
 def _result(side: dict[str, dict], case_id: str) -> dict:
     r = side.get(case_id)
     if r is None:
-        return {"passed": False, "reason": "not run", "run_id": ""}
-    return {"passed": bool(r.get("passed")), "reason": r.get("reason", ""), "run_id": r.get("run_id", "")}
+        return {"passed": False, "reason": "not run", "run_id": "", "passes": 0, "runs": 0}
+    passed = bool(r.get("passed"))
+    return {"passed": passed, "reason": r.get("reason", ""), "run_id": r.get("run_id", ""),
+            "passes": r.get("passes", int(passed)), "runs": r.get("runs", 1)}
 
 
 def compare(cases: list[dict], base: dict[str, dict], cand: dict[str, dict]) -> dict:
+    """Promotion comparison on per-case verdicts (already majority-of-k when evals repeat runs)."""
     summary = {s: {sp: {"passed": 0, "total": 0} for sp in ("train", "holdout")} for s in ("base", "candidate")}
     rows, newly, regressions = [], [], []
     for c in cases:

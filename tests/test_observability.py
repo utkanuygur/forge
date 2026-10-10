@@ -297,7 +297,9 @@ async def test_loop_events_carry_additive_timing_and_token_fields(tmp_path):
     assistant = next(p for t, p in by_type if t == "assistant")
     assert assistant["text"] == "done" and assistant["turn"] == 2 and assistant["tokens_out"] == 4
     assert assistant["duration_ms"] >= 0
-    assert set(events[-1].payload) == {"status", "output", "turns", "tokens_in", "tokens_out"}
+    # run_finished keeps its keys; the only additions are feat/reliability's cache token totals.
+    assert set(events[-1].payload) == {"status", "output", "turns", "tokens_in", "tokens_out",
+                                       "cache_read_tokens", "cache_write_tokens"}
 
 
 # ---------------------------------------------------------------- database backed (OBS1, OBS2, OBS5)

@@ -24,6 +24,8 @@ KEEP_HEAD = 4_000
 KEEP_TAIL = 6_000
 MAX_BASH_TIMEOUT = 120
 REDACTED = "[REDACTED]"
+TRUNCATED_CALL = ("not executed: your reply hit the max_tokens limit, so this call's arguments may be incomplete. "
+                  "Retry it with smaller arguments, e.g. split a large write into several edits.")
 
 TOOL_SPECS: dict[str, ToolSpec] = {
     "bash": ToolSpec(
@@ -250,9 +252,32 @@ async def run_agent(
             result.turns += 1
             result.tokens_in += resp.tokens_in
             result.tokens_out += resp.tokens_out
+            result.cache_read_tokens += resp.cache_read_tokens
+            result.cache_write_tokens += resp.cache_write_tokens
             # Per-turn timing and usage (additive payload fields). A turn with text reports them on its
-            # assistant event; a tool-only turn reports them on its first tool_call as model_duration_ms.
+            # assistant event; a tool-only turn reports them on its first tool_call as model_duration_ms;
+            # a refused turn reports them on its error event.
             turn_usage: dict[str, Any] | None = {"tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out}
+            if resp.cache_read_tokens:
+                turn_usage["cache_read_tokens"] = resp.cache_read_tokens
+            if resp.cache_write_tokens:
+                turn_usage["cache_write_tokens"] = resp.cache_write_tokens
+            if resp.stop_reason == "refusal":  # never act on a declined turn, not even its tool calls
+                result.status, result.error = "failed", f"Model declined: {resp.stop_detail or 'no reason given'}"
+                await send("error", {"message": result.error, "turn": result.turns, "duration_ms": model_ms,
+                                     **turn_usage})
+                break
+            truncated = resp.stop_reason == "max_tokens"
+            if truncated and not resp.tool_calls:  # a cut-off answer is not a final answer
+                result.status = "failed"
+                result.error = ("model output hit the max_tokens limit before finishing the turn; "
+                                "the truncated reply was not accepted as the final answer")
+                if resp.text:
+                    last_text = resp.text
+                    await send("assistant", {"text": resp.text, "turn": result.turns, "duration_ms": model_ms,
+                                             **turn_usage})
+                await send("error", {"message": result.error})
+                break
             if resp.text:
                 last_text = resp.text
                 await send("assistant", {"text": resp.text, "turn": result.turns, "duration_ms": model_ms,
@@ -262,7 +287,7 @@ async def run_agent(
             if not resp.tool_calls:
                 result.status, result.output = "succeeded", resp.text
                 break
-            for call in resp.tool_calls:
+            for i, call in enumerate(resp.tool_calls):
                 call_payload: dict[str, Any] = {"id": call.id, "name": call.name, "args": call.args,
                                                 "turn": result.turns}
                 if turn_usage is not None:
@@ -270,7 +295,10 @@ async def run_agent(
                     turn_usage = None
                 await send("tool_call", call_payload)
                 t_tool = time.monotonic()
-                output, is_error = await _run_tool(call, executor, set(allowed), deadline)
+                if truncated and i == len(resp.tool_calls) - 1:  # its arguments may be cut off mid-way
+                    output, is_error = TRUNCATED_CALL, True
+                else:
+                    output, is_error = await _run_tool(call, executor, set(allowed), deadline)
                 await send("tool_result", {"id": call.id, "name": call.name, "output": output, "is_error": is_error,
                                            "duration_ms": _ms_since(t_tool)})
                 messages.append(Message(role="tool", tool_call_id=call.id, text=output, is_error=is_error))
@@ -293,6 +321,8 @@ async def run_agent(
             "turns": result.turns,
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
+            "cache_read_tokens": result.cache_read_tokens,
+            "cache_write_tokens": result.cache_write_tokens,
         },
     )
     return result

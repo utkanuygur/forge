@@ -17,6 +17,8 @@ log = logging.getLogger("forge.evals")
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-5-5"
 EVAL_CONCURRENCY = 4
+DEFAULT_EVAL_REPEATS = 3
+MAX_EVAL_REPEATS = 9
 AUTO_IMPROVE_THRESHOLD = 3
 
 _eval_tasks: dict[str, asyncio.Task] = {}  # version_id -> running eval
@@ -66,8 +68,20 @@ def to_agent_version(v: dict) -> AgentVersion:
 # ---------------------------------------------------------------- evals
 
 
+def eval_repeats(agent: dict) -> int:
+    """Runs per eval case (k): the agent's setting, else $FORGE_EVAL_REPEATS, else 3."""
+    if agent.get("eval_repeats"):
+        return max(1, min(int(agent["eval_repeats"]), MAX_EVAL_REPEATS))
+    try:
+        return max(1, min(int(os.environ.get("FORGE_EVAL_REPEATS") or DEFAULT_EVAL_REPEATS), MAX_EVAL_REPEATS))
+    except ValueError:
+        return DEFAULT_EVAL_REPEATS
+
+
 def results_map(version_id: str) -> dict[str, dict]:
-    return {r["case_id"]: {"passed": r["passed"], "reason": r["reason"], "run_id": r["run_id"]}
+    return {r["case_id"]: {"passed": r["passed"], "reason": r["reason"], "run_id": r["run_id"],
+                           "passes": r["passes"] if r["passes"] is not None else int(r["passed"]),
+                           "runs": r["runs"] or 1}
             for r in db.list_eval_results(version_id)}
 
 
@@ -83,10 +97,12 @@ def eval_summary(agent: dict, version: dict) -> dict:
         "version": version["n"], **splits,
         "results": [{"case_id": cid, **r} for cid, r in res.items()],
         "running": version["id"] in _eval_tasks,
+        "repeats": eval_repeats(db.get_agent(agent["id"]) or agent),
     }
 
 
-async def _eval_case(agent: dict, version: dict, case: dict, sem: asyncio.Semaphore, judge: list) -> None:
+async def _eval_run(agent: dict, version: dict, case: dict, idx: int, sem: asyncio.Semaphore, judge: list) -> None:
+    """One of a case's k runs; stores its verdict as run `idx`."""
     from forge import improve
 
     holder: dict[str, str] = {}
@@ -109,7 +125,28 @@ async def _eval_case(agent: dict, version: dict, case: dict, sem: asyncio.Semaph
         if checked is None:  # infrastructure failure before the check ran: do not cache, retry next time
             log.warning("eval run %s for case %s errored: %s", run_id, case["id"], (run or {}).get("error"))
             return
-        db.upsert_eval_result(version["id"], case["id"], run_id, bool(checked[0]), str(checked[1]))
+        db.add_eval_run_result(version["id"], case["id"], idx, run_id, bool(checked[0]), str(checked[1]))
+
+
+def _summarize_case(version: dict, case: dict, k: int) -> bool:
+    """Writes the majority-of-k summary once k runs exist. Returns whether it did."""
+    from forge import improve
+
+    runs = db.list_eval_run_results(version["id"], case["id"])[:k]
+    if len(runs) < k:
+        return False
+    s = improve.summarize_runs(runs)
+    db.upsert_eval_result(version["id"], case["id"], s["run_id"], s["passed"], s["reason"], s["passes"], s["runs"])
+    return True
+
+
+async def _eval_case(agent: dict, version: dict, case: dict, k: int, sem: asyncio.Semaphore, judge: list) -> None:
+    done = db.list_eval_run_results(version["id"], case["id"])
+    start = max((r["idx"] for r in done), default=-1) + 1
+    need = k - len(done)
+    if need > 0:
+        await asyncio.gather(*(_eval_run(agent, version, case, start + i, sem, judge) for i in range(need)))
+    _summarize_case(version, case, k)
 
 
 async def run_eval(agent: dict, version: dict) -> dict:
@@ -124,10 +161,13 @@ async def run_eval(agent: dict, version: dict) -> dict:
 
 
 async def _run_eval(agent: dict, version: dict) -> None:
+    """Each case runs k times; its verdict is the majority (forge.improve.majority). A case whose summary already
+    covers k runs is cached and not re-run; a k change reuses stored runs and only adds missing ones."""
+    k = eval_repeats(db.get_agent(agent["id"]) or agent)
     cached = results_map(version["id"])
-    todo = [c for c in db.list_eval_cases(agent["id"]) if c["id"] not in cached]
-    sem, judge = asyncio.Semaphore(EVAL_CONCURRENCY), []
-    await asyncio.gather(*(_eval_case(agent, version, c, sem, judge) for c in todo))
+    todo = [c for c in db.list_eval_cases(agent["id"]) if cached.get(c["id"], {}).get("runs") != k]
+    sem, judge = asyncio.Semaphore(EVAL_CONCURRENCY), []  # bounds sandbox runs across all cases and repeats
+    await asyncio.gather(*(_eval_case(agent, version, c, k, sem, judge) for c in todo))
 
 
 def start_eval(agent: dict, version: dict) -> None:

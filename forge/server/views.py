@@ -21,6 +21,9 @@ def agent_view(a: dict, *, versions: bool = False) -> dict:
         "prod_version": prod["n"] if prod else None, "auto_promote": a["auto_promote"],
         "share_token": a["share_token"], "created_at": a["created_at"],
     }
+    from forge.server.evals import eval_repeats  # lazy: evals -> runs -> views
+
+    out["eval_repeats"] = eval_repeats(a)
     if versions:
         out["versions"] = [version_view(v) for v in db.list_versions(a["id"])]
     return out
@@ -36,6 +39,7 @@ def run_view(r: dict, *, version_n: int | None = None, model: str | None = None)
         "id": r["id"], "agent_id": r["agent_id"], "version_id": r["version_id"], "version_n": version_n,
         "source": r["source"], "input": r["input"], "status": r["status"], "output": r["output"],
         "error": r["error"], "turns": r["turns"], "tokens_in": r["tokens_in"], "tokens_out": r["tokens_out"],
+        "cache_read_tokens": r.get("cache_read_tokens") or 0, "cache_write_tokens": r.get("cache_write_tokens") or 0,
         "has_artifacts": bool(r["artifact_path"] and Path(r["artifact_path"]).exists()),
         "eval_case_id": r["eval_case_id"],
         "created_at": r["created_at"], "started_at": r["started_at"], "ended_at": r["ended_at"],

@@ -27,14 +27,17 @@ class Event(BaseModel):
     #   assistant:    {"text"}
     #   tool_call:    {"id", "name", "args"}
     #   tool_result:  {"id", "name", "output", "is_error"}
-    #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out"}
+    #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out", "cache_read_tokens",
+    #                  "cache_write_tokens"}
     #   error:        {"message"}
     # Additive observability fields (optional; absent on events recorded before they existed):
     #   assistant:    "turn", "duration_ms" (model call latency), "tokens_in", "tokens_out" (this turn)
     #   tool_call:    "turn"; the first call of a turn without text also has "model_duration_ms",
     #                 "tokens_in", "tokens_out"
     #   tool_result:  "duration_ms" (tool execution time)
-    #   error:        "duration_ms" (time until the model call failed), when raised by the model
+    #   error:        "duration_ms" (time until the model call failed), when raised by the model; for a
+    #                 refused turn also "turn", "tokens_in", "tokens_out"
+    #   per-turn usage also carries "cache_read_tokens" / "cache_write_tokens" when nonzero
 
 
 Emit = Callable[[Event], Awaitable[None]]
@@ -107,6 +110,13 @@ class ModelResponse(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
+    # Why the model stopped, normalized across providers: "end_turn", "tool_use", "max_tokens", "refusal",
+    # "stop_sequence", "pause_turn", ... (OpenAI-compatible finish_reason "length" maps to "max_tokens",
+    # "content_filter" to "refusal"). None when the provider does not report it.
+    stop_reason: str | None = None
+    stop_detail: str | None = None  # refusal category or explanation when stop_reason == "refusal"
+    cache_read_tokens: int = 0  # input tokens served from the prompt cache (Anthropic)
+    cache_write_tokens: int = 0  # input tokens written to the prompt cache (Anthropic)
 
 
 class Provider(Protocol):
@@ -161,6 +171,8 @@ class RunResult(BaseModel):
     turns: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     error: str | None = None
 
 

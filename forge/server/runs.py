@@ -116,11 +116,14 @@ class RunManager:
 
     def _finalize(self, run_id: str, result: RunResult) -> None:
         db.update_run(run_id, status=result.status, output=result.output, error=result.error, turns=result.turns,
-                      tokens_in=result.tokens_in, tokens_out=result.tokens_out, ended_at=time.time())
+                      tokens_in=result.tokens_in, tokens_out=result.tokens_out,
+                      cache_read_tokens=result.cache_read_tokens, cache_write_tokens=result.cache_write_tokens,
+                      ended_at=time.time())
         if not db.has_event(run_id, "run_finished"):
             db.append_event(run_id, db.next_seq(run_id), time.time(), "run_finished", {
                 "status": result.status, "output": result.output, "turns": result.turns,
-                "tokens_in": result.tokens_in, "tokens_out": result.tokens_out})
+                "tokens_in": result.tokens_in, "tokens_out": result.tokens_out,
+                "cache_read_tokens": result.cache_read_tokens, "cache_write_tokens": result.cache_write_tokens})
 
 
 async def post_webhook(url: str, body: dict, retries: int = 3, backoff: float = 1.0) -> bool:

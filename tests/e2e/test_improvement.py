@@ -49,6 +49,7 @@ def test_full_improvement_loop_evals_feedback_optimizer_promote_and_save_as_eval
     assert r.status_code == 200 and r.json()["version"] == 1
     base = wait_evals(api, slug, 1, 4)
     assert base["train"] == {"passed": 1, "total": 3} and base["holdout"] == {"passed": 0, "total": 1}
+    assert base["repeats"] == 3 and all(x["runs"] == 3 for x in base["results"])
     by_case = {x["case_id"]: x for x in base["results"]}
     assert by_case[always["id"]]["passed"] and not by_case[train_a["id"]]["passed"]
     eval_run = api.get(f"/runs/{by_case[train_a['id']]['run_id']}").json()
@@ -65,6 +66,10 @@ def test_full_improvement_loop_evals_feedback_optimizer_promote_and_save_as_eval
     assert im["candidate"] == {"train": {"passed": 3, "total": 3}, "holdout": {"passed": 1, "total": 1}}
     assert im["regressions"] == []
     assert set(im["newly_passing"]) == {train_a["id"], train_b["id"], hold["id"]}
+    rows = {c["case_id"]: c for c in im["cases"]}  # verdicts are majority of k=3 runs
+    assert (rows[train_a["id"]]["base"]["passes"], rows[train_a["id"]]["base"]["runs"]) == (0, 3)
+    assert (rows[train_a["id"]]["candidate"]["passes"], rows[train_a["id"]]["candidate"]["runs"]) == (3, 3)
+    assert (rows[always["id"]]["base"]["passes"], rows[always["id"]]["candidate"]["passes"]) == (3, 3)
     [edit] = im["lessons_diff"]
     assert edit["op"] == "add" and edit["text"] == MARKER_LESSON and edit["evidence_run_ids"]
     shown = {by_case[train_a["id"]]["run_id"], by_case[train_b["id"]]["run_id"], prod_run["id"]}
@@ -91,7 +96,7 @@ def test_full_improvement_loop_evals_feedback_optimizer_promote_and_save_as_eval
     api.post(f"/agents/{slug}/evals/run", json={"version": 2})
     res = wait_evals(api, slug, 2, 5)
     assert res["holdout"] == {"passed": 2, "total": 2}  # fake judge passes the new case
-    assert len(api.get(f"/agents/{slug}/runs", params={"limit": 500}).json()) == n_runs + 1  # others cached
+    assert len(api.get(f"/agents/{slug}/runs", params={"limit": 500}).json()) == n_runs + 3  # k=3, others cached
 
 
 def test_regression_guard_rejects_candidate_that_breaks_a_passing_case(api, make_agent):

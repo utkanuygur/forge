@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -60,6 +61,25 @@ async def with_retry(fn: Callable[[], Awaitable[T]], *, sleep: Callable[[float],
 
 # ---------------------------------------------------------------- anthropic
 
+CACHE = {"type": "ephemeral"}  # 5-minute TTL: agent turns run well under 5 minutes apart
+
+
+def with_cache_breakpoint(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Marks the last content block of the conversation with cache_control (breakpoint 2 of 4).
+
+    Each request then reads the whole prior conversation from cache and writes only the newest turn.
+    The marked block is copied so cached raw assistant content is never mutated.
+    """
+    if not messages:
+        return messages
+    last = dict(messages[-1])
+    content = last["content"]
+    blocks = [{"type": "text", "text": content}] if isinstance(content, str) else [dict(b) for b in content]
+    if blocks:
+        blocks[-1]["cache_control"] = CACHE
+    last["content"] = blocks
+    return [*messages[:-1], last]
+
 
 class AnthropicProvider:
     def __init__(self, model: str, client: Any | None = None):
@@ -79,7 +99,8 @@ class AnthropicProvider:
         out: list[dict[str, Any]] = []
         for m in messages:
             if m.role == "user":
-                out.append({"role": "user", "content": m.text or "(empty)"})
+                # Always a block list, so the turn renders the same whether or not it carries the breakpoint.
+                out.append({"role": "user", "content": [{"type": "text", "text": m.text or "(empty)"}]})
             elif m.role == "assistant":
                 raw = self._raw.get(self._key(m.text, m.tool_calls))
                 if raw is None:
@@ -106,11 +127,16 @@ class AnthropicProvider:
     async def complete(
         self, system: str, messages: list[Message], tools: list[ToolSpec], temperature: float | None = None
     ) -> ModelResponse:
+        # Prompt caching, at most 2 of the 4 allowed breakpoints. Breakpoint 1 on the system block caches
+        # tools + system (render order is tools, system, messages; both are byte-stable within a run).
+        # Breakpoint 2 on the last message block caches the growing conversation, only for tool-using
+        # loops: one-shot judge and optimizer calls have no next turn to read it, so it would be pure cost.
+        api_messages = self._messages(messages)
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": MAX_TOKENS,
-            "system": system,
-            "messages": self._messages(messages),
+            "system": [{"type": "text", "text": system, "cache_control": CACHE}] if system else system,
+            "messages": with_cache_breakpoint(api_messages) if tools else api_messages,
         }
         if tools:
             kwargs["tools"] = [
@@ -131,11 +157,20 @@ class AnthropicProvider:
                 )
         text = "\n".join(texts).strip()
         self._raw[self._key(text, calls)] = [b.model_dump(exclude_none=True) for b in resp.content]
+        usage = resp.usage
+        stop_reason = getattr(resp, "stop_reason", None)
+        detail = None
+        if stop_reason == "refusal" and (sd := getattr(resp, "stop_details", None)) is not None:
+            detail = getattr(sd, "category", None) or getattr(sd, "explanation", None)
         return ModelResponse(
             text=text,
             tool_calls=calls,
-            tokens_in=resp.usage.input_tokens or 0,
-            tokens_out=resp.usage.output_tokens or 0,
+            tokens_in=usage.input_tokens or 0,
+            tokens_out=usage.output_tokens or 0,
+            stop_reason=stop_reason,
+            stop_detail=detail,
+            cache_read_tokens=getattr(usage, "cache_read_input_tokens", None) or 0,
+            cache_write_tokens=getattr(usage, "cache_creation_input_tokens", None) or 0,
         )
 
 
@@ -156,6 +191,11 @@ def parse_args(raw: str | None) -> dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         return {"_raw": raw}
     return val if isinstance(val, dict) else {"_raw": raw}
+
+
+# finish_reason -> normalized stop_reason (unknown values pass through unchanged)
+OPENAI_STOP = {"stop": "end_turn", "tool_calls": "tool_use", "function_call": "tool_use", "length": "max_tokens",
+               "content_filter": "refusal"}
 
 
 class OpenAICompatProvider:
@@ -210,11 +250,14 @@ class OpenAICompatProvider:
             for i, tc in enumerate(msg.tool_calls or [])
         ]
         usage = resp.usage
+        finish = getattr(resp.choices[0], "finish_reason", None)
         return ModelResponse(
             text=strip_think(msg.content or ""),
             tool_calls=calls,
             tokens_in=(usage.prompt_tokens or 0) if usage else 0,
             tokens_out=(usage.completion_tokens or 0) if usage else 0,
+            stop_reason=OPENAI_STOP.get(finish, finish) if finish else None,
+            stop_detail="content_filter" if finish == "content_filter" else None,
         )
 
 
@@ -247,6 +290,8 @@ class FakeProvider:
         return item
 
 
+_FLAKY_COUNTS: dict[str, int] = {}  # fake:flaky runs started per sha256(system, input)
+
 MARKER_LESSON = "Always create a file named MARKER.txt in the workspace root before finishing."
 
 
@@ -265,10 +310,15 @@ class ScenarioProvider:
       grader   acts as judge (always passes) and as optimizer (proposes MARKER_LESSON)
       loop     calls bash forever (exercises the turn limit)
       error    raises, as if the model API failed
+      flaky    alternates per run: the 1st, 3rd, 5th, ... run with a given (system prompt, input) creates
+               FLAKY.txt, the 2nd, 4th, ... just finish. The only stateful scenario: a process-wide counter
+               keyed by a hash of (system, input) advances when a run makes its first call, so k concurrent
+               runs of one case always yield ceil(k/2) passes of `test -f FLAKY.txt` in any interleaving
+               (k=3 -> 2/3 passes the majority, k=2 -> 1/2 fails it). Restarting the server resets it.
     """
 
     def __init__(self, scenario: str):
-        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error"}:
+        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "flaky"}:
             raise ValueError(f"unknown fake scenario {scenario!r}")
         self.scenario = scenario
 
@@ -292,6 +342,14 @@ class ScenarioProvider:
                 if step < len(script):
                     return _call(*script[step], step)
                 return ModelResponse(text="Created and ran hello.py.", tokens_in=10, tokens_out=5)
+            case "flaky":
+                if step == 0:
+                    key = hashlib.sha256(f"{system}\0{user}".encode()).hexdigest()
+                    n = _FLAKY_COUNTS.get(key, 0)
+                    _FLAKY_COUNTS[key] = n + 1
+                    if n % 2 == 0:
+                        return _call("write_file", {"path": "FLAKY.txt", "content": f"run {n}\n"}, step)
+                return ModelResponse(text="Done.", tokens_in=10, tokens_out=5)
             case "lessons":
                 if step == 0 and "MARKER.txt" in system:
                     return _call("write_file", {"path": "MARKER.txt", "content": "ok\n"}, step)

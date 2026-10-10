@@ -35,6 +35,7 @@ separately by the live layer.
 | `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs | Grader and optimizer without API calls |
 | `fake:loop` | Calls bash forever | Turn limit and `timeout` status |
 | `fake:error` | Raises like a failed API | `failed` status and error events |
+| `fake:flaky` | Alternates per run: the 1st, 3rd, 5th, ... run with a given (system prompt, input) writes `FLAKY.txt`, the others do not. A process-wide counter keyed by sha256(system, input) advances on each run's first model call, so k concurrent runs of one case yield ceil(k/2) passes of `test -f FLAKY.txt` in any order (k=3: 2/3 majority pass; k=2: 1/2 tie fails). Server restart resets it; give each test its own system prompt or input | Repeated evals and the majority rule end to end |
 
 Cost assertions are deterministic because the end-to-end server (`tests/e2e/conftest.py`) and the browser test
 server (`web/playwright.config.ts`) set `FORGE_PRICES` to give the fake models a price; scripted grader responses
@@ -70,8 +71,10 @@ Requirement IDs are defined in the technical design document. Each row names the
 | FR8 Feedback from every surface | 3: API and CLI feedback stored against run and version; 4: thumbs down persists |
 | FR9 Eval cases with splits | 3 and 4: eval run reports per-split scores; 5: checkers are valid |
 | FR10 Improve and promotion rule | 1: `is_eligible` (equal score not eligible, regression blocks); 3: full loop v1 to v2 eligible, regression rejected, auto-promote promotes; 4: improve and promote in the UI |
+| FR9/FR10 Repeated evals (majority of k) | 1: `majority` (odd k has no ties, even k needs more than half), representative run, `compare` carries counts, schema migration backfill, `eval_repeats` env/PATCH and run reuse (`tests/test_reliability.py`, `tests/test_server.py`); 3: `fake:flaky` k=3 passes 2/3 with 6 runs and re-evaluation is cached, k=2 tie fails, improvement compares majority verdicts (`tests/e2e/test_repeats.py`); 4: "0/3" and "3/3" cells, Eval repeats setting |
 | FR11 Save run as eval case | 3: save-as-eval; 4: saved case appears in Evaluations |
 | FR12 Model choice | 1: provider message mapping and retries; 6: Claude, local model, GPU model |
+| FR12 Model choice: stop reasons and prompt caching | 1: refusal fails with `Model declined: <category>` and runs no tool calls, max_tokens without tool calls fails, truncated last call is not executed, OpenAI finish_reason mapping, `cache_control` on system and newest message block, cache usage parsed and summed into `run_finished` (`tests/test_reliability.py`); 6: second and later Claude turns report cache reads |
 | FR13 Local runner | 1: path confinement, ask mode; 3: `forge run` creates files locally and syncs a `local` run that never affects eval results |
 | FR14 Webhook | 3: receiver gets the final Run JSON |
 | FR15 HTTP tools | Not implemented (P2); no test |

@@ -108,6 +108,16 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
     }
   }
 
+  async function setEvalRepeats(v: number) {
+    try {
+      await api.patchAgent(agent.slug, { eval_repeats: v });
+      toast(`Eval cases now run ${v} time${v === 1 ? "" : "s"}`);
+      onChanged();
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  }
+
   async function setAutoPromote(v: boolean) {
     try {
       await api.patchAgent(agent.slug, { auto_promote: v });
@@ -224,6 +234,24 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
               label="Auto promote"
               hint="Eligible improvements go to production automatically."
             />
+            <div className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-800">
+              <label className="label" htmlFor="eval-repeats">
+                Eval repeats
+              </label>
+              <select
+                id="eval-repeats"
+                className="input"
+                value={agent.eval_repeats ?? 3}
+                onChange={(e) => setEvalRepeats(Number(e.target.value))}
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-neutral-500">Each eval case runs this many times per version and passes on a strict majority.</p>
+            </div>
           </div>
         </Section>
         <Section title="Version history">
