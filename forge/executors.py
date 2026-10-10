@@ -125,7 +125,11 @@ GIT_ID = ["-c", "user.name=forge", "-c", "user.email=forge@localhost"]
 class DockerExecutor:
     def __init__(self, *, network: bool = False, image: str | None = None):
         self.network = network
-        self.image = image or os.environ.get("FORGE_SANDBOX_IMAGE", "forge-sandbox")
+        from forge import settings
+
+        self.image = image or settings.get("sandbox_image") or "forge-sandbox"
+        self.cpus = f"{float(settings.get('sandbox_cpus') or 1):g}"
+        self.memory = str(settings.get("sandbox_memory") or "1g")
         self.container: str | None = None
 
     async def _exec(self, args: list[str], *, input: bytes | None = None, timeout: float | None = 60) -> ExecResult:
@@ -136,7 +140,7 @@ class DockerExecutor:
 
     async def start(self, seed_files: dict[str, bytes], env: dict[str, str]) -> None:
         argv = ["docker", "run", "-d", "--network", "bridge" if self.network else "none"]
-        argv += ["--cpus", "1", "--memory", "1g", "--pids-limit", "256", "--user", "agent", "-w", "/workspace"]
+        argv += ["--cpus", self.cpus, "--memory", self.memory, "--pids-limit", "256", "--user", "agent", "-w", "/workspace"]
         for k, v in env.items():
             argv += ["-e", f"{k}={v}"]
         argv += [self.image, "sleep", "infinity"]

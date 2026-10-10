@@ -79,3 +79,14 @@ input[type=text], input[type=password] {
 .status { min-height: 18px; font-size: 12px; margin-top: 10px; user-select: text; -webkit-user-select: text; }
 .status.ok { color: var(--ok); }
 .status.err { color: var(--err); }
+.pair { display: flex; gap: 8px; }
+.pair input[type=text] { flex: 1 1 45%; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.pair input[type=password] { flex: 1 1 55%; }
+ul.keys { list-style: none; padding: 0; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+ul.keys li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 6px 5px 10px; }
+ul.keys li + li { border-top: 1px solid var(--line); }
+ul.keys li code { font: 12px ui-monospace, "SF Mono", Menlo, monospace; }
+ul.keys li.removing code { text-decoration: line-through; color: var(--muted); }
+ul.keys li button { padding: 2px 10px; }
+.row .hint.inline { margin: 0; align-self: center; flex: 1; }
+.row:last-child { justify-content: flex-start; }

@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
-import os
 import time
 from typing import Any
 
-from forge import db
+from forge import db, settings
 from forge.provenance import lesson_provenance
 from forge.server.runs import get_manager
 from forge.types import AgentVersion, Provider
@@ -23,15 +22,32 @@ MAX_EVAL_REPEATS = 9
 AUTO_IMPROVE_THRESHOLD = 3
 
 _eval_tasks: dict[str, asyncio.Task] = {}  # version_id -> running eval
+_eval_errors: dict[str, str] = {}  # version_id -> why its last eval stopped early (model not found)
 _improve_tasks: dict[str, asyncio.Task] = {}  # improvement_id -> task
 
 
 def default_model() -> str:
-    return os.environ.get("FORGE_DEFAULT_MODEL") or DEFAULT_MODEL
+    return settings.get("default_model") or DEFAULT_MODEL
 
 
 def grader_model() -> str:
-    return os.environ.get("FORGE_GRADER_MODEL") or default_model()
+    return settings.get("grader_model") or default_model()
+
+
+def eval_concurrency() -> int:
+    return int(settings.get("eval_concurrency") or EVAL_CONCURRENCY)
+
+
+def auto_improve_threshold() -> int:
+    return int(settings.get("auto_improve_threshold") or AUTO_IMPROVE_THRESHOLD)
+
+
+class EvalStopped(RuntimeError):
+    """An eval stopped early because the version's model does not exist on its provider."""
+
+
+def _model_missing(error: str | None) -> bool:
+    return "ModelNotFoundError" in (error or "")  # forge.providers.ModelNotFoundError, as recorded in run errors
 
 
 def grader() -> Provider:
@@ -70,13 +86,10 @@ def to_agent_version(v: dict) -> AgentVersion:
 
 
 def eval_repeats(agent: dict) -> int:
-    """Runs per eval case (k): the agent's setting, else $FORGE_EVAL_REPEATS, else 3."""
+    """Runs per eval case (k): the agent's setting, else the eval_repeats setting ($FORGE_EVAL_REPEATS), else 3."""
     if agent.get("eval_repeats"):
         return max(1, min(int(agent["eval_repeats"]), MAX_EVAL_REPEATS))
-    try:
-        return max(1, min(int(os.environ.get("FORGE_EVAL_REPEATS") or DEFAULT_EVAL_REPEATS), MAX_EVAL_REPEATS))
-    except ValueError:
-        return DEFAULT_EVAL_REPEATS
+    return max(1, min(int(settings.get("eval_repeats") or DEFAULT_EVAL_REPEATS), MAX_EVAL_REPEATS))
 
 
 def results_map(version_id: str) -> dict[str, dict]:
@@ -99,6 +112,7 @@ def eval_summary(agent: dict, version: dict) -> dict:
         "results": [{"case_id": cid, **r} for cid, r in res.items()],
         "running": version["id"] in _eval_tasks,
         "repeats": eval_repeats(db.get_agent(agent["id"]) or agent),
+        "error": _eval_errors.get(version["id"]),
     }
 
 
@@ -109,12 +123,16 @@ async def _eval_run(agent: dict, version: dict, case: dict, idx: int, sem: async
     holder: dict[str, str] = {}
 
     async def after(executor: Any, result: Any) -> tuple[bool, str]:
+        if _model_missing(result.error):  # nothing to grade, and no reason to spend grader tokens
+            return False, result.error
         if not judge:
             judge.append(grader())
         metered = MeteredProvider(judge[0], grader_model(), agent["id"], "judge", run_id=holder.get("run_id"))
         return await improve.check_case(case, executor, result.output, metered)
 
     async with sem:
+        if version["id"] in _eval_errors:  # an earlier run found the model missing: skip the rest
+            return
         mgr = get_manager()
         run_id = await mgr.start_run(agent, version, case["input"], "eval", eval_case=case, after=after,
                                      temperature=0)
@@ -123,6 +141,11 @@ async def _eval_run(agent: dict, version: dict, case: dict, idx: int, sem: async
             db.link_improvement_run(im_id, run_id)
         run = await mgr.wait(run_id)
         checked = mgr.after_results.pop(run_id, None)
+        if _model_missing((run or {}).get("error")):
+            err = str((run or {})["error"]).removeprefix("model error: ").removeprefix("ModelNotFoundError: ")
+            _eval_errors.setdefault(version["id"], f"Stopped evaluating v{version['n']} early: {err}. Fix the "
+                                                   "model in Configure, then run the evals again.")
+            return
         if checked is None:  # infrastructure failure before the check ran: do not cache, retry next time
             log.warning("eval run %s for case %s errored: %s", run_id, case["id"], (run or {}).get("error"))
             return
@@ -163,7 +186,9 @@ async def run_eval(agent: dict, version: dict, cases: list[dict] | None = None,
 
     Concurrent calls for one version share work: a caller that finds an eval already running waits for it and then
     runs whatever of its own cases is still missing. `sem` lets several versions share one sandbox bound (pruning
-    ablations); by default each eval gets its own bound of EVAL_CONCURRENCY runs.
+    ablations); by default each eval gets its own bound of eval_concurrency() runs. When a run finds the version's
+    model missing on its provider, the remaining runs are skipped and EvalStopped is raised with a plain message (also
+    reported as `error` by eval_summary).
     """
     while True:
         task = _eval_tasks.get(version["id"])
@@ -174,8 +199,12 @@ async def run_eval(agent: dict, version: dict, cases: list[dict] | None = None,
             await asyncio.shield(task)
             break
         await asyncio.shield(task)
+        if version["id"] in _eval_errors:
+            break
         if not _pending(agent, version, eval_repeats(db.get_agent(agent["id"]) or agent), cases):
             break
+    if version["id"] in _eval_errors:
+        raise EvalStopped(_eval_errors[version["id"]])
     return eval_summary(agent, version)
 
 
@@ -183,9 +212,10 @@ async def _run_eval(agent: dict, version: dict, cases: list[dict] | None = None,
                     sem: asyncio.Semaphore | None = None) -> None:
     """Each case runs k times; its verdict is the majority (forge.improve.majority). A case whose summary already
     covers k runs is cached and not re-run; a k change reuses stored runs and only adds missing ones."""
+    _eval_errors.pop(version["id"], None)
     k = eval_repeats(db.get_agent(agent["id"]) or agent)
     todo = _pending(agent, version, k, cases)
-    sem = sem or asyncio.Semaphore(EVAL_CONCURRENCY)  # bounds sandbox runs across all cases and repeats
+    sem = sem or asyncio.Semaphore(eval_concurrency())  # bounds sandbox runs across all cases and repeats
     judge: list = []
     await asyncio.gather(*(_eval_case(agent, version, c, k, sem, judge) for c in todo))
 
@@ -297,6 +327,6 @@ def maybe_auto_improve(agent: dict) -> dict | None:
     if any(i["status"] == "running" for i in ims):
         return None
     since = _last_improvement_time(agent["id"])  # prune jobs do not consume feedback
-    if len(db.negative_feedback_since(agent["id"], since)) < AUTO_IMPROVE_THRESHOLD:
+    if len(db.negative_feedback_since(agent["id"], since)) < auto_improve_threshold():
         return None
     return start_improve(agent)

@@ -86,7 +86,13 @@ def _overrides(raw: str) -> dict[str, tuple[float, float]]:
 
 
 def overrides() -> dict[str, tuple[float, float]]:
-    return _overrides(os.environ.get("FORGE_PRICES") or "")
+    """$FORGE_PRICES when set (invalid JSON or entries are ignored with a warning), else the saved prices setting."""
+    raw = os.environ.get("FORGE_PRICES") or ""
+    if raw.strip():
+        return _overrides(raw)
+    from forge import settings
+
+    return {k: (float(v[0]), float(v[1])) for k, v in (settings.get("prices") or {}).items()}
 
 
 def price_for(model: str | None) -> Price:

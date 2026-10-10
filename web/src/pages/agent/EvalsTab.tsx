@@ -179,6 +179,7 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
         }
       >
         <ErrorBox error={error} onDismiss={() => setError(null)} />
+        {results?.error && <ErrorBox error={results.error} />}
         {results && (results.train || results.holdout) && (
           <div className="flex flex-wrap gap-3">
             {(["train", "holdout"] as const).map((s) =>

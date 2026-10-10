@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
@@ -36,6 +35,28 @@ def supports_progress_updates(model: str) -> bool:
 
 
 BACKOFF = (1.0, 2.0, 4.0)  # up to 3 retries after the first attempt
+
+
+class ModelNotFoundError(RuntimeError):
+    """The provider answered 404 for the model: it does not exist there (or the base URL is wrong).
+
+    Evals stop the remaining runs of a version when a run fails with this (forge.server.evals)."""
+
+
+def _not_found(exc: BaseException) -> bool:
+    import anthropic
+    import openai
+
+    return isinstance(exc, (anthropic.NotFoundError, openai.NotFoundError))
+
+
+def _api_detail(exc: BaseException) -> str:
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error", body)
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"])
+    return str(exc)
 
 
 def _retryable(exc: BaseException) -> bool:
@@ -162,7 +183,13 @@ class AnthropicProvider:
             create = self.client.beta.messages.create
         else:
             create = self.client.messages.create
-        resp = await with_retry(lambda: create(**kwargs))
+        try:
+            resp = await with_retry(lambda: create(**kwargs))
+        except Exception as exc:
+            if _not_found(exc):
+                raise ModelNotFoundError(f"Model '{self.model}' is not available to this Claude API key "
+                                         f"({_api_detail(exc)})") from exc
+            raise
         texts, calls, notes = [], [], []
         for b in resp.content:
             if b.type == "thinking":
@@ -225,9 +252,13 @@ class OpenAICompatProvider:
     def __init__(self, base_url: str, model: str, client: Any | None = None):
         import openai
 
+        from forge import settings
+
         self.model = model
+        self.base_url = base_url.rstrip("/")
+        # The endpoint's own key variable (Settings > OpenAI compatible endpoints), else OPENAI_API_KEY.
         self.client = client or openai.AsyncOpenAI(
-            base_url=base_url, api_key=os.environ.get("OPENAI_API_KEY") or "not-needed", max_retries=0
+            base_url=base_url, api_key=settings.openai_key_for(base_url) or "not-needed", max_retries=0
         )
 
     @staticmethod
@@ -266,7 +297,13 @@ class OpenAICompatProvider:
             ]
         if temperature is not None:
             kwargs["temperature"] = temperature
-        resp = await with_retry(lambda: self.client.chat.completions.create(**kwargs))
+        try:
+            resp = await with_retry(lambda: self.client.chat.completions.create(**kwargs))
+        except Exception as exc:
+            if _not_found(exc):
+                raise ModelNotFoundError(f"Model '{self.model}' is not available on {self.base_url} "
+                                         f"({_api_detail(exc)})") from exc
+            raise
         msg = resp.choices[0].message
         calls = [
             ToolCall(id=tc.id or f"call_{i}", name=tc.function.name, args=parse_args(tc.function.arguments))
@@ -381,6 +418,7 @@ class ScenarioProvider:
                as that kind's suggester (returns the kind's registered `fake` reply, see forge.assist)
       loop     calls bash forever (exercises the turn limit)
       error    raises, as if the model API failed
+      missing  raises ModelNotFoundError, as if the model does not exist on its provider (evals stop early)
       flaky    alternates per run: the 1st, 3rd, 5th, ... run with a given (system prompt, input) creates
                FLAKY.txt, the 2nd, 4th, ... just finish. The only stateful scenario: a process-wide counter
                keyed by a hash of (system, input) advances when a run makes its first call, so k concurrent
@@ -394,7 +432,8 @@ class ScenarioProvider:
     """
 
     def __init__(self, scenario: str):
-        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "flaky", "risky", "tools", "session", "slow"}:
+        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "flaky", "risky", "tools", "session", "slow",
+                            "missing"}:
             raise ValueError(f"unknown fake scenario {scenario!r}")
         self.scenario = scenario
 
@@ -417,6 +456,8 @@ class ScenarioProvider:
         match self.scenario:
             case "error":
                 raise RuntimeError("fake model failure")
+            case "missing":
+                raise ModelNotFoundError("Model 'missing' is not available on fake (model not found)")
             case "echo":
                 return ModelResponse(text=f"echo: {user}", tokens_in=10, tokens_out=5)
             case "loop":

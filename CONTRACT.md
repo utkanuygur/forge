@@ -36,10 +36,10 @@ amendment or additive extend the objects and endpoints above; where both describ
   (after `ollama pull qwen3:4b-instruct`); `fake:<scenario>` selects a deterministic test model (TESTING.md).
 - Data directory: `$FORGE_DATA_DIR` (default `./data`): `forge.db`, `runs/<run_id>/workspace.tar.gz`, `runs/<run_id>/diff.patch`.
 - Secrets are redacted in event payloads by replacing each secret value with `[REDACTED]` before `emit`.
-- Default models: `$FORGE_DEFAULT_MODEL` for agents (default `anthropic:claude-sonnet-5-5`), `$FORGE_GRADER_MODEL`
-  for judge, optimizer and agent drafting (falls back to the agent default; `.env.example` sets
-  `anthropic:claude-opus-5-5`). Judge and optimizer request temperature 0, which is sent only to models that accept
-  sampling parameters (`forge.providers.accepts_temperature`; current Claude models do not).
+- Default models: the `default_model` setting (`$FORGE_DEFAULT_MODEL`, default `anthropic:claude-sonnet-5-5`) for
+  agents, `grader_model` (`$FORGE_GRADER_MODEL`, falls back to the agent default) for judge, optimizer and agent
+  drafting; see "Settings" for precedence. Judge and optimizer request temperature 0, which is sent only to models
+  that accept sampling parameters (`forge.providers.accepts_temperature`; current Claude models do not).
 - `http_tools` (`forge.types.HttpTool`), `mcp_servers` and `callable_agents` are offered to the model as tools
   (see Tools).
 
@@ -876,3 +876,70 @@ Model: `model` when given (any provider string, e.g. `openai_compat:http://local
 else the example's own model, else (on replace) the current prod model, else the server default
 (`FORGE_DEFAULT_MODEL`). The version created on install has `created_by: "human"` and the rationale
 "Installed from the <key> example".
+
+## Settings (additive)
+
+Every Forge setting is declared once in `forge/settings.py` (the registry) and can be viewed and changed on the
+web Settings page (`/settings`, gear icon) and in the desktop app, with no `.env` editing.
+
+**Registry.** Each setting has `key`, `env` (environment variable), `type` (`string`, `int`, `float`, `bool`,
+`enum`, `model`, `url`, `json`, `secret`), `default`, `group` (Models, Sandbox, Evaluations, Server,
+Observability, Pricing, Sharing, or a new one), `label`, `description` (one plain sentence), validation (`min`,
+`max`, `options`, `optional`, or a `validate` function), `apply` (`live`: read where it is used, so a change takes
+effect at once; `restart`: read at server start) and `secret`. `editable=False` marks environment only settings.
+Code reads a value with `settings.get(key)` at the point of use.
+
+**Precedence.** A non empty environment variable (shown as "Environment", read only) > a value saved in the
+`settings` table (`key TEXT PRIMARY KEY, value TEXT` (JSON)`, updated_at REAL`, created `IF NOT EXISTS` by
+`forge/settings.py`) > the default. An empty variable counts as unset. An invalid environment value keeps the
+setting read only, falls back to the default and is reported in `error`.
+
+**Secrets** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, endpoint key variables) are never stored in the database
+and never returned by the API, only whether they are set. The desktop app keeps them in the Keychain and passes
+them as environment variables, naming them in `FORGE_DESKTOP_SECRETS`; the dev server reads them from `.env`.
+
+**OpenAI compatible endpoints** (`openai_endpoints`): `[{"name", "base_url", "api_key_env"?}]`, default Ollama at
+`http://localhost:11434/v1`. A provider for `openai_compat:<base_url>|<model>` sends the key from the matching
+endpoint's `api_key_env` variable, else `OPENAI_API_KEY`.
+
+| Method | Path | Auth | Body / returns |
+|---|---|---|---|
+| GET | `/settings` | localhost | `{desktop, needs_restart, groups: [{name, settings: [Setting]}], info: {data_dir, version, executor, docker}}` |
+| PATCH | `/settings` | localhost | `{key: value, ...}` (`null` resets a key). All or nothing: 422 `{"detail": {"message", "errors": {key: message}}}` for unknown keys, secrets, environment owned or invalid values; else the GET payload |
+| POST | `/settings/reset` | localhost | `{"keys": [...]}` forgets saved values; returns the GET payload |
+| GET | `/models/available` | localhost | `?refresh=true` skips the cache, `?provider=<id or name>` checks one. `{"providers": [{id, name, kind, base_url, prefix, configured, reachable, models, error, checked_at}]}`. Claude: `GET /v1/models` with the configured key; endpoints: `GET {base_url}/models`. Cached 60 s per provider; a provider that is down is reported unreachable, never a failed request |
+
+```jsonc
+// Setting (secrets have is_set and from_desktop instead of value and default)
+{"key": "eval_repeats", "env": "FORGE_EVAL_REPEATS", "type": "int", "label": "Default eval repeats",
+ "description": "...", "group": "Evaluations", "apply": "live", "secret": false, "source": "saved",
+ "editable": true, "needs_restart": false, "error": null, "value": 5, "default": 3, "min": 1, "max": 9}
+```
+
+`needs_restart` is true for a restart setting whose effective value differs from the value when the server
+started. Restart: inside the desktop app the page calls `window.forgeDesktop.restartServer()`, an IPC call to the
+Electron main process, which restarts the server it owns and reloads `/settings`; the server exposes no restart
+endpoint. Outside the app the page asks to restart the server by hand.
+
+**Model availability warnings.** `POST /agents` and `POST /agents/{slug}/versions` responses gain an optional
+`warning` when the model is not available right now (saved anyway), for example
+`"Model 'qwen3:8b' is not available on http://localhost:11434/v1; available: qwen3:4b-instruct"`, or a missing
+Claude key. **Eval early stop:** a provider 404 for the model raises `forge.providers.ModelNotFoundError`; an eval
+then skips the version's remaining runs and cases, records no verdicts, and `GET /agents/{slug}/evals/results`
+reports `error` (`"Stopped evaluating v2 early: ..."`); an improvement cycle using that eval fails with it.
+
+**Registering settings from other modules.** Call `register_setting(...)` at import time of the module that uses
+it, read it with `settings.get(key)`, then run `uv run python scripts/gen_env_example.py` (a test fails when
+`.env.example` drifts from the registry). The Settings page renders new settings and groups with no web changes.
+
+```python
+from forge.settings import register_setting
+register_setting(key="share_rate_limit", env="FORGE_SHARE_RATE_LIMIT", type="int", default=30, min=1, max=1000,
+                 group="Sharing", label="Share link rate limit", description="Runs per minute allowed per share link.")
+```
+
+Suggested for pending work: triggers, `triggers_api_hosts` (json list of hosts webhooks may call, group Server);
+governance, `budget_default_usd` (float, monthly spend cap for new agents) and `budget_action` (enum warn or
+block), group Evaluations or a new Governance group; sharing, `share_rate_limit` (int) and
+`share_runs_per_day` (int), group Sharing; tools, `tool_timeout_seconds` (int, Sandbox) and `http_tools_allowed`
+(bool); parallel tests, none at runtime.

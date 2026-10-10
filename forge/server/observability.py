@@ -6,7 +6,6 @@ SQL here only fetches rows (aggregating where it is simple); the arithmetic live
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 import subprocess
 import time
@@ -16,7 +15,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from forge import db, metrics, pricing
+from forge import db, metrics, pricing, settings
 from forge.server.auth import authorize, is_local, require_local
 
 api = APIRouter(prefix="/v1")
@@ -512,9 +511,11 @@ _docker_cache: dict[str, Any] = {"at": 0.0, "value": None}
 
 def check_docker() -> dict:
     """Docker daemon reachable and sandbox image present. Cached for 10 seconds."""
-    if time.monotonic() - _docker_cache["at"] < 10 and _docker_cache["value"] is not None:
+    image = settings.get("sandbox_image") or "forge-sandbox"
+    fresh = time.monotonic() - _docker_cache["at"] < 10 and _docker_cache.get("image") == image
+    if fresh and _docker_cache["value"] is not None:
         return _docker_cache["value"]
-    image = os.environ.get("FORGE_SANDBOX_IMAGE", "forge-sandbox")
+    _docker_cache["image"] = image
     if not shutil.which("docker"):
         value = {"status": "error", "detail": "docker CLI not found"}
     else:
@@ -543,7 +544,7 @@ def health_report() -> tuple[int, dict]:
         components["database"] = {"status": "ok"}
     except Exception as exc:  # noqa: BLE001
         components["database"] = {"status": "error", "detail": f"{type(exc).__name__}: {exc}"}
-    executor = os.environ.get("FORGE_EXECUTOR") or "docker"
+    executor = settings.get("executor") or "docker"
     if executor == "docker":
         components["docker"] = check_docker()
     else:
@@ -607,7 +608,7 @@ def prometheus_families() -> list[dict]:
 
 @ops.get("/metrics", include_in_schema=False)
 async def prometheus(request: Request) -> PlainTextResponse:
-    if os.environ.get("FORGE_METRICS_PUBLIC") != "1" and not is_local(request):
+    if not settings.get("metrics_public") and not is_local(request):
         raise HTTPException(401, "metrics are only available from localhost (set FORGE_METRICS_PUBLIC=1)")
     text = await asyncio.to_thread(lambda: metrics.format_prometheus(prometheus_families()))
     return PlainTextResponse(text, media_type="text/plain; version=0.0.4; charset=utf-8")

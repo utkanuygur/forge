@@ -19,10 +19,11 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from forge import budget, db
+from forge import budget, db, settings
+from forge.models_available import model_warning
 from forge.policy import http_tool_names, parse_policy
 from forge.provenance import lesson_provenance
-from forge.server import assist, authoring, evals, files, observability, obslog, runs, sessions_api
+from forge.server import assist, authoring, evals, files, observability, obslog, runs, sessions_api, settings_api
 from forge.server import examples as examples_api
 from forge.server import governance as governance_routes
 from forge.server.auth import authorize, require_local
@@ -42,6 +43,7 @@ TERMINAL = TERMINAL_STATUSES
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    settings.snapshot()  # restart settings report needs_restart once their value differs from this
     obslog.configure()
     runs.reset_manager()
     db.fail_interrupted_runs()
@@ -209,7 +211,10 @@ async def create_agent(body: AgentCreate) -> dict:
     agent = db.set_prod_version(agent["id"], v["id"], "create")
     if body.monthly_budget_usd is not None:
         agent = db.update_agent(agent["id"], monthly_budget_usd=body.monthly_budget_usd)
-    return {**agent_view(agent), "api_key": key}  # type: ignore[arg-type]
+    out = {**agent_view(agent), "api_key": key}  # type: ignore[arg-type]
+    if warning := await model_warning(v["model"]):  # saved anyway: the model may be pulled later
+        out["warning"] = warning
+    return out
 
 
 @api.get("/agents", dependencies=[Depends(require_local)])
@@ -260,7 +265,10 @@ async def create_version(slug: str, body: VersionCreate, request: Request) -> di
     if meta:
         db.set_lesson_meta(v["id"], meta)
         v = db.get_version(v["id"])
-    return version_view(v)  # type: ignore[arg-type]
+    out = version_view(v)  # type: ignore[arg-type]
+    if warning := await model_warning(out["model"]):
+        out["warning"] = warning
+    return out
 
 
 @api.get("/agents/{slug}/versions/{n}")
@@ -359,7 +367,7 @@ async def list_mcp_tools(slug: str, body: McpList, request: Request) -> dict:
     executor = None
     try:
         if body.server.transport == "stdio":
-            executor = make_executor(os.environ.get("FORGE_EXECUTOR") or "docker",  # type: ignore[arg-type]
+            executor = make_executor(settings.get("executor") or "docker",  # type: ignore[arg-type]
                                      network=network)
             seeds = body.seed_files if body.seed_files is not None else (prod.get("seed_files") or {})
             await executor.start({k: v.encode() for k, v in seeds.items()}, dict(secrets))
@@ -767,6 +775,7 @@ app.include_router(triggers_api.router)  # trigger CRUD and /v1/hooks/github|sla
 app.include_router(sessions_api.router)  # playground sessions
 app.include_router(assist.router)  # /v1/assist/{kind} and /v1/agents/{slug}/sample-task
 app.include_router(examples_api.router)  # /v1/examples (one click example agents)
+app.include_router(settings_api.router)  # /v1/settings and /v1/models/available
 
 # ---------------------------------------------------------------- SPA
 

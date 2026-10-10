@@ -8,14 +8,13 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import time
 import uuid
 from typing import Any, Awaitable, Callable
 
 import httpx
 
-from forge import budget, db, governance
+from forge import budget, db, governance, settings
 from forge.server import obslog
 from forge.server.views import run_view
 from forge.types import AgentVersion, Event, Executor, Message, RunResult
@@ -52,7 +51,8 @@ After = Callable[[Executor, RunResult], Awaitable[Any]]
 
 class RunManager:
     def __init__(self, max_concurrency: int | None = None) -> None:
-        self.semaphore = asyncio.Semaphore(max_concurrency or int(os.environ.get("FORGE_MAX_CONCURRENCY") or 8))
+        # max_concurrent_runs is a restart setting: the bound is fixed when the manager is created at startup.
+        self.semaphore = asyncio.Semaphore(max_concurrency or int(settings.get("max_concurrent_runs") or 8))
         self.tasks: dict[str, asyncio.Task] = {}
         self.after_results: dict[str, Any] = {}
         self.approvals = governance.ApprovalRegistry()
@@ -150,7 +150,7 @@ class RunManager:
             executor: Executor | None = None
             result: RunResult | None = None
             try:
-                executor = make_executor(os.environ.get("FORGE_EXECUTOR") or "docker",  # type: ignore[arg-type]
+                executor = make_executor(settings.get("executor") or "docker",  # type: ignore[arg-type]
                                          network=bool(version.get("network")))
                 secrets = db.get_secrets(agent["id"])
                 # A cancel during start must not orphan a half-created sandbox: let start finish, then
@@ -177,7 +177,8 @@ class RunManager:
 
                 registry = build_registry(v, secrets=secrets, executor=executor, run_id=run_id,
                                           agent_id=agent["id"], manager=self)
-                extra: dict[str, Any] = {"max_seconds": max_seconds} if max_seconds else {}
+                extra: dict[str, Any] = {"max_turns": int(settings.get("run_max_turns")),
+                                         "max_seconds": max_seconds or int(settings.get("run_max_seconds"))}
                 if registry is not None:
                     extra["extra_tools"] = registry
                 if history:

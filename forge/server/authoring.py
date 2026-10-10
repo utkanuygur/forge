@@ -165,7 +165,7 @@ async def _prune(agent: dict, base: dict, improvement_id: str, max_ablations: in
 
         lessons = list(base["lessons"])
         targets = pruning.select_for_ablation(lessons, base.get("lesson_meta"), max_ablations)
-        sem = asyncio.Semaphore(evals.EVAL_CONCURRENCY)  # one sandbox bound shared by all ablations
+        sem = asyncio.Semaphore(evals.eval_concurrency())  # one sandbox bound shared by all ablations
 
         async def ablate(lesson: str) -> dict:
             v = _ablation_version(agent, base, [x for x in lessons if x != lesson])
