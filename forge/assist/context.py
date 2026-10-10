@@ -266,3 +266,23 @@ def near_duplicate(prompt: str, others: list[str], threshold: float = DUPLICATE_
         if similarity(prompt, o) >= threshold:
             return o
     return None
+
+
+# ---------------------------------------------------------------- helpers for kinds
+
+
+def for_request(req: Any, *, system_prompt: str | None = None) -> tuple[dict[str, Any], str]:
+    """(agent context, rendered text) for an AssistRequest. `system_prompt` replaces the version's prompt in the
+    rendering (a kind that shows the full instructions elsewhere passes a pointer to them)."""
+    ctx = agent_context(req.agent, req.version, recent_inputs=req.recent_inputs, secret_names=req.secret_names)
+    shown = dict(ctx, system_prompt=system_prompt) if system_prompt is not None else ctx
+    return ctx, render_agent_context(shown)
+
+
+def text_input(inp: dict[str, Any], key: str, limit: int, *, required: bool = False) -> str:
+    """A trimmed string field of a kind's input, cut to `limit` chars; ValueError (a 400) when required and empty."""
+    v = inp.get(key)
+    v = v.strip()[:limit] if isinstance(v, str) else ""
+    if required and not v:
+        raise ValueError(f"input.{key} is required")
+    return v
