@@ -60,3 +60,64 @@ export function Highlighted({ code, lang }: { code: string; lang?: string }) {
     return <>{code}</>;
   }
 }
+
+// ---------------------------------------------------------------- line tokens (FilesPanel code view)
+
+export type TokenKind = "comment" | "string" | "number" | "keyword";
+export interface Token {
+  kind: TokenKind | null;
+  text: string;
+}
+
+const KIND_OF: Record<string, TokenKind> = {
+  "hljs-comment": "comment",
+  "hljs-quote": "comment",
+  "hljs-string": "string",
+  "hljs-regexp": "string",
+  "hljs-number": "number",
+  "hljs-keyword": "keyword",
+  "hljs-built_in": "keyword",
+  "hljs-literal": "keyword",
+  "hljs-selector-tag": "keyword",
+};
+
+interface HastNode {
+  type: string;
+  value?: string;
+  properties?: { className?: string[] | string };
+  children?: HastNode[];
+}
+
+/** The same lowlight grammars as the transcript, flattened into per-line tokens so a code view can render
+ * one table row per line (a string or comment that spans lines is split at the line breaks). */
+export function highlightLines(code: string, lang?: string | null): Token[][] {
+  const flat: Token[] = [];
+  const walk = (node: HastNode, kind: TokenKind | null) => {
+    if (node.type === "text") {
+      flat.push({ kind, text: node.value ?? "" });
+      return;
+    }
+    const cls = node.properties?.className;
+    const classes = Array.isArray(cls) ? cls : cls ? [cls] : [];
+    const own = classes.map((c) => KIND_OF[c]).find(Boolean) ?? kind;
+    for (const child of node.children ?? []) walk(child, own);
+  };
+  if (lang && lowlight.registered(lang)) {
+    try {
+      walk(lowlight.highlight(lang, code) as unknown as HastNode, null);
+    } catch {
+      flat.splice(0, flat.length, { kind: null, text: code });
+    }
+  } else {
+    flat.push({ kind: null, text: code });
+  }
+  const lines: Token[][] = [[]];
+  for (const t of flat) {
+    t.text.split("\n").forEach((part, i) => {
+      if (i > 0) lines.push([]);
+      if (part) lines[lines.length - 1].push({ kind: t.kind, text: part });
+    });
+  }
+  if (code.endsWith("\n") && lines.length > 1 && lines[lines.length - 1].length === 0) lines.pop();
+  return lines;
+}

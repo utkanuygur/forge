@@ -11,6 +11,7 @@ import EvalsTab from "./agent/EvalsTab";
 import DeployTab from "./agent/DeployTab";
 import { BudgetBanner, BudgetMeter, PendingApprovalsBadge, useGovernance } from "../components/Governance";
 import Playground from "../components/playground/Playground";
+import FilesPanel from "../components/FilesPanel";
 
 const TABS = [
   { key: "configure", label: "Configure" },
@@ -65,7 +66,20 @@ export default function AgentPage() {
       {gov && <BudgetBanner gov={gov} />}
       <Tabs tabs={tabs} active={tab} onChange={(k) => navigate(`/agents/${slug}/${k}`)} />
       {tab === "configure" && <ConfigureTab agent={agent} onChanged={reload} />}
-      {tab === "playground" && <Playground agent={agent} />}
+      {tab === "playground" && (
+        <Playground
+          agent={agent}
+          filesPanel={(runId) =>
+            runId ? (
+              <div className="h-full overflow-auto p-3">
+                <FilesPanel key={runId} runId={runId} />
+              </div>
+            ) : (
+              <p className="p-4 text-sm text-neutral-500">Files appear here after a turn finishes.</p>
+            )
+          }
+        />
+      )}
       {tab === "runs" && <RunsTab agent={agent} />}
       {tab === "monitoring" && <MonitoringTab agent={agent} />}
       {tab === "evals" && <EvalsTab agent={agent} onChanged={reload} />}

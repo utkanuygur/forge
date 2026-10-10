@@ -22,7 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 from forge import budget, db
 from forge.policy import http_tool_names, parse_policy
 from forge.provenance import lesson_provenance
-from forge.server import authoring, evals, observability, obslog, runs, sessions_api
+from forge.server import authoring, evals, files, observability, obslog, runs, sessions_api
 from forge.server import governance as governance_routes
 from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
@@ -513,6 +513,46 @@ async def diff(run_id: str, request: Request) -> PlainTextResponse:
     if not r["diff_path"] or not Path(r["diff_path"]).exists():
         raise HTTPException(404, "no diff for this run")
     return PlainTextResponse(Path(r["diff_path"]).read_text(errors="replace"))
+
+
+def _workspace(run_id: str, request: Request) -> tuple[dict, files.Archive]:
+    r, _, source = run_and_agent(run_id, request)
+    if source == "share" and r["source"] != "share":
+        raise HTTPException(401, "a share token can only browse share runs")
+    if not r["artifact_path"] or not Path(r["artifact_path"]).exists():
+        raise HTTPException(404, "no workspace for this run")
+    try:
+        return r, files.open_archive(r["artifact_path"])
+    except files.FileError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@api.get("/runs/{run_id}/files")
+async def list_files(run_id: str, request: Request, changed: bool = False) -> list[dict]:
+    r, archive = _workspace(run_id, request)
+    entries = await asyncio.to_thread(archive.entries)
+    out = [{"path": e.path, "size": e.size, "is_text": e.is_text} for e in entries]
+    if changed:
+        diff_text = Path(r["diff_path"]).read_text(errors="replace") if r["diff_path"] and Path(
+            r["diff_path"]).exists() else ""
+        kinds = files.changed_files(diff_text)
+        for item in out:
+            kind = kinds.get(item["path"])
+            item["changed"] = kind is not None
+            if kind:
+                item["change"] = kind
+    return out
+
+
+@api.get("/runs/{run_id}/files/{path:path}")
+async def read_file(run_id: str, path: str, request: Request) -> PlainTextResponse:
+    _, archive = _workspace(run_id, request)
+    try:
+        data = await asyncio.to_thread(archive.read, path)
+    except files.FileError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    return PlainTextResponse(data.decode("utf-8", errors="replace"),
+                             headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
 
 class FeedbackIn(BaseModel):

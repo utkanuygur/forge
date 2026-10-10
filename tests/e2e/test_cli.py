@@ -50,7 +50,7 @@ def test_cli_local_run_edits_directory_and_syncs_trace_without_eval_results(api,
     res = forge_cli("run", slug, "create hello.py and run it", "--dir", str(work), "--auto", home=home)
     assert res.returncode == 0, res.stdout + res.stderr
     assert (work / "hello.py").read_text() == "print('hello from forge')\n"
-    m = re.search(r"✻ Done in [\d.]+s · 3 turns · .*run (r_[0-9a-f]{12})", res.stdout)
+    m = re.search(r"✓ succeeded · 3 turns · [\d.]+s · .*run (r_[0-9a-f]{12})", res.stdout)  # the forge chat footer
     assert m, res.stdout
     # Transcript style, no ANSI codes when stdout is not a TTY.
     assert "● Write(hello.py)" in res.stdout and "● Bash(python hello.py)" in res.stdout

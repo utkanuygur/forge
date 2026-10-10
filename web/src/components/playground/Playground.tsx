@@ -77,7 +77,15 @@ function Turn({ run, events, live, now }: { run: Run; events: ReturnType<typeof 
   );
 }
 
-export default function Playground({ agent, filesPanel }: { agent: Agent; filesPanel?: ReactNode }) {
+/** `filesPanel` is the right-hand workspace browser slot: a node, or a function of the latest finished turn's
+ * run id (null before any turn has finished). */
+export default function Playground({
+  agent,
+  filesPanel,
+}: {
+  agent: Agent;
+  filesPanel?: ReactNode | ((runId: string | null) => ReactNode);
+}) {
   const toast = useToast();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
@@ -137,6 +145,8 @@ export default function Playground({ agent, filesPanel }: { agent: Agent; filesP
   const latest = turns.length ? turns[turns.length - 1] : null;
   const { events, done } = useRunEvents(latest?.id);
   const running = Boolean(latest && !isTerminal(latest.status) && !done);
+  const lastFinished = [...turns].reverse().find((t) => isTerminal(t.status) && (t !== latest || !running));
+  const files = typeof filesPanel === "function" ? filesPanel(lastFinished?.id ?? null) : filesPanel;
   const now = useNow(running);
   const { expand, toggleAll } = useExpandAll();
   // Follow new content (including a turn's final answer) while the reader is at the bottom.
@@ -256,7 +266,7 @@ export default function Playground({ agent, filesPanel }: { agent: Agent; filesP
 
   return (
     <ExpandContext.Provider value={expand}>
-      <div className={`pg ${filesPanel ? "pg-with-files" : ""}`} data-testid="playground">
+      <div className={`pg ${files ? "pg-with-files" : ""}`} data-testid="playground">
         <aside className="pg-sidebar" aria-label="Sessions">
           <div className="space-y-2 border-b border-neutral-200 p-3 dark:border-neutral-800">
             <label className="label mb-1 text-xs" htmlFor="pg-start">
@@ -408,8 +418,8 @@ export default function Playground({ agent, filesPanel }: { agent: Agent; filesP
           </div>
         </div>
 
-        {/* Files panel slot: a right-side workspace browser is mounted here by feat/playground-extras. */}
-        {filesPanel && <aside className="pg-files" aria-label="Files">{filesPanel}</aside>}
+        {/* Files panel slot: the workspace of the latest finished turn (AgentPage mounts FilesPanel here). */}
+        {files && <aside className="pg-files" aria-label="Files">{files}</aside>}
       </div>
     </ExpandContext.Provider>
   );
