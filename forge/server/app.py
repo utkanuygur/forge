@@ -19,9 +19,10 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from forge import db
+from forge import db, settings
+from forge.models_available import model_warning
 from forge.provenance import lesson_provenance
-from forge.server import authoring, evals, observability, obslog, runs
+from forge.server import authoring, evals, observability, obslog, runs, settings_api
 from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
@@ -38,6 +39,7 @@ TERMINAL = {"succeeded", "failed", "timeout"}
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    settings.snapshot()  # restart settings report needs_restart once their value differs from this
     obslog.configure()
     runs.reset_manager()
     db.fail_interrupted_runs()
@@ -156,7 +158,10 @@ async def create_agent(body: AgentCreate) -> dict:
     for c in body.eval_cases or []:
         db.create_eval_case(agent["id"], c.name, c.input, c.checker_type, c.checker, c.split, c.seed_files)
     agent = db.set_prod_version(agent["id"], v["id"], "create")
-    return {**agent_view(agent), "api_key": key}  # type: ignore[arg-type]
+    out = {**agent_view(agent), "api_key": key}  # type: ignore[arg-type]
+    if warning := await model_warning(v["model"]):  # saved anyway: the model may be pulled later
+        out["warning"] = warning
+    return out
 
 
 @api.get("/agents", dependencies=[Depends(require_local)])
@@ -197,7 +202,10 @@ async def create_version(slug: str, body: VersionCreate, request: Request) -> di
     if meta:
         db.set_lesson_meta(v["id"], meta)
         v = db.get_version(v["id"])
-    return version_view(v)  # type: ignore[arg-type]
+    out = version_view(v)  # type: ignore[arg-type]
+    if warning := await model_warning(out["model"]):
+        out["warning"] = warning
+    return out
 
 
 @api.get("/agents/{slug}/versions/{n}")
@@ -562,6 +570,7 @@ app.include_router(api)
 app.include_router(observability.api)
 app.include_router(observability.ops)
 app.include_router(authoring.router)  # /v1/agent-drafts and /v1/agents/{slug}/prune (before the SPA catch-all)
+app.include_router(settings_api.router)  # /v1/settings and /v1/models/available
 
 # ---------------------------------------------------------------- SPA
 

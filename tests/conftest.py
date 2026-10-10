@@ -58,3 +58,20 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(pytest.mark.skip(reason="live model test: run with `pytest -m live` or FORGE_LIVE=1"))
         elif item.get_closest_marker("docker") and (why := docker_unavailable()):
             item.add_marker(pytest.mark.skip(reason=why))
+
+
+@pytest.fixture(autouse=True)
+def _no_model_list_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """In-process model availability checks (agent creation warnings) never reach a real provider in tests:
+    every provider looks unreachable unless a test installs its own transport. Live tests are left alone."""
+    if request.node.get_closest_marker("live"):
+        return
+    import httpx
+
+    from forge import models_available
+
+    def refuse(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("network disabled in tests", request=req)
+
+    monkeypatch.setattr(models_available, "TRANSPORT", httpx.MockTransport(refuse))
+    models_available.clear_cache()

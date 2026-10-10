@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any, Awaitable, Callable
 
 import httpx
 
-from forge import db
+from forge import db, settings
 from forge.server import obslog
 from forge.server.views import run_view
 from forge.types import AgentVersion, Event, Executor, RunResult
@@ -22,7 +21,8 @@ After = Callable[[Executor, RunResult], Awaitable[Any]]
 
 class RunManager:
     def __init__(self, max_concurrency: int | None = None) -> None:
-        self.semaphore = asyncio.Semaphore(max_concurrency or int(os.environ.get("FORGE_MAX_CONCURRENCY") or 8))
+        # max_concurrent_runs is a restart setting: the bound is fixed when the manager is created at startup.
+        self.semaphore = asyncio.Semaphore(max_concurrency or int(settings.get("max_concurrent_runs") or 8))
         self.tasks: dict[str, asyncio.Task] = {}
         self.after_results: dict[str, Any] = {}
 
@@ -67,7 +67,7 @@ class RunManager:
             executor: Executor | None = None
             result: RunResult | None = None
             try:
-                executor = make_executor(os.environ.get("FORGE_EXECUTOR") or "docker",  # type: ignore[arg-type]
+                executor = make_executor(settings.get("executor") or "docker",  # type: ignore[arg-type]
                                          network=bool(version.get("network")))
                 secrets = db.get_secrets(agent["id"])
                 await executor.start(seed, dict(secrets))
@@ -79,7 +79,9 @@ class RunManager:
                     db.append_event(run_id, e.seq, e.ts, e.type, e.payload)
 
                 result = await run_agent(v, input, run_id=run_id, provider=make_provider(v.model), executor=executor,
-                                         emit=emit, secrets=secrets or None, temperature=temperature)
+                                         emit=emit, secrets=secrets or None, temperature=temperature,
+                                         max_turns=int(settings.get("run_max_turns")),
+                                         max_seconds=int(settings.get("run_max_seconds")))
                 if after is not None:
                     try:
                         self.after_results[run_id] = await after(executor, result)

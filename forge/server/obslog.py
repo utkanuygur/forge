@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
 import time
 from typing import Any
@@ -26,9 +25,11 @@ class JsonFormatter(logging.Formatter):
 
 
 def enabled() -> bool:
-    flag = os.environ.get("FORGE_LOG_JSON")
-    if flag is not None and flag != "":
-        return flag == "1"
+    from forge import settings
+
+    mode = settings.get("log_json")  # auto, on or off; FORGE_LOG_JSON=1/0 maps to on/off
+    if mode in ("on", "off"):
+        return mode == "on"
     return not sys.stderr.isatty()
 
 
