@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { CalendarClock, Github, MessageSquare, Play, Trash2 } from "lucide-react";
-import { errMsg, fmtTime, type Agent } from "../../api";
+import { errMsg, fmtTime, type Agent, type CronSuggestion, type TriggerTemplateSuggestion } from "../../api";
+import AssistButton from "../../components/AssistButton";
 import StatusPill from "../../components/StatusPill";
 import { Badge, CopyButton, ErrorBox, Section, Toggle } from "../../components/ui";
 import { describeCron, formatFireTime, localTimeZone, nextTimes, PRESETS, validTimeZone } from "../../lib/cron";
@@ -86,9 +87,44 @@ export function SchedulePreview({ cron, timezone, now = Date.now() }: { cron: st
   );
 }
 
-function ScheduleForm({ slug, onDone }: { slug: string; onDone: (t: Trigger) => void }) {
+/** A Generate button for a trigger's input template (assist kind "trigger_template"). */
+function TemplateAssist({
+  slug,
+  source,
+  event,
+  value,
+  onChange,
+  inputRef,
+}: {
+  slug: string;
+  source: "github" | "slack";
+  event?: string;
+  value: string;
+  onChange: (v: string) => void;
+  inputRef: React.RefObject<HTMLTextAreaElement | HTMLInputElement>;
+}) {
+  return (
+    <AssistButton<TriggerTemplateSuggestion>
+      kind="trigger_template"
+      slug={slug}
+      input={{ source, ...(event ? { event } : {}), ...(value.trim() ? { current: value } : {}) }}
+      resultText={(r) => r.template}
+      onResult={(r) => onChange(r.template)}
+      undoValue={value}
+      onUndo={onChange}
+      inputRef={inputRef}
+      ariaLabel="Generate a template from the event"
+      className="mt-2"
+    />
+  );
+}
+
+export function ScheduleForm({ slug, onDone }: { slug: string; onDone: (t: Trigger) => void }) {
   const [cron, setCron] = useState(PRESETS[0].cron);
   const [timezone, setTimezone] = useState(localTimeZone());
+  const [plain, setPlain] = useState("");
+  const [suggested, setSuggested] = useState<CronSuggestion | null>(null);
+  const plainRef = useRef<HTMLInputElement>(null);
   const [template, setTemplate] = useState("Write the daily status report for {date}.");
   const [skip, setSkip] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -114,6 +150,65 @@ function ScheduleForm({ slug, onDone }: { slug: string; onDone: (t: Trigger) => 
 
   return (
     <div className="space-y-4">
+      <div>
+        <label className="label" htmlFor="schedule-plain">
+          Describe the schedule
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            id="schedule-plain"
+            ref={plainRef}
+            className="input min-w-[220px] flex-1"
+            placeholder="every weekday at 8:30 in the morning"
+            value={plain}
+            onChange={(e) => setPlain(e.target.value)}
+          />
+          <AssistButton<CronSuggestion>
+            kind="cron"
+            slug={slug}
+            input={{ text: plain, timezone: validTimeZone(timezone) ? timezone : localTimeZone() }}
+            resultText={(r) => `${r.cron} ${r.timezone}`}
+            onResult={(r) => {
+              setCron(r.cron);
+              setTimezone(r.timezone);
+              setSuggested(r);
+            }}
+            undoValue={`${cron} ${timezone}`}
+            onUndo={(previous) => {
+              const i = previous.lastIndexOf(" ");
+              setCron(previous.slice(0, i));
+              setTimezone(previous.slice(i + 1));
+              setSuggested(null);
+            }}
+            disabled={!plain.trim()}
+            inputRef={plainRef}
+            ariaLabel="Generate the schedule"
+          />
+          {suggested && suggested.cron === cron && (
+            <button
+              type="button"
+              className="text-xs font-medium text-accent-700 underline underline-offset-2 dark:text-accent-400"
+              onClick={() => setSuggested(null)}
+            >
+              Hide
+            </button>
+          )}
+        </div>
+        {suggested && suggested.cron === cron && (
+          <div className="mt-2 text-xs text-neutral-600 dark:text-neutral-400" data-testid="cron-suggestion">
+            <p>
+              <code className="font-mono">{suggested.cron}</code> ({suggested.timezone}): {suggested.explanation}
+            </p>
+            {suggested.next_fire_times.length > 0 && (
+              <ul className="mt-1 list-disc pl-5">
+                {suggested.next_fire_times.slice(0, 3).map((t) => (
+                  <li key={t}>{formatFireTime(t * 1000, suggested.timezone)}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Preset">
           {(id) => (
@@ -155,6 +250,7 @@ function GithubForm({ slug, onDone }: { slug: string; onDone: (t: Trigger, secre
   const [command, setCommand] = useState("/forge");
   const [branches, setBranches] = useState("");
   const [template, setTemplate] = useState("");
+  const templateRef = useRef<HTMLTextAreaElement>(null);
   const [token, setToken] = useState("");
   const [commentBack, setCommentBack] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -217,13 +313,17 @@ function GithubForm({ slug, onDone }: { slug: string; onDone: (t: Trigger, secre
         hint="Optional. Fields: {repo} {title} {body} {comment} {pr_url} {url} {number} {sender} {branch} {commits}"
       >
         {(id) => (
-          <textarea
-            id={id}
-            className="input min-h-[72px] font-mono text-xs"
-            value={template}
-            onChange={(e) => setTemplate(e.target.value)}
-            placeholder="Fix GitHub issue {repo}#{number}: {title}&#10;&#10;{body}"
-          />
+          <>
+            <textarea
+              id={id}
+              ref={templateRef}
+              className="input min-h-[72px] font-mono text-xs"
+              value={template}
+              onChange={(e) => setTemplate(e.target.value)}
+              placeholder="Fix GitHub issue {repo}#{number}: {title}&#10;&#10;{body}"
+            />
+            <TemplateAssist slug={slug} source="github" event={events[0]} value={template} onChange={setTemplate} inputRef={templateRef} />
+          </>
         )}
       </Field>
       <Field label="GitHub token" hint="Optional. Lets Forge post the result as a comment. Needs write access to issues and pull requests.">
@@ -240,10 +340,11 @@ function GithubForm({ slug, onDone }: { slug: string; onDone: (t: Trigger, secre
 
 // ---------------------------------------------------------------- Slack
 
-function SlackForm({ slug, onDone }: { slug: string; onDone: (t: Trigger) => void }) {
+export function SlackForm({ slug, onDone }: { slug: string; onDone: (t: Trigger) => void }) {
   const [secret, setSecret] = useState("");
   const [token, setToken] = useState("");
   const [template, setTemplate] = useState("{text}");
+  const templateRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -277,7 +378,12 @@ function SlackForm({ slug, onDone }: { slug: string; onDone: (t: Trigger) => voi
         </Field>
       </div>
       <Field label="Input template" hint="{text} is what the user typed. Also {user} and {channel}.">
-        {(id) => <input id={id} className="input font-mono" value={template} onChange={(e) => setTemplate(e.target.value)} />}
+        {(id) => (
+          <>
+            <input id={id} ref={templateRef} className="input font-mono" value={template} onChange={(e) => setTemplate(e.target.value)} />
+            <TemplateAssist slug={slug} source="slack" value={template} onChange={setTemplate} inputRef={templateRef} />
+          </>
+        )}
       </Field>
       <ErrorBox error={error} />
       <button className="btn-primary" onClick={save} disabled={busy}>
