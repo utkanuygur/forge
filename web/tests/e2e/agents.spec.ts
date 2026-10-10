@@ -8,6 +8,7 @@ test.describe("Create agents", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "New agent" }).click();
     const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Start blank" }).click();
     await expect(dialog.getByRole("button", { name: "Blank" })).toBeVisible();
     await dialog.getByLabel("Name").fill(name);
     await dialog.getByLabel("Slug").fill(slug);
@@ -52,6 +53,7 @@ test.describe("Create agents", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "New agent" }).click();
     const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Start blank" }).click();
     await dialog.getByRole("button", { name: t.name, exact: true }).click();
     await expect(dialog.getByLabel("Name")).toHaveValue(t.name);
     await expect(dialog.getByLabel("Description")).toHaveValue(t.description);

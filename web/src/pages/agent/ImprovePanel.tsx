@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Scissors, Sparkles } from "lucide-react";
 import { api, errMsg, fmtTime, type Agent, type Improvement } from "../../api";
 import StatusPill from "../../components/StatusPill";
 import { useToast } from "../../components/Toast";
-import { Empty, ErrorBox, Section } from "../../components/ui";
+import { Badge, Empty, ErrorBox, Section } from "../../components/ui";
 import ImprovementView from "./ImprovementView";
 
-export default function ImprovePanel({ agent, hasCases, onChanged }: { agent: Agent; hasCases: boolean; onChanged: () => void }) {
+export default function ImprovePanel({
+  agent,
+  hasCases,
+  hasTrainCases = hasCases,
+  prodLessons = 0,
+  onChanged,
+}: {
+  agent: Agent;
+  hasCases: boolean;
+  hasTrainCases?: boolean;
+  prodLessons?: number;
+  onChanged: () => void;
+}) {
   const toast = useToast();
   const [list, setList] = useState<Improvement[] | null>(null);
   const [current, setCurrent] = useState<Improvement | null>(null);
@@ -64,6 +76,20 @@ export default function ImprovePanel({ agent, hasCases, onChanged }: { agent: Ag
     }
   }
 
+  async function startPrune() {
+    setBusy(true);
+    setError(null);
+    try {
+      const im = await api.prune(agent.slug);
+      setCurrent(im);
+      loadList();
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function promote(n: number) {
     setError(null);
     try {
@@ -81,14 +107,28 @@ export default function ImprovePanel({ agent, hasCases, onChanged }: { agent: Ag
     <Section
       title="Improve"
       actions={
-        <button className="btn-primary" onClick={start} disabled={busy || running || !hasCases}>
-          <Sparkles className="h-4 w-4" /> {running ? "Improving..." : busy ? "Starting..." : "Improve"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            className="btn-secondary"
+            onClick={startPrune}
+            disabled={busy || running || !hasTrainCases || prodLessons < 2}
+            title={prodLessons < 2 ? "Pruning needs at least 2 lessons in production." : undefined}
+          >
+            <Scissors className="h-4 w-4" /> {running && current?.kind === "prune" ? "Pruning..." : "Prune lessons"}
+          </button>
+          <button className="btn-primary" onClick={start} disabled={busy || running || !hasCases}>
+            <Sparkles className="h-4 w-4" /> {running && current?.kind !== "prune" ? "Improving..." : busy ? "Starting..." : "Improve"}
+          </button>
+        </div>
       }
     >
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         The optimizer studies failing train cases and negative feedback, proposes lesson changes as a candidate version, then evaluates
         base and candidate on every case. A candidate is eligible only if it passes more cases and regresses none.
+      </p>
+      <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="prune-explainer">
+        Prune lessons tries production without each lesson on train cases and drops the ones that never helped, for a smaller prompt
+        at equal quality.
       </p>
       <ErrorBox error={error} onDismiss={() => setError(null)} />
       {current && (
@@ -114,6 +154,7 @@ export default function ImprovePanel({ agent, hasCases, onChanged }: { agent: Ag
                   }`}
                 >
                   <StatusPill status={im.status} />
+                  {im.kind === "prune" && <Badge tone="amber">prune</Badge>}
                   <span className="font-medium">
                     v{im.base_version} to {im.candidate_version ? `v${im.candidate_version}` : "..."}
                   </span>

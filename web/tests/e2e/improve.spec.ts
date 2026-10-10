@@ -24,6 +24,7 @@ test("FR9 FR10: evaluate, improve, compare candidate on train and holdout, promo
   await page.goto("/");
   await page.getByRole("button", { name: "New agent" }).click();
   const form = page.getByRole("dialog");
+  await form.getByRole("button", { name: "Start blank" }).click();
   await form.getByLabel("Name").fill(`Improver ${slug}`);
   await form.getByLabel("Slug").fill(slug);
   await form.getByLabel("Instructions").fill("Finish the task.");

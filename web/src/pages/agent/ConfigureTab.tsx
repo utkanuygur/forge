@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FileText, Plus, Trash2 } from "lucide-react";
-import { api, errMsg, fmtTime, type Agent, type Version } from "../../api";
+import { Link } from "react-router-dom";
+import { api, errMsg, fmtTime, type Agent, type LessonMeta, type Version } from "../../api";
 import { ModelField, NetworkField, ToolsField } from "../../components/ConfigFields";
 import { useToast } from "../../components/Toast";
 import { Badge, CreatedByBadge, Empty, ErrorBox, Modal, Section, Toggle } from "../../components/ui";
@@ -39,6 +40,48 @@ function SeedFileModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+export function fmtAge(ts: number | undefined, now = Date.now() / 1000): string {
+  if (!ts) return "";
+  const s = Math.max(0, now - ts);
+  if (s < 90) return "just now";
+  if (s < 5400) return `${Math.round(s / 60)} minutes ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} hours ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+export function LessonOrigin({ meta }: { meta: LessonMeta | undefined }) {
+  const parts: string[] = [];
+  if (meta?.created_in_version) {
+    const who = meta.origin === "human" ? "by hand" : "by the optimizer";
+    parts.push(`${meta.op === "edit" ? "Edited" : "Added"} in v${meta.created_in_version} ${who}`);
+    const age = fmtAge(meta.created_at);
+    if (age) parts.push(age);
+  } else {
+    parts.push("Origin not recorded");
+  }
+  const runs = meta?.evidence_run_ids ?? [];
+  const p = meta?.pruning;
+  return (
+    <div data-testid="lesson-origin" className="mt-0.5 space-y-0.5 text-xs text-neutral-500">
+      <div className="flex flex-wrap items-center gap-x-1.5">
+        <span>{parts.join(" · ")}</span>
+        {runs.length > 0 && <span>· evidence</span>}
+        {runs.slice(0, 3).map((id) => (
+          <Link key={id} to={`/runs/${id}`} className="font-mono text-accent-600 hover:underline dark:text-accent-400">
+            {id}
+          </Link>
+        ))}
+      </div>
+      {p && (
+        <div data-testid="lesson-pruning" data-verdict={p.verdict} className={p.verdict === "unhelpful" ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"}>
+          {p.verdict === "unhelpful" ? "Pruning found no measurable effect: " : "Kept after pruning: "}
+          {p.evidence}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -145,8 +188,9 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
               ) : (
                 <ol className="list-decimal space-y-1.5 rounded-lg bg-neutral-50 py-3 pl-8 pr-4 text-sm dark:bg-neutral-950">
                   {prod.lessons.map((l, i) => (
-                    <li key={i} className="text-neutral-700 dark:text-neutral-300">
-                      {l}
+                    <li key={i} data-testid="lesson" className="text-neutral-700 dark:text-neutral-300">
+                      <span>{l}</span>
+                      <LessonOrigin meta={prod.lesson_meta?.[l]} />
                     </li>
                   ))}
                 </ol>

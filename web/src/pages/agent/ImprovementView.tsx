@@ -1,8 +1,38 @@
 import { Link } from "react-router-dom";
 import { Check, ExternalLink, Minus, Pencil, Plus, X } from "lucide-react";
-import type { CaseResult, Improvement, LessonDiff, Score } from "../../api";
+import type { Ablation, CaseResult, Improvement, LessonDiff, Score } from "../../api";
 import StatusPill from "../../components/StatusPill";
-import { ErrorBox, SplitBadge } from "../../components/ui";
+import { Badge, ErrorBox, SplitBadge } from "../../components/ui";
+
+export const PRUNE_RULE =
+  "Pruning rule: a candidate is eligible when no case regresses and it passes at least as many cases as base. The goal is a smaller prompt at equal quality.";
+
+const VERDICT: Record<Ablation["verdict"], { label: string; tone: "red" | "green" | "neutral" }> = {
+  unhelpful: { label: "removed", tone: "red" },
+  helpful: { label: "kept", tone: "green" },
+  unknown: { label: "kept", tone: "neutral" },
+  not_ablated: { label: "not tested", tone: "neutral" },
+};
+
+function AblationList({ ablations }: { ablations: Ablation[] }) {
+  return (
+    <div>
+      <h4 className="mb-2 text-sm font-medium">Ablation on train cases</h4>
+      <ul className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+        {ablations.map((a) => (
+          <li key={a.lesson} data-testid="ablation" data-verdict={a.verdict} className="flex flex-wrap items-start gap-2 px-3 py-2 text-sm">
+            <Badge tone={VERDICT[a.verdict].tone}>{VERDICT[a.verdict].label}</Badge>
+            <span className="min-w-0 flex-1">{a.lesson}</span>
+            <span className="w-full text-xs text-neutral-500 sm:w-auto">
+              {a.evidence}
+              {a.version ? ` (v${a.version})` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export function ScoreText({ score }: { score: Score }) {
   return (
@@ -115,11 +145,13 @@ export default function ImprovementView({
   const name = (id: string) => im.cases.find((c) => c.case_id === id)?.name ?? id;
   const sortedCases = [...im.cases].sort((a, b) => (a.split === b.split ? a.name.localeCompare(b.name) : a.split === "train" ? -1 : 1));
   const canPromote = im.status === "eligible" && im.candidate_version !== null && im.candidate_version !== prodVersion;
+  const prune = im.kind === "prune";
 
   return (
-    <div className="card space-y-6 p-5" data-testid="improvement" data-status={im.status}>
+    <div className="card space-y-6 p-5" data-testid="improvement" data-status={im.status} data-kind={im.kind ?? "improve"}>
       <div className="flex flex-wrap items-center gap-3">
         <StatusPill status={im.status} />
+        {prune && <Badge tone="amber">Lesson pruning</Badge>}
         <span className="font-medium">
           base v{im.base_version} vs candidate {im.candidate_version ? `v${im.candidate_version}` : "(drafting)"}
         </span>
@@ -131,12 +163,23 @@ export default function ImprovementView({
           </button>
         )}
       </div>
+      {prune && (
+        <p data-testid="prune-rule" className="text-sm text-neutral-600 dark:text-neutral-400">
+          {PRUNE_RULE}
+        </p>
+      )}
       {im.status === "running" && (
-        <p className="text-sm text-blue-600 dark:text-blue-400">Optimizer and evaluations are running. This updates every 2 seconds.</p>
+        <p className="text-sm text-blue-600 dark:text-blue-400">
+          {prune
+            ? "Trying production without each lesson on train cases, then evaluating the pruned candidate. This updates every 2 seconds."
+            : "Optimizer and evaluations are running. This updates every 2 seconds."}
+        </p>
       )}
       {im.status === "rejected" && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Rejected: the candidate did not pass more cases than base without regressions.
+          {prune
+            ? "Rejected: the pruned candidate lost a case that base passed, or there was nothing to remove."
+            : "Rejected: the candidate did not pass more cases than base without regressions."}
         </p>
       )}
       <ErrorBox error={im.error} />
@@ -179,7 +222,7 @@ export default function ImprovementView({
         </div>
       )}
 
-      {(im.newly_passing.length > 0 || im.regressions.length > 0) && (
+      {(im.newly_passing.length > 0 || im.regressions.length > 0 || (prune && im.candidate_version !== null && im.status !== "running")) && (
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <h4 className="mb-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">Newly passing ({im.newly_passing.length})</h4>
@@ -212,9 +255,11 @@ export default function ImprovementView({
         </div>
       )}
 
+      {prune && im.ablations && im.ablations.length > 0 && <AblationList ablations={im.ablations} />}
+
       {im.lessons_diff.length > 0 && (
         <div>
-          <h4 className="mb-2 text-sm font-medium">Lesson changes</h4>
+          <h4 className="mb-2 text-sm font-medium">{prune ? `Lessons removed (${im.lessons_diff.length})` : "Lesson changes"}</h4>
           <ul className="space-y-2">
             {im.lessons_diff.map((d, i) => (
               <LessonOp key={i} d={d} />
