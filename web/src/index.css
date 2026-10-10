@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { -webkit-font-smoothing: antialiased; }
+  body { @apply bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100; }
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm
+      placeholder:text-neutral-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/20
+      dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500;
+  }
+  .label { @apply mb-1.5 block text-sm font-medium text-neutral-700 dark:text-neutral-300; }
+  .card { @apply rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900; }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition
+      disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40;
+  }
+  .btn-primary { @apply btn bg-accent-600 text-white hover:bg-accent-700; }
+  .btn-secondary {
+    @apply btn border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-50
+      dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800;
+  }
+  .btn-ghost { @apply btn text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800; }
+  .btn-sm { @apply px-2.5 py-1.5 text-xs; }
+  .mono-block {
+    @apply overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-neutral-100 p-3 font-mono text-xs leading-relaxed
+      text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200;
+  }
+  .th { @apply px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400; }
+  .td { @apply px-4 py-3 align-top text-sm; }
+}

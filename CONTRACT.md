@@ -109,6 +109,12 @@ Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<mes
 
 Builder UI calls runtime endpoints without auth when the request comes from localhost.
 
+Auth amendments (server implementation):
+- Builder routes require a localhost client or that agent's API key; `GET/POST /agents` are localhost only; `/templates` is open; `FORGE_TRUST_ALL=1` disables checks.
+- A share token may `GET /agents/{slug}` and its versions (for the share page) and start/read its own share runs; it gets 401 on builder, eval and improve routes. With a share token, `GET /agents/{slug}/runs` lists only share-sourced runs.
+- Share page URL: `/s/{slug}?share=<token>`.
+- Extras: Run includes `eval_case_id`; eval results include `"running": bool`; `PUT secrets` with an empty value deletes it.
+
 ### Improvement
 
 | Method | Path | Body | Returns |

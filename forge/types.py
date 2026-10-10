@@ -178,4 +178,5 @@ class RunResult(BaseModel):
 #
 #   def make_provider(model: str) -> Provider
 #   def make_executor(kind: Literal["docker", "local"], *, network: bool = False,
-#                     root: str | None = None, mode: Literal["ask", "auto"] = "auto") -> Executor
+#                     root: str | None = None, mode: Literal["ask", "auto"] = "auto",
+#                     confirm: Callable[[str], bool | Awaitable[bool]] | None = None) -> Executor
