@@ -1,56 +1,174 @@
-# Runs every deterministic test layer (see TESTING.md). Live model tests are excluded: they need API keys.
+# One check per deterministic test layer (see TESTING.md), run in parallel. Live model tests are excluded:
+# they need API keys. The forge-sandbox image is built once (sandbox-image) and shared as an artifact.
 name: CI
 
 on:
   push:
     branches: [master, main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+
 jobs:
-  test:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
           enable-cache: true
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - run: uv sync --locked
+      - run: npm ci
+        working-directory: web
+      - name: Compile Python
+        run: uv run python -m compileall -q forge
+      - name: Type check web
+        run: npx tsc -b
+        working-directory: web
 
-      - name: Install dependencies
-        run: |
-          uv sync --locked
-          cd web && npm ci
+  python-unit:
+    name: Python unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - name: "Layer 1: unit"
+        run: uv run pytest -q -m "not docker and not e2e and not live"
 
-      - name: Build sandbox image
-        run: docker build -q -t forge-sandbox sandbox/
+  web-unit:
+    name: Web unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: "Layer 4a: web unit"
+        run: npm test
+        working-directory: web
 
-      - name: "Layers 1 to 3: unit, sandbox, full stack"
-        run: uv run pytest -q -m "not live"
+  sandbox-image:
+    name: Sandbox image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: sandbox
+          tags: forge-sandbox:latest
+          cache-from: type=gha,scope=forge-sandbox
+          cache-to: type=gha,mode=max,scope=forge-sandbox
+          outputs: type=docker,dest=/tmp/forge-sandbox.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-sandbox-image
+          path: /tmp/forge-sandbox.tar
+          retention-days: 1
+          compression-level: 1
 
-      - name: "Layer 4a: web unit tests"
-        run: cd web && npm test
+  sandbox:
+    name: Sandbox
+    needs: sandbox-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: actions/download-artifact@v4
+        with:
+          name: forge-sandbox-image
+          path: /tmp
+      - name: Load sandbox image
+        # Docker tests skip themselves when the image is missing; fail loudly instead.
+        run: docker load -i /tmp/forge-sandbox.tar && docker image inspect forge-sandbox > /dev/null
+      - name: "Layer 2: sandbox"
+        run: uv run pytest -q -m "docker and not e2e"
 
-      - name: "Layer 4b: browser tests"
-        run: |
-          cd web
-          npx playwright install --with-deps chromium
-          npm run test:e2e
+  full-stack:
+    name: Full stack
+    needs: sandbox-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: actions/download-artifact@v4
+        with:
+          name: forge-sandbox-image
+          path: /tmp
+      - name: Load sandbox image
+        run: docker load -i /tmp/forge-sandbox.tar && docker image inspect forge-sandbox > /dev/null
+      - name: "Layer 3: full stack"
+        run: uv run pytest -q -m e2e
 
-      - name: "Layer 5: demo eval checkers"
-        run: uv run python demo/verify.py
-
+  browser:
+    name: Browser
+    needs: sandbox-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: uv sync --locked
+      - run: npm ci
+        working-directory: web
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - uses: actions/download-artifact@v4
+        with:
+          name: forge-sandbox-image
+          path: /tmp
+      - name: Load sandbox image
+        run: docker load -i /tmp/forge-sandbox.tar && docker image inspect forge-sandbox > /dev/null
+      - name: "Layer 4b: browser"
+        run: npm run test:e2e -- --workers=2
+        working-directory: web
       - name: Upload browser test report on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -60,3 +178,73 @@ jobs:
             web/playwright-report
             web/test-results
           retention-days: 7
+
+  demo-checks:
+    name: Demo checks
+    needs: sandbox-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: actions/download-artifact@v4
+        with:
+          name: forge-sandbox-image
+          path: /tmp
+      - name: Load sandbox image
+        run: docker load -i /tmp/forge-sandbox.tar && docker image inspect forge-sandbox > /dev/null
+      - name: "Layer 5: demo eval checkers"
+        run: uv run python demo/verify.py --runner docker
+      - name: "Layer 5b: example checkers"
+        run: uv run python demo/verify_examples.py
+
+  # macOS minutes cost more on private repos: build the desktop server only when it can have changed.
+  desktop-changes:
+    name: Desktop changes
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            desktop:
+              - "desktop/**"
+              - "forge/**"
+              - "pyproject.toml"
+              - "uv.lock"
+              - ".github/workflows/ci.yml"
+
+  desktop-compat:
+    name: Desktop macOS 12 compat
+    needs: desktop-changes
+    if: >-
+      !cancelled() && (github.event_name == 'workflow_dispatch' ||
+      (needs.desktop-changes.outputs.desktop == 'true' &&
+       (github.event_name == 'pull_request' || github.ref == 'refs/heads/master')))
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Stub web build
+        # The check covers the frozen server's binaries; the web bundle is only copied as data.
+        run: mkdir -p web/dist && echo '<!doctype html><title>Forge</title>' > web/dist/index.html
+      - name: Build server and check macOS 12 compatibility
+        run: bash desktop/scripts/build-server.sh
+        env:
+          SKIP_WEB_BUILD: "1"
+          FORGE_BUILD_VENV: ${{ runner.temp }}/forge-build-venv
