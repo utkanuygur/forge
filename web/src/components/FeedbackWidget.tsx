@@ -73,6 +73,7 @@ export default function FeedbackWidget({
       {rating && (
         <div className="space-y-2">
           <textarea
+            aria-label="Feedback comment"
             className="input min-h-[72px]"
             placeholder={rating === -1 ? "What should it have done differently?" : "Anything worth noting? (optional)"}
             value={comment}

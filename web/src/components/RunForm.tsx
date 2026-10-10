@@ -46,6 +46,7 @@ export default function RunForm({
   return (
     <form onSubmit={submit} className="space-y-3">
       <textarea
+        aria-label="Task"
         className="input min-h-[110px]"
         placeholder={placeholder}
         value={input}

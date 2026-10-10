@@ -22,14 +22,21 @@ const DOTS: Record<string, string> = {
   rejected: "bg-neutral-400",
 };
 
+/** Badge and dot classes for a status; unknown statuses fall back to the neutral queued style. */
+export function statusClasses(status: string): { pill: string; dot: string } {
+  const known = Object.prototype.hasOwnProperty.call(STYLES, status);
+  return known ? { pill: STYLES[status], dot: DOTS[status] } : { pill: STYLES.queued, dot: DOTS.queued };
+}
+
 export default function StatusPill({ status }: { status: RunStatus | ImprovementStatus | string }) {
+  const { pill, dot } = statusClasses(status);
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        STYLES[status] ?? STYLES.queued
-      }`}
+      data-testid="status-pill"
+      data-status={status}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${pill}`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${DOTS[status] ?? DOTS.queued}`} />
+      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
       {status}
     </span>
   );

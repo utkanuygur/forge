@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { AlertCircle, Check, Copy, X } from "lucide-react";
 
 export function ErrorBox({ error, onDismiss }: { error: string | null | undefined; onDismiss?: () => void }) {
@@ -123,6 +123,7 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const titleId = useId();
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6" onClick={onClose}>
       <div
@@ -130,9 +131,10 @@ export function Modal({
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
       >
         <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-4 dark:border-neutral-800">
-          <h2 className="text-base font-semibold">{title}</h2>
+          <h2 id={titleId} className="text-base font-semibold">{title}</h2>
           <button onClick={onClose} className="btn-ghost btn-sm" aria-label="Close">
             <X className="h-4 w-4" />
           </button>

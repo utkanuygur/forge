@@ -29,7 +29,7 @@ export default function SaveAsEval({ runId }: { runId: string }) {
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         Turn this run into an evaluation case. The checker defaults to a judge rubric built from the feedback comment.
       </p>
-      <input className="input" placeholder="Case name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+      <input className="input" aria-label="Case name" placeholder="Case name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="inline-flex rounded-lg border border-neutral-300 p-0.5 dark:border-neutral-700">
           {(["train", "holdout"] as Split[]).map((s) => (

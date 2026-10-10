@@ -16,7 +16,7 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : JSON.stringify(v, null, 2);
 }
 
-function group(events: ForgeEvent[]): Item[] {
+export function group(events: ForgeEvent[]): Item[] {
   const items: Item[] = [];
   const byId = new Map<string, ToolPair>();
   for (const ev of events) {
@@ -35,8 +35,15 @@ function group(events: ForgeEvent[]): Item[] {
   return items;
 }
 
-function argsPreview(name: string, args: Record<string, unknown>): string {
-  if (name === "bash" && typeof args.command === "string") return args.command;
+/** The bash tool's argument is `cmd` (forge/loop.py); accept `command` too for older traces. */
+export function bashCommand(args: Record<string, unknown>): string {
+  if (typeof args.cmd === "string") return args.cmd;
+  if (typeof args.command === "string") return args.command;
+  return "";
+}
+
+export function argsPreview(name: string, args: Record<string, unknown>): string {
+  if (name === "bash" && bashCommand(args)) return bashCommand(args);
   if (typeof args.path === "string") return args.path;
   const s = JSON.stringify(args);
   return s.length > 80 ? s.slice(0, 80) + "..." : s;
@@ -50,6 +57,9 @@ function ToolCard({ pair, simple }: { pair: ToolPair; simple?: boolean }) {
   const output = str(pair.result?.payload.output);
   return (
     <div
+      data-testid="tool-card"
+      data-tool={name}
+      data-error={isErr ? "true" : undefined}
       className={`rounded-lg border ${
         isErr ? "border-red-200 dark:border-red-900" : "border-neutral-200 dark:border-neutral-800"
       } bg-white dark:bg-neutral-900`}
@@ -76,7 +86,7 @@ function ToolCard({ pair, simple }: { pair: ToolPair; simple?: boolean }) {
               <pre className="mono-block">{JSON.stringify(args, null, 2)}</pre>
             </div>
           )}
-          {simple && name === "bash" && <pre className="mono-block">{str(args.command)}</pre>}
+          {simple && name === "bash" && <pre className="mono-block">{bashCommand(args)}</pre>}
           {pair.result && (
             <div>
               <div className="mb-1 text-xs font-medium text-neutral-500">Output</div>

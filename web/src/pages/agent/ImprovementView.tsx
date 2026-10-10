@@ -44,6 +44,7 @@ function ScoreCard({ split, im }: { split: "train" | "holdout"; im: Improvement 
   const worse = base && cand && cand.passed < base.passed;
   return (
     <div
+      data-testid={`improvement-score-${split}`}
       className={`rounded-xl border p-4 ${
         holdout
           ? "border-amber-300 bg-amber-50/50 ring-1 ring-amber-200 dark:border-amber-800 dark:bg-amber-950/20 dark:ring-amber-900"
@@ -57,11 +58,11 @@ function ScoreCard({ split, im }: { split: "train" | "holdout"; im: Improvement 
       <div className="grid grid-cols-2 gap-4">
         <div>
           <div className="text-xs text-neutral-500">base v{im.base_version}</div>
-          <div className="text-2xl">{base ? <ScoreText score={base} /> : "..."}</div>
+          <div className="text-2xl" data-testid="base-score">{base ? <ScoreText score={base} /> : "..."}</div>
         </div>
         <div>
           <div className="text-xs text-neutral-500">candidate {im.candidate_version ? `v${im.candidate_version}` : ""}</div>
-          <div className={`text-2xl ${better ? "text-emerald-600 dark:text-emerald-400" : worse ? "text-red-600 dark:text-red-400" : ""}`}>
+          <div data-testid="candidate-score" className={`text-2xl ${better ? "text-emerald-600 dark:text-emerald-400" : worse ? "text-red-600 dark:text-red-400" : ""}`}>
             {cand ? <ScoreText score={cand} /> : "..."}
           </div>
         </div>
@@ -77,7 +78,7 @@ function LessonOp({ d }: { d: LessonDiff }) {
     remove: { icon: <Minus className="h-3.5 w-3.5" />, cls: "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40", text: "text-red-800 line-through dark:text-red-300" },
   }[d.op];
   return (
-    <li className={`rounded-lg border p-3 ${style.cls}`}>
+    <li data-testid="lesson-op" data-op={d.op} className={`rounded-lg border p-3 ${style.cls}`}>
       <div className="flex items-start gap-2">
         <span className={`mt-0.5 ${style.text}`}>{style.icon}</span>
         <div className="min-w-0 flex-1 space-y-1.5">
@@ -116,7 +117,7 @@ export default function ImprovementView({
   const canPromote = im.status === "eligible" && im.candidate_version !== null && im.candidate_version !== prodVersion;
 
   return (
-    <div className="card space-y-6 p-5">
+    <div className="card space-y-6 p-5" data-testid="improvement" data-status={im.status}>
       <div className="flex flex-wrap items-center gap-3">
         <StatusPill status={im.status} />
         <span className="font-medium">

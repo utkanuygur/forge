@@ -232,7 +232,7 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
           ) : (
             <ul className="space-y-2">
               {versions.map((v) => (
-                <li key={v.id} className="card p-3.5">
+                <li key={v.id} className="card p-3.5" data-testid="version-item" data-version={v.n}>
                   <div className="flex items-center gap-2">
                     <span className="font-semibold">v{v.n}</span>
                     <CreatedByBadge by={v.created_by} />

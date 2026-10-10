@@ -11,7 +11,7 @@ import { Badge, ErrorBox, Loading } from "./ui";
 
 function Panel({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <section className="card">
+    <section className="card" aria-label={title}>
       <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
         <h2 className="text-sm font-semibold">{title}</h2>
         {right}

@@ -52,6 +52,8 @@ export default function AgentsPage() {
           {agents.map((a) => (
             <Link
               key={a.id}
+              data-testid="agent-card"
+              data-slug={a.slug}
               to={`/agents/${a.slug}`}
               className="card group flex flex-col gap-2 p-5 transition hover:border-accent-300 hover:shadow-md dark:hover:border-accent-700"
             >

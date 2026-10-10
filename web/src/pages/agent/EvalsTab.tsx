@@ -32,23 +32,23 @@ function AddCaseForm({ slug, onDone }: { slug: string; onDone: () => void }) {
     <form onSubmit={submit} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
         <div>
-          <label className="label">Name</label>
-          <input className="input font-mono" required placeholder="add-refund-endpoint" value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="label" htmlFor="case-name">Name</label>
+          <input id="case-name" className="input font-mono" required placeholder="add-refund-endpoint" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
-          <label className="label">Split</label>
-          <select className="input" value={split} onChange={(e) => setSplit(e.target.value as Split)}>
+          <label className="label" htmlFor="case-split">Split</label>
+          <select id="case-split" className="input" value={split} onChange={(e) => setSplit(e.target.value as Split)}>
             <option value="train">train</option>
             <option value="holdout">holdout</option>
           </select>
         </div>
       </div>
       <div>
-        <label className="label">Input</label>
-        <textarea className="input min-h-[100px]" required value={input} onChange={(e) => setInput(e.target.value)} />
+        <label className="label" htmlFor="case-input">Input</label>
+        <textarea id="case-input" className="input min-h-[100px]" required value={input} onChange={(e) => setInput(e.target.value)} />
       </div>
       <div>
-        <label className="label">Checker</label>
+        <label className="label" htmlFor="case-checker">Checker</label>
         <div className="mb-2 inline-flex rounded-lg border border-neutral-300 p-0.5 dark:border-neutral-700">
           {["shell", "judge"].map((t) => (
             <button
@@ -64,6 +64,7 @@ function AddCaseForm({ slug, onDone }: { slug: string; onDone: () => void }) {
           ))}
         </div>
         <textarea
+          id="case-checker"
           className="input min-h-[80px] font-mono text-xs"
           required
           placeholder={checkerType === "shell" ? "make check && ! grep -rn 'print(' src" : "The answer cites the failing test and explains the fix."}
@@ -182,7 +183,7 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
           <div className="flex flex-wrap gap-3">
             {(["train", "holdout"] as const).map((s) =>
               results[s] ? (
-                <div key={s} className="card flex items-center gap-3 px-4 py-2.5">
+                <div key={s} data-testid={`eval-score-${s}`} className="card flex items-center gap-3 px-4 py-2.5">
                   <SplitBadge split={s} />
                   <ScoreText score={results[s]!} />
                   <span className="text-xs text-neutral-500">v{results.version}</span>
@@ -210,7 +211,7 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
                 {cases.map((c) => {
                   const r = resultFor(c.id);
                   return (
-                    <tr key={c.id}>
+                    <tr key={c.id} data-testid="eval-case" data-name={c.name}>
                       <td className="td">
                         <div className="font-mono text-xs font-medium">{c.name}</div>
                         <div className="mt-0.5 line-clamp-1 max-w-[280px] text-xs text-neutral-500">{c.input}</div>
