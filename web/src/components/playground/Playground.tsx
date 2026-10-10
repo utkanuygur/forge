@@ -311,8 +311,24 @@ export default function Playground({ agent, filesPanel }: { agent: Agent; filesP
         </aside>
 
         <div className="pg-main">
+          {/* Phones: the sidebar is hidden, so sessions are picked here. */}
+          <div className="flex items-center gap-2 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800 md:hidden">
+            <select
+              aria-label="Session"
+              className="input min-w-0 flex-1 py-1.5 text-xs"
+              value={activeId ?? ""}
+              onChange={(e) => openSession(e.target.value || null)}
+            >
+              <option value="">New session · {startLabel(startFrom, agent)}</option>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {(s.title || "Untitled session").slice(0, 40)} ({sessionLabel(s)})
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="pg-topbar">
-            <div className="min-w-0 truncate text-sm">
+            <div className="min-w-0 truncate text-sm" data-testid="session-heading">
               {session ? (
                 <>
                   <span className="font-medium">{session.title || "Untitled session"}</span>{" "}

@@ -6,7 +6,7 @@ test("playground: two turns share history and files, recall and feedback work", 
   await createAgent(page.request, { slug, model: "fake:session" });
   await page.goto(`/agents/${slug}/playground`);
   const pg = page.getByTestId("playground");
-  await expect(pg.getByText("New session ·")).toBeVisible();
+  await expect(pg.getByTestId("session-heading")).toContainText("New session · Production v1");
   await expect(pg.getByTestId("suggested-prompts")).toHaveCount(0); // field absent on this server
 
   const box = pg.getByRole("textbox", { name: "Message" });
@@ -91,7 +91,7 @@ test("playground: Test from Configure runs unsaved edits as a draft", async ({ p
   await expect(page).toHaveURL(new RegExp(`/agents/${slug}/playground`));
   const pg = page.getByTestId("playground");
   await expect(pg.getByTestId("draft-banner")).toBeVisible();
-  await expect(pg.getByText("New session ·")).toContainText("Unsaved draft");
+  await expect(pg.getByTestId("session-heading")).toContainText("New session · Unsaved draft");
 
   const box = pg.getByRole("textbox", { name: "Message" });
   await box.fill("hi there");
