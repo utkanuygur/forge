@@ -95,7 +95,7 @@ test("TRG8: create a GitHub trigger, see the secret once, and a signed delivery 
   await expect(recent.getByRole("link", { name: run_id })).toBeVisible({ timeout: 15_000 });
   await expect(recent.getByTestId("status-pill")).toHaveAttribute("data-status", "succeeded", { timeout: RUN_TIMEOUT });
   await recent.getByRole("link", { name: run_id }).click();
-  await expect(page.getByRole("region", { name: "Output" })).toContainText(`echo: Issue octo/app#12: Broken build ${slug}`);
+  await expect(page.getByTestId("transcript").locator('[data-kind="final"]')).toContainText(`echo: Issue octo/app#12: Broken build ${slug}`);
 
   // the secret is never shown again
   await page.goto(`/agents/${slug}/deploy`);

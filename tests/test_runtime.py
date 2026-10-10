@@ -259,6 +259,20 @@ def test_safe_relpath():
             safe_relpath(bad)
 
 
+async def test_workspace_absolute_paths_are_relative(tmp_path):
+    """Models (Claude in particular) pass the sandbox's absolute root: `/workspace/x` means `x`."""
+    assert safe_relpath("/workspace/src/a.py") == "src/a.py"
+    assert safe_relpath("/workspace") == safe_relpath("/workspace/") == "."
+    for bad in ("/workspace/../etc/passwd", "/workspacefoo/a", "/workspace/../../x", "/etc/workspace/a"):
+        with pytest.raises(ValueError):
+            safe_relpath(bad)
+    ex = LocalExecutor(root=tmp_path / "ws")
+    await ex.start({}, {})
+    await ex.write("/workspace/notes/a.txt", "hi")
+    assert await ex.read("notes/a.txt") == "hi" == await ex.read("/workspace/notes/a.txt")
+    await ex.stop()
+
+
 def _docker_ok() -> bool:
     if not shutil.which("docker"):
         return False

@@ -22,21 +22,21 @@ from sse_starlette.sse import EventSourceResponse
 from forge import budget, db
 from forge.policy import http_tool_names, parse_policy
 from forge.provenance import lesson_provenance
-from forge.server import authoring, evals, observability, obslog, runs
+from forge.server import authoring, evals, observability, obslog, runs, sessions_api
 from forge.server import governance as governance_routes
 from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
                                 version_view)
 from forge.triggers import api as triggers_api, scheduler as triggers_scheduler
-from forge.types import Event, HttpTool, McpServer
+from forge.types import TERMINAL_STATUSES, Event, HttpTool, McpServer
 
 load_dotenv()
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 MAX_SEED_FILE = 1_000_000
-TERMINAL = {"succeeded", "failed", "timeout", "budget_exceeded"}
+TERMINAL = TERMINAL_STATUSES
 
 
 @asynccontextmanager
@@ -689,6 +689,7 @@ app.include_router(observability.ops)
 app.include_router(authoring.router)  # /v1/agent-drafts and /v1/agents/{slug}/prune (before the SPA catch-all)
 governance_routes.install(app)  # approvals, /v1/agents/{slug}/governance and the 402 handler
 app.include_router(triggers_api.router)  # trigger CRUD and /v1/hooks/github|slack/{id}
+app.include_router(sessions_api.router)  # playground sessions
 
 # ---------------------------------------------------------------- SPA
 

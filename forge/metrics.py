@@ -11,13 +11,16 @@ import re
 from collections import defaultdict
 from typing import Any, Iterable
 
-TERMINAL = ("succeeded", "failed", "timeout", "budget_exceeded")
+TERMINAL = ("succeeded", "failed", "timeout", "budget_exceeded", "cancelled")  # = forge.types.TERMINAL_STATUSES
 ACTIVE = ("queued", "running", "awaiting_approval")  # awaiting_approval: paused on a reviewer, still holding a slot
+# Cancelled runs were stopped by a person: finished, but neither a success nor a failure for success rates.
+RATED = tuple(s for s in TERMINAL if s != "cancelled")
 HOUR, DAY = 3600, 86400
 
 CATEGORY_LABELS = {
     "timeout": "Timeout",
     "budget_exceeded": "Spending cap reached",
+    "cancelled": "Stopped by user",
     "model_error": "Model error",
     "sandbox_error": "Sandbox or executor error",
     "tool_errors": "Tool errors",
@@ -52,9 +55,10 @@ def run_duration_ms(run: dict) -> float | None:
     return max(0.0, (e - s) * 1000)
 
 
-# Every run source. Production metrics include all of them except `eval`: runs started by agent__ tools
+# Every run source. Production metrics include all of them except `eval` (and runs of draft Playground
+# sessions, which observability queries exclude with forge.db.NOT_DRAFT): runs started by agent__ tools
 # (`agent`) and by triggers (`schedule`, `github`, `slack`) are production traffic like `ui` or `api`.
-SOURCES = ("ui", "api", "share", "local", "agent", "schedule", "github", "slack", "eval")
+SOURCES = ("ui", "api", "share", "local", "playground", "agent", "schedule", "github", "slack", "eval")
 
 
 def include_source(run: dict, include_eval: bool) -> bool:
@@ -106,9 +110,10 @@ def health(runs: list[dict], feedback: list[dict]) -> dict[str, Any]:
         "failed": by_status["failed"],
         "timeout": by_status["timeout"],
         "budget_exceeded": by_status["budget_exceeded"],
+        "cancelled": by_status["cancelled"],
         "in_progress": sum(by_status[s] for s in ACTIVE),
         "awaiting_approval": by_status["awaiting_approval"],
-        "success_rate": ratio(by_status["succeeded"], finished),
+        "success_rate": ratio(by_status["succeeded"], sum(by_status[s] for s in RATED)),
         "p50_ms": percentile(durations, 50),
         "p95_ms": percentile(durations, 95),
         "avg_turns": ratio(sum(turns), len(turns)),
@@ -160,7 +165,7 @@ def series(runs: list[dict], since: float, until: float, size: int, tz_offset_s:
     t = first
     while t <= last:
         out[t] = {"t": t, "runs": 0, "succeeded": 0, "failed": 0, "timeout": 0, "budget_exceeded": 0,
-                  "in_progress": 0, "cost_usd": 0.0, "success_rate": None}
+                  "cancelled": 0, "in_progress": 0, "cost_usd": 0.0, "success_rate": None}
         t += size
     for r in runs:
         if not (since <= r["created_at"] <= until):
@@ -173,7 +178,7 @@ def series(runs: list[dict], since: float, until: float, size: int, tz_offset_s:
         b[key] += 1
         b["cost_usd"] += r.get("cost_usd") or 0.0
     for b in out.values():
-        b["success_rate"] = ratio(b["succeeded"], sum(b[s] for s in TERMINAL))
+        b["success_rate"] = ratio(b["succeeded"], sum(b[s] for s in RATED))
     return list(out.values())
 
 
@@ -204,6 +209,8 @@ def classify_run(run: dict, *, tool_errors: list[dict] | None = None, feedback: 
     status, error = run.get("status"), run.get("error") or ""
     if status == "timeout":
         out.append({"category": "timeout", "reason": first_line(error) or "time limit reached", "count": 1})
+    elif status == "cancelled":
+        out.append({"category": "cancelled", "reason": first_line(error) or "Stopped by user", "count": 1})
     elif status == "budget_exceeded":
         out.append({"category": "budget_exceeded", "reason": first_line(error) or "spending cap exceeded", "count": 1})
     elif status == "failed":

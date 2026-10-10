@@ -1,0 +1,122 @@
+/* Run transcript: monospace-forward, Claude Code style. Light and dark follow prefers-color-scheme. */
+
+.tx {
+  @apply relative font-mono text-[13px] leading-relaxed text-neutral-800 dark:text-neutral-200;
+}
+.tx-toolbar { @apply -mt-1 mb-2 flex justify-end; }
+.tx-kbd {
+  @apply ml-1.5 rounded border border-neutral-300 px-1 py-px font-mono text-[10px] text-neutral-500
+    dark:border-neutral-700 dark:text-neutral-400;
+}
+.tx-body { @apply space-y-3; }
+.tx-row { @apply flex gap-2.5; }
+.tx-dot { @apply w-3 shrink-0 select-none pt-px text-[11px] leading-[1.6rem]; }
+.tx-final { @apply border-t border-dashed border-neutral-200 pt-3 dark:border-neutral-800; }
+
+.tx-prompt {
+  @apply flex gap-2.5 rounded-md bg-neutral-100 px-3 py-2 text-neutral-700 dark:bg-neutral-800/60 dark:text-neutral-300;
+}
+.tx-caret { @apply shrink-0 select-none font-semibold text-neutral-400; }
+
+.tx-head {
+  @apply -mx-1 block max-w-full rounded px-1 text-left leading-[1.6rem]
+    hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 dark:hover:bg-neutral-800/70;
+}
+.tx-badge {
+  @apply ml-2 rounded bg-red-100 px-1.5 py-px text-[11px] font-medium text-red-700 dark:bg-red-950 dark:text-red-300;
+}
+.tx-badge-ok {
+  @apply ml-2 rounded bg-emerald-50 px-1.5 py-px text-[11px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300;
+}
+.tx-nested {
+  @apply mt-2 border-l-2 border-neutral-200 pl-3 dark:border-neutral-800;
+}
+.tx-result { @apply flex gap-2 pl-0.5; }
+.tx-elbow { @apply shrink-0 select-none text-neutral-400 dark:text-neutral-600; }
+.tx-pre { @apply m-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed; }
+.tx-more, .tx-link, .tx-hint {
+  @apply text-left text-neutral-500 dark:text-neutral-400;
+}
+.tx-more, .tx-link { @apply rounded hover:text-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 dark:hover:text-neutral-200; }
+.tx-hint { @apply text-neutral-400 dark:text-neutral-500; }
+
+.tx-code {
+  @apply mt-1.5 max-h-[32rem] overflow-auto rounded-md border border-neutral-200 bg-neutral-50 text-[12.5px]
+    dark:border-neutral-800 dark:bg-neutral-950;
+}
+.tx-gutter {
+  @apply m-0 select-none border-r border-neutral-200 px-2 py-1.5 text-right text-neutral-400 dark:border-neutral-800 dark:text-neutral-600;
+}
+.tx-codebody { @apply m-0 whitespace-pre px-3 py-1.5 text-neutral-800 dark:text-neutral-200; }
+
+.tx-diff-line { @apply flex whitespace-pre pr-3; }
+.tx-diff-sign { @apply w-6 shrink-0 select-none pl-2; }
+.tx-diff-same { @apply text-neutral-600 dark:text-neutral-400; }
+.tx-diff-add { @apply bg-emerald-50 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200; }
+.tx-diff-del { @apply bg-red-50 text-red-900 dark:bg-red-950/60 dark:text-red-200; }
+.tx-diff-gap { @apply select-none pl-2 text-neutral-400 dark:text-neutral-600; }
+
+.tx-error {
+  @apply rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-800 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300;
+}
+
+/* Sticky only while running; a finished run's summary simply closes the transcript. */
+.tx-statusbar { @apply relative z-10 -mx-5 -mb-5 mt-4 rounded-b-xl; }
+.tx-statusbar-live { @apply sticky bottom-0; }
+.tx-status {
+  @apply flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-b-xl border-t border-neutral-200 bg-white/95 px-5 py-2.5
+    backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95;
+}
+.tx-star { @apply text-[#d97757]; }
+.tx-jump {
+  @apply absolute -top-11 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full border border-neutral-300
+    bg-white px-3 py-1.5 font-sans text-xs font-medium text-neutral-700 shadow-md hover:bg-neutral-50
+    dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700;
+}
+
+/* Markdown (narration and final answer) */
+.tx-md { @apply break-words; }
+.tx-md > * + * { @apply mt-2; }
+.tx-md h1, .tx-md h2, .tx-md h3, .tx-md h4 { @apply font-semibold text-neutral-900 dark:text-neutral-50; }
+.tx-md h1 { @apply text-[15px]; }
+.tx-md h2 { @apply text-[14px]; }
+.tx-md ul { @apply list-disc space-y-0.5 pl-5; }
+.tx-md ol { @apply list-decimal space-y-0.5 pl-5; }
+.tx-md li > ul, .tx-md li > ol { @apply mt-0.5; }
+.tx-md strong { @apply font-semibold text-neutral-900 dark:text-neutral-50; }
+.tx-md a { @apply text-accent-600 underline underline-offset-2 dark:text-accent-400; }
+.tx-md :not(pre) > code {
+  @apply rounded bg-neutral-100 px-1 py-px text-[12.5px] text-accent-700 dark:bg-neutral-800 dark:text-accent-300;
+}
+.tx-md pre {
+  @apply overflow-x-auto rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-[12.5px] leading-relaxed
+    dark:border-neutral-800 dark:bg-neutral-950;
+}
+.tx-md blockquote { @apply border-l-2 border-neutral-300 pl-3 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400; }
+.tx-md table { @apply block max-w-full overflow-x-auto border-collapse text-[12.5px]; }
+.tx-md th, .tx-md td { @apply border border-neutral-200 px-2 py-1 text-left dark:border-neutral-800; }
+.tx-md hr { @apply border-neutral-200 dark:border-neutral-800; }
+
+/* Syntax colours (highlight.js classes), tuned for both schemes */
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-meta .hljs-keyword { color: #8b3fd9; }
+.hljs-string, .hljs-attr-value, .hljs-regexp, .hljs-addition { color: #1a7f37; }
+.hljs-number, .hljs-literal, .hljs-symbol { color: #b35900; }
+.hljs-comment, .hljs-quote { color: #8c8c8c; font-style: italic; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: #0b63c4; }
+.hljs-type, .hljs-title.class_, .hljs-class .hljs-title { color: #a8550a; }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property { color: #0a6f80; }
+.hljs-meta, .hljs-decorator { color: #6b6b6b; }
+.hljs-deletion { color: #c4302b; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+@media (prefers-color-scheme: dark) {
+  .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-meta .hljs-keyword { color: #c792ea; }
+  .hljs-string, .hljs-attr-value, .hljs-regexp, .hljs-addition { color: #9ece6a; }
+  .hljs-number, .hljs-literal, .hljs-symbol { color: #ff9e64; }
+  .hljs-comment, .hljs-quote { color: #737373; }
+  .hljs-title, .hljs-title.function_, .hljs-section { color: #7aa2f7; }
+  .hljs-type, .hljs-title.class_, .hljs-class .hljs-title { color: #e0af68; }
+  .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-property { color: #7dcfff; }
+  .hljs-meta, .hljs-decorator { color: #a3a3a3; }
+  .hljs-deletion { color: #f7768e; }
+}

@@ -35,6 +35,7 @@ class StubAnthropic:
         self.responses = list(responses)
         self.requests: list[dict[str, Any]] = []
         self.messages = SimpleNamespace(create=self._create)
+        self.beta = SimpleNamespace(messages=self.messages)  # models with progress updates use the beta API
 
     async def _create(self, **kwargs: Any) -> SDKMessage:
         self.requests.append(copy.deepcopy(kwargs))

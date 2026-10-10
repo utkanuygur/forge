@@ -23,6 +23,18 @@ _SAMPLING_MODELS = re.compile(r"^claude-(3[-.]|(opus|sonnet|haiku)-4(-[0-6])?(-\
 
 def accepts_temperature(model: str) -> bool:
     return bool(_SAMPLING_MODELS.match(model))
+
+# Models that return between-tool-call progress updates as `thinking` blocks (empty by default) and
+# accept `thinking.display: "updates"` under this beta to get them back as short summaries.
+PROGRESS_UPDATES_BETA = "thinking-display-updates-2026-08-18"
+_UPDATES_MODELS = re.compile(r"^claude-(opus-5-5|sonnet-5-5|fable-5|fable-5-1|mythos-5-1)$")
+INTERRUPTED_NOTE = "This part of the response was interrupted before it finished."
+
+
+def supports_progress_updates(model: str) -> bool:
+    return bool(_UPDATES_MODELS.match(model))
+
+
 BACKOFF = (1.0, 2.0, 4.0)  # up to 3 retries after the first attempt
 
 
@@ -144,10 +156,20 @@ class AnthropicProvider:
             ]
         if temperature is not None and accepts_temperature(self.model):
             kwargs["temperature"] = temperature
-        resp = await with_retry(lambda: self.client.messages.create(**kwargs))
-        texts, calls = [], []
+        if supports_progress_updates(self.model):
+            kwargs["thinking"] = {"type": "adaptive", "display": "updates"}
+            kwargs["betas"] = [PROGRESS_UPDATES_BETA]
+            create = self.client.beta.messages.create
+        else:
+            create = self.client.messages.create
+        resp = await with_retry(lambda: create(**kwargs))
+        texts, calls, notes = [], [], []
         for b in resp.content:
-            if b.type == "text":
+            if b.type == "thinking":
+                note = (getattr(b, "thinking", "") or "").strip()
+                if note and note != INTERRUPTED_NOTE:
+                    notes.append(note)
+            elif b.type == "text":
                 texts.append(b.text)
             elif b.type == "tool_use":
                 calls.append(
@@ -165,6 +187,7 @@ class AnthropicProvider:
         return ModelResponse(
             text=text,
             tool_calls=calls,
+            notes=notes,
             tokens_in=usage.input_tokens or 0,
             tokens_out=usage.output_tokens or 0,
             stop_reason=stop_reason,
@@ -336,8 +359,13 @@ FAKE_DRAFT: dict[str, Any] = {
 }
 
 
-def _call(name: str, args: dict[str, Any], i: int) -> ModelResponse:
-    return ModelResponse(tool_calls=[ToolCall(id=f"call_{i}", name=name, args=args)], tokens_in=10, tokens_out=5)
+def _call(name: str, args: dict[str, Any], i: int, note: str = "") -> ModelResponse:
+    return ModelResponse(
+        tool_calls=[ToolCall(id=f"call_{i}", name=name, args=args)],
+        notes=[note] if note else [],
+        tokens_in=10,
+        tokens_out=5,
+    )
 
 
 class ScenarioProvider:
@@ -360,32 +388,62 @@ class ScenarioProvider:
       risky    runs `rm -rf build` with bash, then finishes saying whether it was allowed (approval policies)
       tools    calls non-builtin tools (HTTP, MCP, agent__) as told by a JSON hint in the user input, then
                finishes with their outputs; see tools_hint()
+      session  turn 1 writes hello.py; later turns `cat hello.py` and report what they saw (playground)
+      slow     runs `sleep 30` forever (exercises cancel / Stop)
     """
 
     def __init__(self, scenario: str):
-        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "flaky", "risky", "tools"}:
+        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "flaky", "risky", "tools", "session", "slow"}:
             raise ValueError(f"unknown fake scenario {scenario!r}")
         self.scenario = scenario
 
     async def complete(
         self, system: str, messages: list[Message], tools: list[ToolSpec], temperature: float | None = None
     ) -> ModelResponse:
-        step = sum(1 for m in messages if m.role == "assistant")
-        user = next((m.text for m in messages if m.role == "user"), "")
+        # Steps count from the latest user message, so playground sessions (history + new input) replay
+        # the scenario per turn; ids stay unique across turns.
+        last_user = max(i for i, m in enumerate(messages) if m.role == "user")
+        turn = sum(1 for m in messages if m.role == "user") - 1
+        step = sum(1 for m in messages[last_user:] if m.role == "assistant")
+        user = messages[last_user].text
+        if turn:
+            def _call_t(name: str, args: dict[str, Any], i: int, note: str = "") -> ModelResponse:
+                r = _call(name, args, i, note)
+                r.tool_calls[0].id = f"call_t{turn}_{i}"
+                return r
+        else:
+            _call_t = _call
         match self.scenario:
             case "error":
                 raise RuntimeError("fake model failure")
             case "echo":
                 return ModelResponse(text=f"echo: {user}", tokens_in=10, tokens_out=5)
             case "loop":
-                return _call("bash", {"cmd": "true"}, step)
+                return _call_t("bash", {"cmd": "true"}, step)
+            case "slow":
+                return _call_t("bash", {"cmd": "sleep 30"}, step, "Waiting a while.")
+            case "session":
+                # Turn 1 writes hello.py; later turns read it back from the carried-over workspace and
+                # report how many earlier turns the history contained.
+                if turn == 0:
+                    if step == 0:
+                        return _call_t("write_file", {"path": "hello.py", "content": "print('hello from forge')\n"}, 0,
+                                       "I'll create hello.py.")
+                    return ModelResponse(text="Created hello.py.", tokens_in=10, tokens_out=5)
+                if step == 0:
+                    return _call_t("bash", {"cmd": "cat hello.py"}, 0, "Reading the file from the last turn.")
+                seen = messages[-1].text if messages[-1].role == "tool" else ""
+                content = seen.split("--- stdout ---\n", 1)[-1].split("\n--- stderr ---", 1)[0].strip()
+                return ModelResponse(text=f"Turn {turn + 1}: hello.py contains `{content}` "
+                                          f"(history had {turn} earlier turn(s)).", tokens_in=10, tokens_out=5)
             case "hello":
                 script = [
-                    ("write_file", {"path": "hello.py", "content": "print('hello from forge')\n"}),
-                    ("bash", {"cmd": "python hello.py"}),
+                    ("write_file", {"path": "hello.py", "content": "print('hello from forge')\n"}, "I'll create hello.py."),
+                    ("bash", {"cmd": "python hello.py"}, "Now I'll run it to check the output."),
                 ]
                 if step < len(script):
-                    return _call(*script[step], step)
+                    name, args, note = script[step]
+                    return _call_t(name, args, step, note)
                 return ModelResponse(text="Created and ran hello.py.", tokens_in=10, tokens_out=5)
             case "flaky":
                 if step == 0:

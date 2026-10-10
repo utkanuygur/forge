@@ -51,6 +51,7 @@ def run_view(r: dict, *, version_n: int | None = None, model: str | None = None)
         "parent_run_id": r.get("parent_run_id"),
         "child_usage": {"tokens_in": r.get("child_tokens_in") or 0, "tokens_out": r.get("child_tokens_out") or 0,
                         "cost_usd": r.get("child_cost_usd") or 0},
+        "session_id": r.get("session_id"), "turn_index": r.get("turn_index"),  # additive (playground)
         "created_at": r["created_at"], "started_at": r["started_at"], "ended_at": r["ended_at"],
         "feedback": [feedback_view(f) for f in db.list_feedback(r["id"])],
         # Additive observability fields (CONTRACT.md "Observability").

@@ -95,11 +95,19 @@ def _check(res: ExecResult, what: str) -> ExecResult:
     return res
 
 
+WORKSPACE_ROOT = "/workspace"
+
+
 def safe_relpath(path: str) -> str:
-    """Normalize a workspace-relative path; reject absolute paths and anything escaping the root."""
+    """Normalize a workspace-relative path; reject absolute paths and anything escaping the root.
+
+    A leading `/workspace` (the sandbox's absolute workspace root, which models often pass) is accepted and
+    treated as relative: `/workspace/src/a.py` is `src/a.py` and `/workspace` is the root."""
     if not isinstance(path, str) or "\x00" in path:
         raise ValueError("invalid path")
     p = path.strip() or "."
+    if p == WORKSPACE_ROOT or p.startswith(WORKSPACE_ROOT + "/"):
+        p = p[len(WORKSPACE_ROOT):].lstrip("/") or "."
     if p.startswith("/") or p.startswith("~"):
         raise ValueError(f"path must be relative to the workspace root: {path!r}")
     norm = posixpath.normpath(p)

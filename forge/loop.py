@@ -35,7 +35,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name="bash",
         description=(
             "Run a shell command with bash in the workspace root and return its exit code, stdout and stderr. "
-            "Use it to inspect files (ls, rg, cat), run tests and builds, and use git. Each call is a fresh shell: "
+            "Use it to run tests and builds, search (ls, rg) and use git; view and change files with read_file, "
+            "write_file and edit_file instead. Each call is a fresh shell: "
             "`cd` does not persist between calls. Commands are killed after `timeout` seconds. "
             "Output longer than 10,000 characters is truncated in the middle."
         ),
@@ -113,6 +114,12 @@ def build_system_prompt(version: AgentVersion) -> str:
         "## Environment\n"
         "- Your working directory is the workspace root (/workspace). All file paths are relative to it.\n"
         f"- Network access is {net}.\n"
+        "- People follow your work live as a transcript, so keep them oriented:\n"
+        "  - Before each group of tool calls, say in one short sentence what you are about to do.\n"
+        "  - Use read_file, write_file and edit_file to view and change files; the transcript shows their "
+        "results as file contents and reviewable diffs. Use bash for running commands (tests, builds, git, "
+        "search), not for editing files: no sed -i, heredocs or scripts that rewrite files, since those changes "
+        "are invisible to the reader.\n"
         "- When you are done, reply without calling any tools and summarize what you did."
     )
     return "\n\n".join(p for p in parts if p)
@@ -214,11 +221,13 @@ async def run_agent(
     max_seconds: int = 600,
     hooks: Any = None,
     extra_tools: ToolRegistry | None = None,  # HTTP, MCP and agent tools (forge/tools/registry.py)
+    history: list[Message] | None = None,
 ) -> RunResult:
     """`hooks` (optional, see forge.governance.RunGovernor) may stop the run after a model turn
     (`after_turn`) and replace a tool call's result (`before_tool`); time spent in `before_tool`, such as
     waiting for a human approval, does not count toward `max_seconds` and is reported on the tool_result
-    as `approval_wait_ms`, apart from the tool's own `duration_ms`."""
+    as `approval_wait_ms`, apart from the tool's own `duration_ms`.
+    `history` (playground sessions) is prepended to the conversation; only this turn's events are emitted."""
     # Longest first so a secret containing another secret is fully redacted.
     secret_values = sorted({v for v in (secrets or {}).values() if v}, key=len, reverse=True)
     seq = 0
@@ -236,7 +245,7 @@ async def run_agent(
     system = build_system_prompt(version)
     allowed = [t for t in version.tools if t in TOOL_SPECS]
     tools = [TOOL_SPECS[t] for t in allowed]
-    messages: list[Message] = [Message(role="user", text=input)]
+    messages: list[Message] = [*(history or []), Message(role="user", text=input)]
     result = RunResult(status="running")
     last_text = ""
 
@@ -277,6 +286,12 @@ async def run_agent(
                 turn_usage["cache_read_tokens"] = resp.cache_read_tokens
             if resp.cache_write_tokens:
                 turn_usage["cache_write_tokens"] = resp.cache_write_tokens
+            # Narration first, so the trace reads in order: what the model is about to do, then the calls.
+            # Notes carry no timing or usage: those stay on the turn's text event or first tool_call, so
+            # observability counts each model turn exactly once.
+            for note in resp.notes:
+                if note.strip() and resp.stop_reason != "refusal":
+                    await send("assistant", {"text": note.strip(), "kind": "progress"})
             if resp.stop_reason == "refusal":  # never act on a declined turn, not even its tool calls
                 result.status, result.error = "failed", f"Model declined: {resp.stop_detail or 'no reason given'}"
                 await send("error", {"message": result.error, "turn": result.turns, "duration_ms": model_ms,
@@ -289,14 +304,14 @@ async def run_agent(
                                 "the truncated reply was not accepted as the final answer")
                 if resp.text:
                     last_text = resp.text
-                    await send("assistant", {"text": resp.text, "turn": result.turns, "duration_ms": model_ms,
-                                             **turn_usage})
+                    await send("assistant", {"text": resp.text, "kind": "final", "turn": result.turns,
+                                             "duration_ms": model_ms, **turn_usage})
                 await send("error", {"message": result.error})
                 break
             if resp.text:
                 last_text = resp.text
-                await send("assistant", {"text": resp.text, "turn": result.turns, "duration_ms": model_ms,
-                                         **turn_usage})
+                await send("assistant", {"text": resp.text, "kind": "progress" if resp.tool_calls else "final",
+                                         "turn": result.turns, "duration_ms": model_ms, **turn_usage})
                 turn_usage = None
             messages.append(Message(role="assistant", text=resp.text, tool_calls=resp.tool_calls))
             if hooks is not None and (stop := await hooks.after_turn(result, send)):

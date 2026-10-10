@@ -27,7 +27,8 @@ test("responsive: agents page and run page have no horizontal scroll at 390px", 
   await page.goto(`/runs/${run.id}`);
   await expectRunSucceeded(page);
   await expect(page.getByTestId("diff-view")).toBeVisible();
-  await page.locator('[data-testid="tool-card"][data-tool="write_file"]').getByRole("button").click();
+  await page.locator('[data-testid="tool-card"][data-tool="write_file"]').getByTestId("tool-header").click();
+  await expect(page.getByTestId("numbered-code")).toBeVisible();
   m = await hasNoHorizontalScroll(page);
   expect(m.scrollWidth, "run page").toBeLessThanOrEqual(m.clientWidth);
 });

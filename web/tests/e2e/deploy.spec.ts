@@ -47,7 +47,10 @@ test("FR5: deploy tab shows share link and curl; share page shows suggested prom
   await colleague.getByRole("button", { name: "Run", exact: true }).click();
   await expect(colleague).toHaveURL(/[?&]run=r_[0-9a-f]{12}/);
   await expectRunSucceeded(colleague);
-  await expect(colleague.getByRole("region", { name: "Output" })).toContainText(`echo: ${input}`);
+  await expect(
+    colleague.getByRole("region", { name: "Transcript" }).locator('[data-testid="narration"][data-kind="final"]'),
+  ).toContainText(`echo: ${input}`);
+  await expect(colleague.getByRole("button", { name: "Timeline" })).toHaveCount(0);
   await expect(colleague.getByRole("region", { name: "Save as test case" })).toHaveCount(0);
   expect(await colleague.content()).not.toContain(secretPrompt);
   await ctx.close();

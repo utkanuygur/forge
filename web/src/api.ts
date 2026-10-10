@@ -6,6 +6,7 @@ export type RunStatus =
   | "succeeded"
   | "failed"
   | "timeout"
+  | "cancelled"
   // governance
   | "awaiting_approval"
   | "budget_exceeded";
@@ -168,6 +169,31 @@ export interface SuggestedPrompt {
   prompt: string;
 }
 
+export interface DraftConfig {
+  system_prompt?: string;
+  model?: string;
+  tools?: string[];
+  network?: boolean;
+  lessons?: string[];
+  seed_files?: Record<string, string>;
+}
+
+export interface Session {
+  id: string;
+  agent_slug: string;
+  version_n: number | null; // null for a draft
+  draft: DraftConfig | null;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  turns?: Run[];
+  // Implementation extras (see CONTRACT.md).
+  base_version_n?: number | null;
+  is_draft?: boolean;
+  turn_count?: number | null;
+  running?: boolean;
+}
+
 export interface AgentCreated extends Agent {
   api_key: string;
 }
@@ -205,6 +231,9 @@ export interface Run {
   eval_case_id?: string | null;
   parent_run_id?: string | null;
   child_usage?: { tokens_in: number; tokens_out: number; cost_usd: number };
+  // Playground sessions (CONTRACT.md "Sessions").
+  session_id?: string | null;
+  turn_index?: number | null;
   // Not in CONTRACT.md; used if the backend includes it.
   agent_slug?: string;
   // Observability and governance (additive): the stored run cost; null means the model's price is unknown.
@@ -754,6 +783,16 @@ export const api = {
   prune: (slug: string) => request<Improvement>("POST", `/agents/${enc(slug)}/prune`, {}),
   getImprovement: (id: string) => request<Improvement>("GET", `/improvements/${enc(id)}`),
   listImprovements: (slug: string) => request<Improvement[]>("GET", `/agents/${enc(slug)}/improvements`),
+
+  // playground sessions
+  createSession: (slug: string, body: { version?: number; draft?: DraftConfig }) =>
+    request<Session>("POST", `/agents/${enc(slug)}/sessions`, body),
+  listSessions: (slug: string, limit = 20) => request<Session[]>("GET", `/agents/${enc(slug)}/sessions?limit=${limit}`),
+  getSession: (id: string) => request<Session>("GET", `/sessions/${enc(id)}`),
+  sendMessage: (id: string, input: string) => request<Run>("POST", `/sessions/${enc(id)}/messages`, { input }),
+  saveSessionVersion: (id: string, rationale = "") =>
+    request<Version>("POST", `/sessions/${enc(id)}/save-version`, { rationale }),
+  cancelRun: (id: string) => request<Run>("POST", `/runs/${enc(id)}/cancel`),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -798,7 +837,13 @@ export function fmtDuration(run: Pick<Run, "started_at" | "ended_at" | "status">
 }
 
 export function isTerminal(status: RunStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "timeout" || status === "budget_exceeded";
+  return (
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "timeout" ||
+    status === "budget_exceeded" ||
+    status === "cancelled"
+  );
 }
 
 export function fmtUsd(x: number | null | undefined): string {

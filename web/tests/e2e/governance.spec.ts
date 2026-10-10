@@ -61,8 +61,9 @@ test("GOV10: Deny with a note sends the note back to the agent and the run conti
   await expect(card).toHaveAttribute("data-state", "denied", { timeout: RUN_TIMEOUT });
   await expect(card).toContainText("keep the build for now");
   await expect(runStatus(page)).toHaveAttribute("data-status", "succeeded", { timeout: RUN_TIMEOUT });
-  const output = page.getByRole("region", { name: "Output" });
-  await expect(output).toContainText("Denied by reviewer: keep the build for now");
+  // The transcript (default run view) ends with the final answer, which quotes the denial.
+  const transcript = page.getByTestId("transcript");
+  await expect(transcript.locator('[data-kind="final"]')).toContainText("Denied by reviewer: keep the build for now");
 });
 
 test("GOV11: policy editor presets, run cap and monthly budget save; a spent budget shows a banner and refuses runs", async ({

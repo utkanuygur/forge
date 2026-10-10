@@ -26,7 +26,7 @@ class Event(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     # Payload shapes by type:
     #   run_started:  {"version_id", "model", "input"}
-    #   assistant:    {"text"}
+    #   assistant:    {"text", "kind"}  kind: "progress" (narration before tool calls) | "final" (answer)
     #   tool_call:    {"id", "name", "args"}
     #   tool_result:  {"id", "name", "output", "is_error"}; non-builtin tools add "source"
     #                 ("http" | "mcp" | "agent") and agent tools add "child_run_id"
@@ -139,6 +139,9 @@ class Message(BaseModel):
 class ModelResponse(BaseModel):
     text: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    # Short progress updates the model wrote between tool calls (e.g. Claude progress-update
+    # thinking summaries), in order. Not replayed as text; the provider keeps the raw blocks.
+    notes: list[str] = Field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
     # Why the model stopped, normalized across providers: "end_turn", "tool_use", "max_tokens", "refusal",
@@ -193,8 +196,13 @@ class Executor(Protocol):
 
 # ---------------------------------------------------------------- run result
 
-RunStatus = Literal["queued", "running", "succeeded", "failed", "timeout",
+RunStatus = Literal["queued", "running", "succeeded", "failed", "timeout", "cancelled",  # cancelled: additive
                     "awaiting_approval", "budget_exceeded"]  # governance (additive)
+
+
+# Every status in one place (server, metrics, sessions and triggers use these sets).
+TERMINAL_STATUSES = frozenset({"succeeded", "failed", "timeout", "budget_exceeded", "cancelled"})
+ACTIVE_STATUSES = frozenset({"queued", "running", "awaiting_approval"})  # awaiting_approval keeps its slot
 
 
 class RunResult(BaseModel):
@@ -223,6 +231,7 @@ class RunResult(BaseModel):
 #       max_turns: int = 30,
 #       max_seconds: int = 600,
 #       hooks: RunHooks | None = None,   # governance (additive): forge.governance.RunGovernor
+#       history: list[Message] | None = None,   # additive: earlier session turns
 #   ) -> RunResult
 #
 # Factories (forge/providers.py, forge/executors.py):

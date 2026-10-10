@@ -75,7 +75,7 @@ test("FR15: a parent run links to the child run it started, and the child links 
   await expect(page).toHaveURL(/\/runs\/r_[0-9a-f]{12}$/);
   expect(page.url()).not.toContain(run.id);
   await expectRunSucceeded(page);
-  await expect(page.getByRole("region", { name: "Output" })).toContainText("echo: hello from parent");
+  await expect(page.getByTestId("transcript").locator('[data-kind="final"]')).toContainText("echo: hello from parent");
   const calledBy = page.getByTestId("called-by");
   await expect(calledBy).toContainText(run.id);
   await calledBy.getByRole("link").click();

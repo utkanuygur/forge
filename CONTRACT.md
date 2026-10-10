@@ -125,6 +125,9 @@ Auth amendments (server implementation):
 - A share token may `GET /agents/{slug}` (only `id, slug, name, description, suggested_prompts`) and its versions (for the share page) and start/read its own share runs; it gets 401 on builder, eval and improve routes. With a share token, `GET /agents/{slug}/runs` lists only share-sourced runs.
 - Share page URL: `/s/{slug}?share=<token>`.
 - Extras: Run includes `eval_case_id`; eval results include `"running": bool`; `PUT secrets` with an empty value deletes it.
+- Narration (additive): `ModelResponse.notes: list[str]` carries the model's between-tool-call progress updates
+  (Claude: `thinking.display: "updates"` summaries). The loop emits each note, then any text, as `assistant` events
+  before that turn's `tool_call` events; `assistant` payloads gain `"kind": "progress" | "final"` (absent in old traces).
 
 ### Improvement
 
@@ -421,6 +424,39 @@ With `skip_if_running` a slot is recorded as `skipped` while the previous run is
 or changing its cron or time zone starts counting from that moment. DST: a nonexistent local time runs shifted forward
 by the gap; a repeated local time runs once, unless the hour field is `*`. Test hook: `FORGE_TEST_CLOCK_FILE` makes the
 scheduler read the current unix time from that file.
+
+### Sessions
+
+Playground sessions (additive). Builder-only (localhost or the agent's API key; share tokens get 401). JSON.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/agents/{slug}/sessions` | `{version?: int, draft?: {system_prompt?, model?, tools?, network?, lessons?}}` | `Session` |
+| GET | `/agents/{slug}/sessions?limit=20` | | `[Session]` newest first (turns omitted) |
+| GET | `/sessions/{id}` | | `Session` with `turns: [Run]` ordered by `turn_index` |
+| POST | `/sessions/{id}/messages` | `{input: str}` | `Run` (status `queued`/`running`; has `session_id`, `turn_index`); 409 if a turn is still running |
+| POST | `/runs/{id}/cancel` | | `Run` (status becomes `cancelled`; idempotent; 409 if already finished) |
+
+```jsonc
+// Session
+{"id": "s_..", "agent_slug": "repo-maintainer", "version_n": 1,   // int, or null for a draft
+ "draft": null,                                                    // draft config object, or null
+ "title": "..", "created_at": 0.0, "updated_at": 0.0}
+```
+
+- Run objects gain `session_id` (str|null) and `turn_index` (int|null). Session turns are runs with source `playground`.
+- Each turn is a normal run: its model history is rebuilt from the earlier turns' events (user inputs, assistant
+  text, tool calls and results; tool outputs clipped, oldest turns dropped to fit), and its workspace starts from
+  the latest earlier turn's exported archive. Containers are not kept between turns.
+- A draft session runs its unsaved config over the version it was started from (`version`, default prod) without
+  creating a version. Draft runs are excluded from `GET /agents/{slug}/runs`, metrics and improvement feedback,
+  and never affect evals or promotion.
+- Implementation extras (not required by clients): Session also carries `agent_id`, `base_version_n`, `is_draft`,
+  `turn_count` and (on `GET /sessions/{id}`) `running`; `POST /sessions/{id}/messages` accepts `wait: bool`;
+  `POST /sessions/{id}/save-version {rationale?}` creates (does not promote) a version from a draft's config.
+- Run status gains `cancelled` (additive). Cancel stops the task and the sandbox, appends an `error` event
+  `"Stopped by user"`, then `run_finished` with status `cancelled`; it works for every server run (local CLI runs
+  return 409). The cancelled turn's workspace is still exported, so a session continues from it.
 
 ## Promotion rule
 

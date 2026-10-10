@@ -61,6 +61,8 @@ def _annotate(runs: list[dict], versions: dict[str, dict]) -> list[dict]:
     return runs
 
 
+DRAFT_FREE = db.NOT_DRAFT.replace("session_id", "r.session_id")
+
 RUN_COLS = ("r.id, r.agent_id, r.version_id, r.source, r.status, r.error, r.turns, r.tokens_in, r.tokens_out, "
             "r.cache_read_tokens, r.cache_write_tokens, r.cost_usd, "
             "r.created_at, r.started_at, r.ended_at, r.eval_case_id, substr(r.input, 1, 160) AS input")
@@ -125,7 +127,7 @@ def search_runs(*, agent_id: str | None = None, status: str | None = None, versi
                 sort: SortKey = "created_at", order: str = "desc", limit: int = 50,
                 offset: int = 0) -> tuple[list[dict], int]:
     """Filtered run rows (full `runs` columns plus agent_slug, version_n and model) and the total match count."""
-    where, args = ["1 = 1"], []
+    where, args = [DRAFT_FREE], []  # runs of draft Playground sessions never show up in run lists or metrics
 
     def any_of(col: str, raw: str | None, cast: Any = str) -> None:
         vals = [x.strip() for x in (raw or "").split(",") if x.strip()]
@@ -320,7 +322,7 @@ def agent_metrics(agent: dict, days: float, include_eval: bool, tz_offset_min: i
     since, until, prev_since = _window(days, now)
     tz = tz_offset_min * 60
     versions = _versions(agent["id"])
-    all_runs = _annotate(_rows(f"SELECT {RUN_COLS} FROM runs r WHERE r.agent_id = ?", (agent["id"],)), versions)
+    all_runs = _annotate(_rows(f"SELECT {RUN_COLS} FROM runs r WHERE r.agent_id = ? AND {DRAFT_FREE}", (agent["id"],)), versions)
     feedback = _feedback_by_run("r.agent_id = ?", [agent["id"]])
     scoped = [r for r in all_runs if metrics.include_source(r, include_eval)]
     cur = [r for r in scoped if since <= r["created_at"] <= until]
@@ -442,7 +444,8 @@ def overview(days: float, include_eval: bool = False, tz_offset_min: int = 0, no
     for a in agents.values():
         versions.update(_versions(a["id"]))
     eval_clause = "" if include_eval else " AND r.source != 'eval'"
-    rows = _annotate(_rows(f"SELECT {RUN_COLS} FROM runs r WHERE r.created_at >= ?{eval_clause}", (prev_since,)),
+    rows = _annotate(_rows(f"SELECT {RUN_COLS} FROM runs r WHERE r.created_at >= ?{eval_clause} AND {DRAFT_FREE}",
+                           (prev_since,)),
                      versions)
     where, args = f"r.created_at >= ?{eval_clause}", [prev_since]
     feedback = _feedback_by_run(where, args)

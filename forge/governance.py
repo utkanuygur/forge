@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -161,6 +162,13 @@ class RunGovernor:
                 log.exception("approval notification failed for %s", row["id"])
         try:
             decision, note, by = await self.registry.wait(row["id"], timeout)
+        except asyncio.CancelledError:
+            # The run was stopped (Playground Stop or cancel) while paused: the call is denied, never run.
+            finish_approval(row["id"], "denied", "run stopped by user", "cancel")
+            with contextlib.suppress(Exception):
+                await send("approval_resolved", {"id": row["id"], "tool_call_id": call.id, "decision": "deny",
+                                                 "note": "run stopped by user", "by": "cancel"})
+            raise
         finally:
             if (db.get_run(self.run_id) or {}).get("status") == "awaiting_approval":
                 db.update_run(self.run_id, status="running")

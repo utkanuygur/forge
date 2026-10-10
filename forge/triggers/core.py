@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from forge import db
+from forge.types import ACTIVE_STATUSES
 from forge.server import runs
 from forge.triggers import store
 from forge.triggers.cron import Cron, CronError, get_zone
@@ -21,7 +22,7 @@ from forge.triggers.security import RateLimiter, api_base_allowed, api_base_erro
 log = logging.getLogger("forge.triggers")
 
 KINDS = ("schedule", "github", "slack")
-ACTIVE = {"queued", "running", "awaiting_approval"}  # a run paused on an approval is still running
+ACTIVE = ACTIVE_STATUSES  # a run paused on an approval is still running
 limiter = RateLimiter()
 _background: set[asyncio.Task] = set()
 
