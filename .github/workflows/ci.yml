@@ -97,7 +97,6 @@ jobs:
 
   sandbox:
     name: Sandbox
-    needs: sandbox-image
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -107,19 +106,21 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked
-      - uses: actions/download-artifact@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
-          name: forge-sandbox-image
-          path: /tmp
+          context: sandbox
+          tags: forge-sandbox:latest
+          load: true
+          cache-from: type=gha,scope=forge-sandbox
       - name: Load sandbox image
         # Docker tests skip themselves when the image is missing; fail loudly instead.
-        run: docker load -i /tmp/forge-sandbox.tar && docker image inspect forge-sandbox > /dev/null
+        run: docker image inspect forge-sandbox > /dev/null
       - name: "Layer 2: sandbox"
         run: uv run pytest -q -m "docker and not e2e"
 
   full-stack:
     name: Full stack
-    needs: sandbox-image
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -129,18 +130,20 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked
-      - uses: actions/download-artifact@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
-          name: forge-sandbox-image
-          path: /tmp
+          context: sandbox
+          tags: forge-sandbox:latest
+          load: true
+          cache-from: type=gha,scope=forge-sandbox
       - name: Load sandbox image
-        run: docker load -i /tmp/forge-sandbox.tar && docker image inspect forge-sandbox > /dev/null
+        run: docker image inspect forge-sandbox > /dev/null
       - name: "Layer 3: full stack"
         run: uv run pytest -q -m e2e
 
   browser:
     name: Browser
-    needs: sandbox-image
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -160,12 +163,15 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
         working-directory: web
-      - uses: actions/download-artifact@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
-          name: forge-sandbox-image
-          path: /tmp
+          context: sandbox
+          tags: forge-sandbox:latest
+          load: true
+          cache-from: type=gha,scope=forge-sandbox
       - name: Load sandbox image
-        run: docker load -i /tmp/forge-sandbox.tar && docker image inspect forge-sandbox > /dev/null
+        run: docker image inspect forge-sandbox > /dev/null
       - name: "Layer 4b: browser"
         run: npm run test:e2e -- --workers=2
         working-directory: web
@@ -181,7 +187,6 @@ jobs:
 
   demo-checks:
     name: Demo checks
-    needs: sandbox-image
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -191,12 +196,15 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked
-      - uses: actions/download-artifact@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
-          name: forge-sandbox-image
-          path: /tmp
+          context: sandbox
+          tags: forge-sandbox:latest
+          load: true
+          cache-from: type=gha,scope=forge-sandbox
       - name: Load sandbox image
-        run: docker load -i /tmp/forge-sandbox.tar && docker image inspect forge-sandbox > /dev/null
+        run: docker image inspect forge-sandbox > /dev/null
       - name: "Layer 5: demo eval checkers"
         run: uv run python demo/verify.py --runner docker
       - name: "Layer 5b: example checkers"
