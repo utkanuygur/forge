@@ -727,7 +727,7 @@ judged run).
 
 | Method | Path | Auth | Returns |
 |---|---|---|---|
-| GET | `/healthz` | none | `{"status": "ok" or "error", "executor", "components": {"database": {...}, "docker": {...}}, "time"}`; 200 when every component is ok or skipped, else 503. Docker (daemon and `FORGE_SANDBOX_IMAGE`) is checked only when `FORGE_EXECUTOR=docker` (the default), cached 10 s. |
+| GET | `/healthz` | none | `{"status": "ok" or "error", "executor", "components": {"database": {...}, "docker": {...}}, "build", "time"}` (`build` is the `/v1/version` object); 200 when every component is ok or skipped, else 503. Docker (daemon and `FORGE_SANDBOX_IMAGE`) is checked only when `FORGE_EXECUTOR=docker` (the default), cached 10 s. |
 | GET | `/metrics` | localhost unless `FORGE_METRICS_PUBLIC=1` | Prometheus text: `forge_runs_total{agent,status,source}`, `forge_run_duration_seconds` histogram `{agent}`, `forge_tokens_total{agent,direction}`, `forge_cost_usd_total{agent}`, `forge_tool_calls_total{tool,error}`, `forge_active_runs` (queued, running and awaiting_approval), `forge_runs_awaiting_approval`, `forge_improvements_total{status}`. `forge_runs_total` status labels include `awaiting_approval` and `budget_exceeded`; `forge_cost_usd_total` sums the stored run costs. |
 
 Structured logs: logger `forge.lifecycle` writes one JSON line per run event (`run_queued`, `run_started`,
@@ -944,3 +944,27 @@ Triggers, `forge/triggers`), `assist_share_limit` (Sharing, `forge/server/assist
 (Tools, `forge/tools/mcp.py`). Triggers read `public_url` for hook paths and reply links. Governance budgets are
 per agent fields, not settings. Development and test switches (`FORGE_ALLOW_PRIVATE_HTTP`, `FORGE_SCHEDULER`,
 `FORGE_TEST_CLOCK_FILE`, desktop entry, scripts) stay environment only and are listed at the end of `.env.example`.
+
+## Build info (additive)
+
+`GET /v1/version` (no auth, no secrets, also through the public tunnel) returns the running build. `/healthz`
+includes the same object as `build`.
+
+```json
+{"version": "0.1.3", "commit": "473b4fa", "built_at": "2026-10-10T19:30:00Z", "channel": "release"}
+```
+
+| Field | Notes |
+|---|---|
+| `version` | `0.1.N` for releases, `0.1.N-preview` for previews, `<latest tag>+dev` (for example `0.1.2+dev`) on a dev server; null when unknown |
+| `commit` | short commit hash, or null |
+| `built_at` | ISO 8601 UTC build time; null on dev servers |
+| `channel` | `release`, `preview` or `dev`; null when unknown |
+
+`forge/buildinfo.py` takes each field from the first source that knows it: env vars `FORGE_VERSION`,
+`FORGE_COMMIT`, `FORGE_BUILT_AT`, `FORGE_CHANNEL` (set by the desktop app); then `build-info.json` next to the
+module (bundled into the frozen server by `desktop/scripts/build-server.sh`); then, outside a frozen build,
+the repository's `git describe --tags --always --dirty` and `git rev-parse --short HEAD` (cached per process,
+channel `dev`). A source with a version but no channel gets one from the version. It never fails: unknown
+fields are null. The web header shows it as a badge (`v0.1.3 · 473b4fa`, `v0.1.4-preview · abc1234`,
+`dev · abc1234`).

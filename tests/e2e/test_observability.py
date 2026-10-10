@@ -233,6 +233,20 @@ def test_healthz_reports_database_and_docker(api):
     assert body["components"]["docker"]["status"] == "ok"
 
 
+def test_version_needs_no_auth_and_matches_healthz(api):
+    """GET /v1/version answers a remote caller without a key: a dev server from this checkout reports channel
+    dev and the checkout's short commit, and /healthz carries the same object."""
+    r = httpx.get(api.base_url.join("/v1/version"), headers=REMOTE)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body) == {"version", "commit", "built_at", "channel"}
+    head = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"], capture_output=True,
+                          text=True).stdout.strip()
+    assert body["channel"] == "dev" and body["commit"] == head and body["built_at"] is None
+    assert body["version"] is None or body["version"].endswith("+dev")
+    assert httpx.get(api.base_url.join("/healthz"), headers=REMOTE).json()["build"] == body
+
+
 def test_healthz_503_when_sandbox_image_missing(tmp_path):
     """OBS7: a server whose Docker check fails (sandbox image missing) answers /healthz with 503."""
     port = _free_port()

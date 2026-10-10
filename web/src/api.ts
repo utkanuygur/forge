@@ -590,6 +590,16 @@ export interface Template {
   network: boolean;
 }
 
+export type BuildChannel = "release" | "preview" | "dev";
+
+// GET /v1/version: the running build. Any field can be null when the server cannot tell.
+export interface BuildInfo {
+  version: string | null;
+  commit: string | null;
+  built_at: string | null;
+  channel: BuildChannel | null;
+}
+
 export interface CreateAgentBody {
   slug: string;
   name: string;
@@ -748,6 +758,7 @@ export const api = {
   promote: (slug: string, version: number) => request<Agent>("POST", `/agents/${enc(slug)}/promote`, { version }),
   rotateKey: (slug: string) => request<{ api_key: string }>("POST", `/agents/${enc(slug)}/rotate-key`),
   templates: () => request<Template[]>("GET", "/templates"),
+  version: () => request<BuildInfo>("GET", "/version"),
   draftAgent: (body: { description: string; examples?: string[]; constraints?: string }) =>
     request<AgentDraft>("POST", "/agent-drafts", body),
   putSecrets: (slug: string, values: Record<string, string>) =>

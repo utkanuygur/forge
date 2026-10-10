@@ -49,6 +49,24 @@ publishing: run `npm run dist`, install the dmg, and run `npm run verify -- --ap
 /Applications/Forge.app`. The `version` in `package.json` sets the dmg name and the version the app reports,
 so bump it for each release.
 
+### Build info
+
+Every build records which code it came from, so the app, the server and the web UI can show it:
+
+- `scripts/build-server.sh` writes `build/build-info.json` with `commit` (`git rev-parse --short HEAD`),
+  `built_at` (UTC, ISO 8601) and, when `FORGE_BUILD_VERSION` is set (for example `0.1.3` or
+  `0.1.4-preview`), `version` and `channel`. The file goes into the frozen server next to `schema.sql`
+  (`_internal/forge/build-info.json`) and into the app as an extraResource (`Contents/Resources/build-info.json`).
+- The afterPack hook rewrites the app's copy with the packaged version (`-c.extraMetadata.version` when the
+  release script sets it), the current commit and the packaging time, so a reused (cached) server build never
+  reports an old commit.
+- At startup the app passes `FORGE_VERSION` (`app.getVersion()`), `FORGE_CHANNEL` (`preview` when the version
+  contains `-preview`, else `release`), `FORGE_COMMIT` and `FORGE_BUILT_AT` to the server. `forge/buildinfo.py`
+  prefers these env vars, then the bundled file, then git (dev checkouts report channel `dev` and version
+  `<latest tag>+dev`). The result is served at `GET /v1/version` and in `/healthz` under `build`.
+- The window title shows the version (`Forge 0.1.3`, `Forge 0.1.4-preview`; `Forge Dev` in dev mode), and
+  Forge > About Forge shows version, channel, commit and build date, with a Copy button.
+
 ## Install and first launch
 
 Open the dmg and drag Forge to Applications. The app is ad hoc signed but not signed with an Apple

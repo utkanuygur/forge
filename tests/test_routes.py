@@ -36,6 +36,7 @@ def test_every_router_is_mounted_before_the_spa_catch_all(client):
         ("get", "/v1/agents/r1/metrics", None, 200, "summary"),                       # observability api
         ("get", "/v1/runs/r_missing/timeline", None, 404, "run not found"),           # observability api
         ("get", "/healthz", None, 200, "components"),                                 # observability ops
+        ("get", "/v1/version", None, 200, "channel"),                                 # build info
         ("post", "/v1/agents/r1/tools/test", {"tool": {"name": "t", "description": "d", "url": "https://x.test",
                                                        "parameters": {"type": "object"}}, "network": False},
          200, "is_error"),                                                            # tools
