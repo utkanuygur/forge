@@ -4,6 +4,7 @@ const net = require('net');
 const path = require('path');
 const { spawn } = require('child_process');
 const paths = require('./paths');
+const buildinfo = require('./buildinfo');
 const { toolPath, findExecutable, stopProcess } = require('./proc');
 
 const HOST = '127.0.0.1';
@@ -90,9 +91,10 @@ function start(port, settings) {
     FORGE_PARENT_PID: String(process.pid),
     PYTHONUNBUFFERED: '1',
   };
-  for (const k of ['ANTHROPIC_API_KEY', 'FORGE_DEFAULT_MODEL', 'FORGE_GRADER_MODEL']) {
+  for (const k of ['ANTHROPIC_API_KEY', 'FORGE_DEFAULT_MODEL', 'FORGE_GRADER_MODEL', ...Object.values(buildinfo.ENV_KEYS)]) {
     if (!paths.isDev) delete env[k];
   }
+  Object.assign(env, buildinfo.serverEnv()); // FORGE_VERSION, FORGE_CHANNEL, FORGE_COMMIT, FORGE_BUILT_AT
   if (settings.apiKey) env.ANTHROPIC_API_KEY = settings.apiKey;
   if (settings.defaultModel) env.FORGE_DEFAULT_MODEL = settings.defaultModel;
   if (settings.graderModel) env.FORGE_GRADER_MODEL = settings.graderModel;

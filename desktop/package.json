@@ -41,6 +41,10 @@
       {
         "from": "build/sandbox",
         "to": "sandbox"
+      },
+      {
+        "from": "build/build-info.json",
+        "to": "build-info.json"
       }
     ],
     "asar": true,
