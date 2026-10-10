@@ -64,6 +64,30 @@ report fixed token counts.
 | After changing prompts, the optimizer or the demo | `make test-demo`, then `make rehearse` | Rehearsal must print `OK: held-out improved` |
 | Before a live demo | `make serve` in one terminal, `make preflight` in another | Every line PASS (WARN only for optional GPU and local model) |
 
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request, on pushes to `master` and on manual dispatch. Each
+layer is its own parallel check, so the commit status names the layer that failed:
+
+| Check | Runs | Layer |
+|---|---|---|
+| Lint | `compileall forge`, `tsc -b` in `web/` | static |
+| Python unit | `pytest -m "not docker and not e2e and not live"` | 1 |
+| Sandbox | `pytest -m "docker and not e2e"` | 2 |
+| Full stack | `pytest -m e2e` | 3 |
+| Web unit | `npm test` (Vitest) | 4a |
+| Browser | `npm run test:e2e -- --workers=2` (Playwright, Chromium); report and traces uploaded on failure | 4b |
+| Demo checks | `demo/verify.py --runner docker`, `demo/verify_examples.py` | 5, 5b |
+| Desktop macOS 12 compat | `desktop/scripts/build-server.sh` on macos-14 (arm64), which ends with `check-min-macos.sh` | desktop build |
+
+Each Docker job builds `forge-sandbox` itself through `.github/actions/sandbox-image`, which restores the layers
+from the GitHub Actions cache (30 to 45 s with a warm cache, including Buildx setup; the Sandbox job writes the cache) and fails if the image is
+missing, since the Docker tests would otherwise skip themselves. Building once and sharing the image as an
+artifact was measured too: download plus `docker load` cost about as much per job and added a serial build job,
+so the run took 15 to 25 s longer. The macOS job is billed at a higher rate, so it runs
+only when `desktop/`, `forge/`, `pyproject.toml`, `uv.lock` or the workflow change (pull requests and pushes
+to `master`), or on manual dispatch (`gh workflow run ci.yml --ref <branch>`). Live tests never run in CI.
+
 `make rehearse` runs the real improvement loop on the demo agent with Claude: it evaluates v1, runs one
 improvement cycle and prints per-split scores, the learned lessons and a verdict. The demo is credible
 only if held-out cases improve with zero regressions; the script explains how to tune the demo when not.
