@@ -137,6 +137,28 @@ Auth amendments (server implementation):
 | POST | `/runs` | `{agent_slug, version_n, input, source: "local"}` | `Run` (status `running`) |
 | POST | `/runs/{id}/events` | `[Event]` | `{"ok": true}` (a `run_finished` event finalizes the run) |
 
+## Workspace files (amendment)
+
+Read-only browsing of a finished run's exported workspace (`runs/<run_id>/workspace.tar.gz`), implemented in
+`forge/server/files.py`. Auth is the same as the other run endpoints (localhost builder, the agent's API key, or
+its share token); a share token may only browse runs whose `source` is `share` (401 otherwise).
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/runs/{id}/files?changed=0` | `[{path, size, is_text}]` sorted by path; with `changed=1` each entry also has `changed: bool` and, when true, `change`: `added`, `modified` or `renamed` (from the stored `diff.patch`) |
+| GET | `/runs/{id}/files/{path}` | `text/plain; charset=utf-8` file content |
+
+- Paths are archive relative POSIX paths without a leading `./`. `.git` and anything under it is never listed or
+  served. Only regular files are listed; a symlink or hard link is listed (with its target's size and type) only when
+  it resolves, within 8 hops, to a regular file inside the archive. Links pointing outside the archive, absolute
+  links, loops and dangling links are omitted and read as 404.
+- `is_text`: the first 8 KB contain no NUL byte and decode as UTF-8. Listings are capped at 10,000 files.
+- Reading: 400 for a path that is empty, absolute, contains `..` or names `.git`; 404 when the run has no archive
+  or the file is missing; 415 for a binary file; 413 for a text file over 1 MB. Responses carry
+  `X-Content-Type-Options: nosniff`. Nothing is extracted to disk; archives are indexed in memory and cached by
+  path, mtime and size.
+- Deleted files are not in the archive, so they never appear in the listing; see `/runs/{id}/diff`.
+
 ## Repeated evals (amendment)
 
 Each eval case runs `k` times per version, `k` = the agent's `eval_repeats` (PATCH, 1..9); unset agents use
