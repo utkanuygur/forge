@@ -5,7 +5,8 @@ import { useRef, useState } from "react";
 import GenerateTaskButton from "../../src/components/GenerateTaskButton";
 import RunForm from "../../src/components/RunForm";
 
-const TASK = { title: "Refund endpoint", prompt: "Add POST /orders/{id}/refund in src/acme/app.py.", rationale: "r" };
+const TASK = { title: "Refund endpoint", prompt: "Add POST /orders/{id}/refund in src/acme/app.py." };
+const REPLY = { result: TASK, rationale: "r" };
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -14,9 +15,9 @@ let fetchMock: ReturnType<typeof vi.fn>;
 let respond: () => Promise<Response> | Response;
 
 beforeEach(() => {
-  respond = () => json(TASK);
+  respond = () => json(REPLY);
   fetchMock = vi.fn(async (url: string) => {
-    if (String(url).startsWith("/v1/agents/demo/sample-task")) return respond();
+    if (String(url).startsWith("/v1/assist/task")) return respond();
     return json({ detail: "unexpected" }, 500);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -43,7 +44,7 @@ const button = () => screen.getByRole("button", { name: "Generate a sample task"
 describe("GenerateTaskButton", () => {
   it("shows a spinner and Generating… while the request is in flight, then fills and focuses the box", async () => {
     let release!: () => void;
-    respond = () => new Promise<Response>((r) => (release = () => r(json(TASK))));
+    respond = () => new Promise<Response>((r) => (release = () => r(json(REPLY))));
     render(<Harness />);
     await userEvent.click(button());
     expect(button()).toBeDisabled();
@@ -57,8 +58,8 @@ describe("GenerateTaskButton", () => {
     expect(box().selectionEnd).toBe(TASK.prompt.length);
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull(); // the box was empty
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/v1/agents/demo/sample-task");
-    expect(JSON.parse(init.body)).toEqual({ avoid: [] });
+    expect(url).toBe("/v1/assist/task");
+    expect(JSON.parse(init.body)).toEqual({ slug: "demo", avoid: [] });
   });
 
   it("replaces existing text and offers Undo, which restores it", async () => {
@@ -89,8 +90,9 @@ describe("GenerateTaskButton", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Too many sample tasks");
     expect(box().value).toBe("keep me");
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/v1/agents/demo/sample-task?share=tok");
+    expect(url).toBe("/v1/assist/task?share=tok");
     expect(init.headers["X-Share-Token"]).toBe("tok");
+    expect(JSON.parse(init.body)).toEqual({ slug: "demo", input: { current: "keep me" }, avoid: [] });
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -104,7 +106,11 @@ describe("GenerateTaskButton", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(box(), { key: "g", code: "KeyG", altKey: true });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ avoid: [TASK.prompt] });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      slug: "demo",
+      input: { current: TASK.prompt },
+      avoid: [TASK.prompt],
+    });
   });
 
   it("is mounted in RunForm and fills its task box", async () => {

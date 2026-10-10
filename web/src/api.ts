@@ -440,20 +440,27 @@ export interface CreateAgentBody {
   eval_cases?: NewEvalBody[];
 }
 
-// POST /agents/{slug}/sample-task (the Generate button). Share-token callers get only title, prompt, rationale.
-export interface SampleTask {
-  title: string;
-  prompt: string;
+// POST /assist/{kind} (Generate buttons; see CONTRACT.md "Assist"). Share-token callers get only result and
+// rationale; builders also get kind, version and diagnostics.
+export interface AssistResponse<R = Record<string, unknown>> {
+  result: R;
   rationale: string;
-  version?: number;
-  variety?: string;
-  context?: Record<string, unknown>;
+  kind?: string;
+  version?: number | null;
+  diagnostics?: Record<string, unknown>;
 }
 
-export interface SampleTaskBody {
+export interface AssistBody {
+  slug?: string;
   version?: number;
-  hint?: string;
+  input?: Record<string, unknown>;
   avoid?: string[];
+}
+
+/** Result of the "task" kind. */
+export interface TaskSuggestion {
+  title: string;
+  prompt: string;
 }
 
 export interface NewVersionBody {
@@ -580,8 +587,8 @@ export const api = {
     if (opts.version !== undefined) body.version = opts.version;
     return request<Run>("POST", `/agents/${enc(slug)}/runs`, body, share);
   },
-  sampleTask: (slug: string, body: SampleTaskBody = {}, share?: string) =>
-    request<SampleTask>("POST", `/agents/${enc(slug)}/sample-task`, body, share),
+  assist: <R = Record<string, unknown>>(kind: string, body: AssistBody = {}, share?: string) =>
+    request<AssistResponse<R>>("POST", `/assist/${enc(kind)}`, body, share),
   listRuns: (slug: string, limit = 50, share?: string) =>
     request<Run[]>("GET", `/agents/${enc(slug)}/runs?limit=${limit}`, undefined, share),
   getRun: (id: string, share?: string) => request<Run>("GET", `/runs/${enc(id)}`, undefined, share),

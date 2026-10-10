@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createAgent, expectRunSucceeded, uniqueSlug } from "./helpers";
 
-// fake:grader answers the sample task prompt with the first of FAKE_SAMPLE_TASKS (forge/providers.py) that is not
+// fake:grader answers assist kind "task" with the first of FAKE_TASKS (forge/assist/kinds/task.py) that is not
 // already a recent input or in the avoid list.
 const FIRST = "Can you list every file in the workspace and write SUMMARY.md";
 const SECOND = "Please count the lines in each file of the workspace";
@@ -36,11 +36,11 @@ test.describe("Generate sample task", () => {
     const agent = await createAgent(request, { slug, model: "fake:echo" });
 
     await page.goto(`/s/${slug}?share=${agent.share_token}`);
-    const responsePromise = page.waitForResponse((r) => r.url().includes(`/v1/agents/${slug}/sample-task`));
+    const responsePromise = page.waitForResponse((r) => r.url().includes("/v1/assist/task"));
     await page.getByRole("button", { name: "Generate a sample task" }).click();
     const response = await responsePromise;
     expect(response.request().headers()["x-share-token"]).toBe(agent.share_token);
-    expect(Object.keys(await response.json()).sort()).toEqual(["prompt", "rationale", "title"]);
+    expect(Object.keys(await response.json()).sort()).toEqual(["rationale", "result"]);
     await expect(page.getByRole("textbox", { name: "Task" })).toHaveValue(new RegExp(`^${FIRST}`));
   });
 });
