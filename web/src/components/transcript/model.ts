@@ -82,8 +82,45 @@ export function clip(s: string, n = 80): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
-/** Claude Code style header: `Bash(cmd)`, `Read(path:1-20)`, `Write(path)`, `Update(path)`. */
-export function toolLabel(name: string, args: Record<string, unknown>): { tool: string; arg: string } {
+export type ToolKind = "bash" | "read" | "write" | "edit" | "agent" | "mcp" | "http" | "other";
+
+/** Which renderer a call gets. Agent and MCP tools are recognized by name; HTTP tools by result `source`. */
+export function toolKind(name: string, result?: Record<string, unknown>): ToolKind {
+  if (name === "bash") return "bash";
+  if (name === "read_file") return "read";
+  if (name === "write_file") return "write";
+  if (name === "edit_file") return "edit";
+  if (name.startsWith("agent__") || result?.child_run_id) return "agent";
+  if (name.startsWith("mcp__") || result?.source === "mcp") return "mcp";
+  if (result?.source === "http") return "http";
+  return "other";
+}
+
+function compactArgs(args: Record<string, unknown>, n = 60): string {
+  const s = JSON.stringify(args);
+  return clip(s === "{}" ? "" : s, n);
+}
+
+/** Claude Code style header: `Bash(cmd)`, `Read(path:1-20)`, `Write(path)`, `Update(path)`, `Agent(slug)`. */
+export function toolLabel(
+  name: string,
+  args: Record<string, unknown>,
+  result?: Record<string, unknown>,
+): { tool: string; arg: string } {
+  const kind = toolKind(name, result);
+  if (kind === "agent") {
+    return { tool: "Agent", arg: str(result?.child_agent) || name.replace(/^agent__/, "") };
+  }
+  if (kind === "mcp") {
+    const [, server = "", ...rest] = name.split("__");
+    const tool = rest.join("__");
+    return { tool: server && tool ? `${server}.${tool}` : name, arg: compactArgs(args) };
+  }
+  if (kind === "http") {
+    const method = str(result?.method ?? args.method).toUpperCase();
+    const url = str(result?.url ?? args.url ?? args.path);
+    return { tool: name, arg: method || url ? clip(`${method} ${url}`.trim(), 80) : compactArgs(args) };
+  }
   const path = str(args.path);
   switch (name) {
     case "bash": {

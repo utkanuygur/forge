@@ -25,6 +25,12 @@
 .tx-badge {
   @apply ml-2 rounded bg-red-100 px-1.5 py-px text-[11px] font-medium text-red-700 dark:bg-red-950 dark:text-red-300;
 }
+.tx-badge-ok {
+  @apply ml-2 rounded bg-emerald-50 px-1.5 py-px text-[11px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300;
+}
+.tx-nested {
+  @apply mt-2 border-l-2 border-neutral-200 pl-3 dark:border-neutral-800;
+}
 .tx-result { @apply flex gap-2 pl-0.5; }
 .tx-elbow { @apply shrink-0 select-none text-neutral-400 dark:text-neutral-600; }
 .tx-pre { @apply m-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed; }

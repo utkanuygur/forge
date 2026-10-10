@@ -1,8 +1,8 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ArrowDown } from "lucide-react";
 import type { ForgeEvent, Run } from "../../api";
 import Markdown from "./Markdown";
-import { Dot, ExpandContext, ToolBlock } from "./tools";
+import { Dot, ExpandContext, ToolRow } from "./tools";
 import {
   buildItems,
   costFrom,
@@ -15,8 +15,6 @@ import {
   tokensFromEvents,
 } from "./model";
 import "./transcript.css";
-
-const ToolRow = memo(ToolBlock);
 
 /** Current time in unix seconds, ticking once a second while `active`. */
 export function useNow(active: boolean): number {

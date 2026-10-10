@@ -71,6 +71,11 @@ def tool_label(name: str, args: dict[str, Any]) -> str:
         return f"Write({path})"
     if name == "edit_file":
         return f"Update({path})"
+    if name.startswith("agent__"):
+        return f"Agent({name.removeprefix('agent__')})"
+    if name.startswith("mcp__") and name.count("__") >= 2:
+        _, server, tool = name.split("__", 2)
+        name = f"{server}.{tool}"
     return f"{name}({_clip(json.dumps(args, ensure_ascii=False), 60)})"
 
 
@@ -88,8 +93,18 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
-def result_summary(name: str, args: dict[str, Any], output: str, is_error: bool) -> tuple[list[str], bool]:
+def result_summary(name: str, args: dict[str, Any], output: str, is_error: bool,
+                   payload: dict[str, Any] | None = None) -> tuple[list[str], bool]:
     """Lines to print under a tool header, and whether they are an error."""
+    p = payload or {}
+    if name.startswith("agent__") or p.get("child_run_id"):
+        status = str(p.get("child_status") or ("failed" if is_error else "succeeded"))
+        first = next((ln.strip() for ln in output.splitlines() if ln.strip()), "")
+        line = f"{status}: {_clip(plain_markdown(first), 100)}" if first else status
+        extra = [f"run {p['child_run_id']}"] if p.get("child_run_id") else []
+        return [line, *extra], is_error or status not in ("succeeded",)
+    if isinstance(p.get("http_status"), int) and p["http_status"] >= 400:
+        is_error = True
     if name == "bash":
         b = parse_bash(output)
         lines = _lines(b["stdout"]) + _lines(b["stderr"])
@@ -153,7 +168,8 @@ class TranscriptPrinter:
             self._w(f"{self._c('32', '●')} {self._c('1', tool)}({rest}")
         elif e.type == "tool_result":
             call = self.calls.pop(str(p.get("id")), {"name": p.get("name"), "args": {}})
-            lines, err = result_summary(str(call["name"]), call["args"], str(p.get("output", "")), bool(p.get("is_error")))
+            lines, err = result_summary(str(call["name"]), call["args"], str(p.get("output", "")),
+                                        bool(p.get("is_error")), p)
             for i, line in enumerate(lines):
                 prefix = "  ⎿  " if i == 0 else "     "
                 self._w(self._c("31", prefix + line) if err else self._c("2", prefix + line))

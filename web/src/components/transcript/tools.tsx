@@ -1,8 +1,11 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, memo, useContext, useEffect, useMemo, useState } from "react";
 import type { ForgeEvent } from "../../api";
+import { AgentBody } from "./AgentTool";
 import { Highlighted, langFromPath } from "./highlight";
 import {
   bashCommand,
+  clip,
+  toolKind,
   diffStats,
   fmtElapsed,
   lineDiff,
@@ -296,7 +299,12 @@ export function ToolBlock({ call, result, now }: { call: ForgeEvent; result?: Fo
     exitCode = parseBash(output).exitCode;
     if (exitCode !== null && exitCode !== 0) isError = true;
   }
-  const { tool, arg } = toolLabel(name, args);
+  const rp = (result?.payload ?? {}) as Record<string, unknown>;
+  const kind = toolKind(name, result ? rp : undefined);
+  const httpStatus = typeof rp.http_status === "number" ? rp.http_status : null;
+  if (httpStatus !== null && httpStatus >= 400) isError = true;
+  const { tool, arg } = toolLabel(name, args, result ? rp : undefined);
+  const delegated = kind === "agent" ? str(args.input).trim().split("\n")[0] : "";
   const Body = BODIES[name] ?? GenericBody;
   const pending = !result;
   const tone = pending ? "pending" : isError ? "error" : "ok";
@@ -326,6 +334,16 @@ export function ToolBlock({ call, result, now }: { call: ForgeEvent; result?: Fo
               exit {exitCode}
             </span>
           )}
+          {httpStatus !== null && (
+            <span className={httpStatus >= 400 ? "tx-badge" : "tx-badge-ok"} data-testid="http-status">
+              {httpStatus}
+            </span>
+          )}
+          {delegated && (
+            <span className="ml-2 text-neutral-500 dark:text-neutral-400" data-testid="agent-input">
+              {clip(delegated, 100)}
+            </span>
+          )}
           {pending && (
             <span className="ml-2 inline-flex items-center gap-1.5 text-neutral-500">
               <Spinner /> <span data-testid="tool-elapsed">{fmtElapsed(Math.max(0, now - call.ts))}</span>
@@ -336,6 +354,8 @@ export function ToolBlock({ call, result, now }: { call: ForgeEvent; result?: Fo
           <Result>
             <span>Running…</span>
           </Result>
+        ) : kind === "agent" ? (
+          <AgentBody result={rp} output={output} isError={isError} open={open} setOpen={setOpen} />
         ) : (
           <Body args={args} output={output} isError={isError} open={open} setOpen={setOpen} />
         )}
@@ -343,3 +363,6 @@ export function ToolBlock({ call, result, now }: { call: ForgeEvent; result?: Fo
     </div>
   );
 }
+
+/** Memoized row: finished tools receive a constant `now` and skip re-rendering on clock ticks. */
+export const ToolRow = memo(ToolBlock);

@@ -66,6 +66,18 @@ def test_summary_and_final():
     assert "Summary\nAdded /health with pytest coverage." in out
 
 
+def test_delegated_agent_and_mcp_lines():
+    out = render([
+        ev(0, "tool_call", id="a", name="agent__fixer", args={"input": "fix it"}),
+        ev(1, "tool_result", id="a", name="agent__fixer", output="**Fixed** the bug.\nmore", is_error=False,
+           child_run_id="r_child", child_agent="fixer", child_status="succeeded"),
+        ev(2, "tool_call", id="m", name="mcp__github__list_issues", args={"repo": "a/b"}),
+        ev(3, "tool_result", id="m", name="mcp__github__list_issues", output="#1", is_error=False, source="mcp"),
+    ])
+    assert "● Agent(fixer)\n  ⎿  succeeded: Fixed the bug.\n     run r_child" in out
+    assert '● github.list_issues({"repo": "a/b"})\n  ⎿  #1' in out
+
+
 def test_helpers(monkeypatch):
     assert plain_markdown("# T\n**b** and `c`") == "T\nb and c"
     assert parse_bash(bash_out(2, "o", "e") + "\n[command timed out after 5s and was killed]") == {
