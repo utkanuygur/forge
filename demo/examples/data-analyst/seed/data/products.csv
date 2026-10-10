@@ -1,0 +1,25 @@
+product_id,name,category,unit_price
+P101,USB-C Hub 7-in-1,Electronics,49.99
+P102,Noise Cancelling Headphones,Electronics,189.00
+P103,Mechanical Keyboard,Electronics,119.50
+P104,1080p Webcam,Electronics,64.99
+P105,Portable SSD 1TB,Electronics,99.00
+P106,Wireless Mouse,Electronics,29.99
+P107,Ceramic Pour-Over Set,Home,38.00
+P108,Linen Duvet Cover,Home,129.00
+P109,Cast Iron Skillet,Home,44.50
+P110,Desk Lamp,Home,54.00
+P111,Glass Storage Set,Home,32.99
+P112,Merino Wool Socks,Apparel,18.00
+P113,Rain Shell Jacket,Apparel,149.00
+P114,Organic Cotton Tee,Apparel,24.00
+P115,Everyday Sneakers,Apparel,95.00
+P116,Fleece Pullover,Apparel,72.00
+P117,Trail Backpack 28L,Outdoors,109.00
+P118,Insulated Bottle,Outdoors,34.00
+P119,Camp Stove,Outdoors,79.99
+P120,Headlamp,Outdoors,39.95
+P121,Vitamin C Serum,Beauty,42.00
+P122,Mineral Sunscreen,Beauty,26.50
+P123,Hair Repair Mask,Beauty,31.00
+P124,Lip Balm Trio,Beauty,12.00
