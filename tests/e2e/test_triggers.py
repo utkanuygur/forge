@@ -165,7 +165,9 @@ def test_schedule_fires_once_per_slot_with_fake_clock(tapi, tserver, agent):
         poll(lambda: len([f for f in fires(tapi, t["id"]) if f["status"] == "started"]) == 2 or None, timeout=20,
              what="second scheduled fire")
         time.sleep(1)
-        assert [f["status"] for f in fires(tapi, t["id"])] == ["started", "missed", "started"]
+        history = fires(tapi, t["id"])
+        assert [f["status"] for f in history] == ["started", "missed", "started"]
+        assert wait_run(tapi, history[0]["run_id"])["status"] == "succeeded"  # no sandbox outlives the test
         tapi.patch(f"/triggers/{t['id']}", json={"enabled": False})
     finally:
         tserver.set_clock(None)
