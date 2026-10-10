@@ -82,6 +82,8 @@ async def test_loop_write_edit_run_finish(local):
         "turns": 4,
         "tokens_in": 40,
         "tokens_out": 20,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
     }
     res = results(events)
     assert not any(r["is_error"] for r in res)

@@ -27,7 +27,8 @@ class Event(BaseModel):
     #   assistant:    {"text"}
     #   tool_call:    {"id", "name", "args"}
     #   tool_result:  {"id", "name", "output", "is_error"}
-    #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out"}
+    #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out", "cache_read_tokens",
+    #                  "cache_write_tokens"}
     #   error:        {"message"}
 
 
@@ -101,6 +102,13 @@ class ModelResponse(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
+    # Why the model stopped, normalized across providers: "end_turn", "tool_use", "max_tokens", "refusal",
+    # "stop_sequence", "pause_turn", ... (OpenAI-compatible finish_reason "length" maps to "max_tokens",
+    # "content_filter" to "refusal"). None when the provider does not report it.
+    stop_reason: str | None = None
+    stop_detail: str | None = None  # refusal category or explanation when stop_reason == "refusal"
+    cache_read_tokens: int = 0  # input tokens served from the prompt cache (Anthropic)
+    cache_write_tokens: int = 0  # input tokens written to the prompt cache (Anthropic)
 
 
 class Provider(Protocol):
@@ -155,6 +163,8 @@ class RunResult(BaseModel):
     turns: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     error: str | None = None
 
 
