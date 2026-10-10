@@ -11,7 +11,7 @@ VERSION_KEYS = ("id", "agent_id", "n", "system_prompt", "lessons", "model", "too
 
 
 def version_view(v: dict) -> dict:
-    return {k: v[k] for k in VERSION_KEYS}
+    return {**{k: v[k] for k in VERSION_KEYS}, "lesson_meta": v.get("lesson_meta") or {}}
 
 
 def agent_view(a: dict, *, versions: bool = False) -> dict:
@@ -66,4 +66,5 @@ def improvement_view(im: dict) -> dict:
         "newly_passing": s.get("newly_passing", []), "regressions": s.get("regressions", []),
         "lessons_diff": s.get("lessons_diff", []), "error": s.get("error"),
         "created_at": im["created_at"], "ended_at": im["ended_at"],
+        "kind": im.get("kind") or "improve", "ablations": s.get("ablations", []),
     }

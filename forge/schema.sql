@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS agent_versions (
   created_by     TEXT NOT NULL DEFAULT 'human',
   rationale      TEXT NOT NULL DEFAULT '',
   created_at     REAL NOT NULL,
+  lesson_meta    TEXT NOT NULL DEFAULT '{}',   -- JSON {lesson text: provenance}, see CONTRACT.md
   UNIQUE (agent_id, n)
 );
 
@@ -109,5 +110,6 @@ CREATE TABLE IF NOT EXISTS improvements (
   status                TEXT NOT NULL,   -- running | promoted | eligible | rejected | failed
   summary               TEXT NOT NULL DEFAULT '{}',  -- JSON comparison, see CONTRACT.md
   created_at            REAL NOT NULL,
-  ended_at              REAL
+  ended_at              REAL,
+  kind                  TEXT NOT NULL DEFAULT 'improve'  -- improve | prune
 );

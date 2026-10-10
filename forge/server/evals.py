@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from forge import db
+from forge.provenance import lesson_provenance
 from forge.server.runs import get_manager
 from forge.types import AgentVersion, Provider
 
@@ -108,7 +109,7 @@ def start_eval(agent: dict, version: dict) -> None:
 
 
 def _last_improvement_time(agent_id: str, exclude: str | None = None) -> float:
-    ims = [i for i in db.list_improvements(agent_id) if i["id"] != exclude]
+    ims = [i for i in db.list_improvements(agent_id) if i["id"] != exclude and i.get("kind") != "prune"]
     return ims[0]["created_at"] if ims else 0.0
 
 
@@ -173,6 +174,8 @@ async def _improve(agent: dict, base: dict, improvement_id: str) -> None:
             agent["id"], **{k: base[k] for k in ("system_prompt", "model", "tools", "http_tools", "network",
                                                  "seed_files")},
             lessons=lessons, parent_id=base["id"], created_by="optimizer", rationale=_rationale(diff))
+        db.set_lesson_meta(cand["id"], lesson_provenance(  # per-lesson origin, see CONTRACT.md
+            base["lessons"], base.get("lesson_meta"), lessons, edits, cand["n"]))
         db.update_improvement(improvement_id, candidate_version_id=cand["id"], summary=summary)
         await run_eval(agent, cand)
         cmp = improve.compare(cases, base_res, results_map(cand["id"]))
@@ -197,7 +200,7 @@ def maybe_auto_improve(agent: dict) -> dict | None:
     ims = db.list_improvements(agent["id"])
     if any(i["status"] == "running" for i in ims):
         return None
-    since = ims[0]["created_at"] if ims else 0.0
+    since = _last_improvement_time(agent["id"])  # prune jobs do not consume feedback
     if len(db.negative_feedback_since(agent["id"], since)) < AUTO_IMPROVE_THRESHOLD:
         return None
     return start_improve(agent)

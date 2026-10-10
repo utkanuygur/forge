@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from forge import db
-from forge.server import evals, runs
+from forge.provenance import lesson_provenance
+from forge.server import authoring, evals, runs
 from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
@@ -79,6 +80,15 @@ def run_and_agent(run_id: str, request: Request, *, allow_share: bool = True) ->
 # ---------------------------------------------------------------- builder
 
 
+class EvalCaseIn(BaseModel):
+    name: str
+    input: str
+    seed_files: dict[str, str] = Field(default_factory=dict)
+    checker_type: Literal["shell", "judge"]
+    checker: str
+    split: Literal["train", "holdout"] = "train"
+
+
 class AgentCreate(BaseModel):
     slug: str
     name: str
@@ -91,6 +101,7 @@ class AgentCreate(BaseModel):
     seed_files: dict[str, str] | None = None
     lessons: list[str] | None = None
     auto_promote: bool = False
+    eval_cases: list[EvalCaseIn] | None = None  # created with the agent (e.g. starter cases from a draft)
 
 
 class AgentPatch(BaseModel):
@@ -125,6 +136,10 @@ async def create_agent(body: AgentCreate) -> dict:
         agent["id"], system_prompt=body.system_prompt, model=body.model or evals.default_model(), tools=body.tools,
         http_tools=[t.model_dump() for t in body.http_tools] if body.http_tools else None, network=body.network,
         seed_files=body.seed_files, lessons=body.lessons)
+    if body.lessons:
+        db.set_lesson_meta(v["id"], lesson_provenance([], {}, v["lessons"], [], v["n"], origin="human"))
+    for c in body.eval_cases or []:
+        db.create_eval_case(agent["id"], c.name, c.input, c.checker_type, c.checker, c.split, c.seed_files)
     agent = db.update_agent(agent["id"], prod_version_id=v["id"])
     return {**agent_view(agent), "api_key": key}  # type: ignore[arg-type]
 
@@ -160,7 +175,11 @@ async def create_version(slug: str, body: VersionCreate, request: Request) -> di
     fields.update(body.model_dump(exclude_none=True, exclude={"rationale"}))
     v = db.create_version(agent["id"], **fields, parent_id=prod["id"], created_by="human",
                           rationale=body.rationale or "")
-    return version_view(v)
+    meta = lesson_provenance(prod["lessons"], prod.get("lesson_meta"), v["lessons"], [], v["n"], origin="human")
+    if meta:
+        db.set_lesson_meta(v["id"], meta)
+        v = db.get_version(v["id"])
+    return version_view(v)  # type: ignore[arg-type]
 
 
 @api.get("/agents/{slug}/versions/{n}")
@@ -408,15 +427,6 @@ async def upload_events(run_id: str, request: Request, body: list[dict[str, Any]
 # ---------------------------------------------------------------- improvement
 
 
-class EvalCaseIn(BaseModel):
-    name: str
-    input: str
-    seed_files: dict[str, str] = Field(default_factory=dict)
-    checker_type: Literal["shell", "judge"]
-    checker: str
-    split: Literal["train", "holdout"] = "train"
-
-
 class SaveAsEval(BaseModel):
     name: str | None = None
     checker_type: Literal["shell", "judge"] | None = None
@@ -525,6 +535,7 @@ async def list_improvements(slug: str, request: Request) -> list[dict]:
 
 
 app.include_router(api)
+app.include_router(authoring.router)  # /v1/agent-drafts and /v1/agents/{slug}/prune (before the SPA catch-all)
 
 # ---------------------------------------------------------------- SPA
 

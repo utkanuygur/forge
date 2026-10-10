@@ -250,6 +250,47 @@ class FakeProvider:
 MARKER_LESSON = "Always create a file named MARKER.txt in the workspace root before finishing."
 
 
+# What `fake:grader` returns when called with the drafting prompt (forge.drafting.DRAFT_SYSTEM): a fixed, valid
+# draft so drafting can be tested end to end without API calls. The fake ignores the description.
+FAKE_DRAFT: dict[str, Any] = {
+    "name": "Issue triager",
+    "slug": "issue-triager",
+    "description": "Labels new GitHub issues and writes a short triage summary.",
+    "system_prompt": (
+        "You are an issue triager for a software project. A task gives you one or more GitHub issues; it is done "
+        "when every issue has a label, a priority and a one line reason in triage.md.\n\n"
+        "How to work:\n"
+        "1. Read each issue fully, including any stack trace or reproduction steps.\n"
+        "2. Choose exactly one label from bug, feature, question or docs, and a priority from P0 to P3.\n"
+        "3. Write triage.md as a Markdown table with the columns issue, label, priority and reason.\n"
+        "4. Re-read the table and check that every issue from the task appears once.\n\n"
+        "Final reply: the number of issues triaged and any that need a human decision.\n\n"
+        "Avoid: inventing issue numbers, guessing a priority without evidence, and printing the GITHUB_TOKEN."
+    ),
+    "tools": ["bash", "read_file", "write_file"],
+    "network": True,
+    "network_reason": "Needs the GitHub REST API to read issues.",
+    "suggested_secrets": [{"name": "GITHUB_TOKEN", "why": "Authenticates GitHub API requests for private repositories."}],
+    "seed_files_hint": "None needed; issues come from the task input or the GitHub API.",
+    "eval_cases": [
+        {"name": "crash-report", "input": "Triage issue #12: the app crashes on start with a null pointer trace.",
+         "checker_type": "judge", "split": "train",
+         "checker": "PASS only if triage.md exists, labels issue #12 as bug with priority P0 or P1, and gives a reason "
+                    "that cites the crash. FAIL if the issue number is changed."},
+        {"name": "feature-request", "input": "Triage issue #31: please add a dark mode to the settings page.",
+         "checker_type": "judge", "split": "train",
+         "checker": "PASS only if triage.md labels issue #31 as feature with priority P2 or P3 and the reason "
+                    "mentions dark mode. FAIL if it is labeled bug."},
+        {"name": "triage-file", "input": "Triage issue #7: the README install command is out of date.",
+         "checker_type": "shell", "split": "train", "checker": "test -f triage.md && grep -q '#7' triage.md"},
+        {"name": "mixed-batch", "input": "Triage issues #40 (typo in docs) and #41 (how do I configure logging?).",
+         "checker_type": "judge", "split": "holdout",
+         "checker": "PASS only if triage.md has exactly one row each for #40 labeled docs and #41 labeled question, "
+                    "each with a priority and reason. FAIL if either issue is missing."},
+    ],
+}
+
+
 def _call(name: str, args: dict[str, Any], i: int) -> ModelResponse:
     return ModelResponse(tool_calls=[ToolCall(id=f"call_{i}", name=name, args=args)], tokens_in=10, tokens_out=5)
 
@@ -262,7 +303,8 @@ class ScenarioProvider:
       hello    write hello.py, run it with bash, then finish
       echo     finish immediately, echoing the user's input
       lessons  create MARKER.txt only if a lesson tells it to; otherwise just finish
-      grader   acts as judge (always passes) and as optimizer (proposes MARKER_LESSON)
+      grader   acts as judge (always passes), as optimizer (proposes MARKER_LESSON) and, given the drafting
+               prompt, as agent drafter (returns FAKE_DRAFT)
       loop     calls bash forever (exercises the turn limit)
       error    raises, as if the model API failed
     """
@@ -297,6 +339,10 @@ class ScenarioProvider:
                     return _call("write_file", {"path": "MARKER.txt", "content": "ok\n"}, step)
                 return ModelResponse(text="Done.", tokens_in=10, tokens_out=5)
             case "grader":
+                from forge.drafting import DRAFT_SYSTEM
+
+                if system == DRAFT_SYSTEM:
+                    return ModelResponse(text=json.dumps(FAKE_DRAFT), tokens_in=10, tokens_out=5)
                 if '"lessons"' in system:
                     run_ids = sorted(set(re.findall(r"\br_[0-9a-f]{12}\b", user)))
                     edits = [{"op": "add", "text": MARKER_LESSON, "evidence_run_ids": run_ids[:2],

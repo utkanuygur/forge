@@ -15,7 +15,7 @@ from typing import Any, Iterator
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
-JSON_COLUMNS = {"lessons", "tools", "http_tools", "seed_files", "payload", "summary"}
+JSON_COLUMNS = {"lessons", "lesson_meta", "tools", "http_tools", "seed_files", "payload", "summary"}
 BOOL_COLUMNS = {"auto_promote", "network", "passed"}
 
 # ---------------------------------------------------------------- basics
@@ -55,11 +55,30 @@ def connect() -> Iterator[sqlite3.Connection]:
     conn.execute("PRAGMA foreign_keys = ON")
     if path not in _initialized:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         _initialized.add(path)
     try:
         yield conn
     finally:
         conn.close()
+
+
+# Additive columns for databases created before they existed (fresh databases get them from schema.sql).
+_ADDED_COLUMNS = (
+    ("improvements", "kind", "TEXT NOT NULL DEFAULT 'improve'"),
+    ("agent_versions", "lesson_meta", "TEXT NOT NULL DEFAULT '{}'"),
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, col, decl in _ADDED_COLUMNS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in cols:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError as exc:  # another process added it first
+                if "duplicate column" not in str(exc):
+                    raise
 
 
 def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -149,7 +168,7 @@ def rotate_api_key(agent_id: str) -> str:
 # ---------------------------------------------------------------- versions
 
 VERSION_FIELDS = ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files",
-                  "parent_id", "created_by", "rationale")
+                  "parent_id", "created_by", "rationale", "lesson_meta")
 
 
 def create_version(agent_id: str, **fields: Any) -> dict:
@@ -158,7 +177,8 @@ def create_version(agent_id: str, **fields: Any) -> dict:
         c.execute("BEGIN IMMEDIATE")
         n = c.execute("SELECT COALESCE(MAX(n), 0) + 1 FROM agent_versions WHERE agent_id = ?", (agent_id,)).fetchone()[0]
         row = {
-            "id": new_id("v"), "agent_id": agent_id, "n": n, "lessons": [], "http_tools": [], "network": False,
+            "id": new_id("v"), "agent_id": agent_id, "n": n, "lessons": [], "lesson_meta": {}, "http_tools": [],
+            "network": False,
             "seed_files": {}, "parent_id": None, "created_by": "human", "rationale": "",
             "tools": ["bash", "read_file", "write_file", "edit_file"],
             **{k: v for k, v in fields.items() if k in VERSION_FIELDS and v is not None},
@@ -180,6 +200,11 @@ def get_version_n(agent_id: str, n: int | str) -> dict | None:
         agent = get_agent(agent_id)
         return get_version(agent["prod_version_id"]) if agent else None
     return _one("SELECT * FROM agent_versions WHERE agent_id = ? AND n = ?", agent_id, int(n))
+
+
+def set_lesson_meta(version_id: str, meta: dict) -> None:
+    """Provenance metadata is the one thing written after a version is created (its n is needed for it)."""
+    _update("agent_versions", "id", version_id, {"lesson_meta": meta})
 
 
 def list_versions(agent_id: str) -> list[dict]:
@@ -338,9 +363,9 @@ def list_eval_results(version_id: str) -> list[dict]:
 # ---------------------------------------------------------------- improvements
 
 
-def create_improvement(agent_id: str, base_version_id: str) -> dict:
+def create_improvement(agent_id: str, base_version_id: str, kind: str = "improve") -> dict:
     row = {"id": new_id("im"), "agent_id": agent_id, "base_version_id": base_version_id, "candidate_version_id": None,
-           "status": "running", "summary": {}, "created_at": now(), "ended_at": None}
+           "status": "running", "summary": {}, "created_at": now(), "ended_at": None, "kind": kind}
     _insert("improvements", row)
     return get_improvement(row["id"])  # type: ignore[return-value]
 

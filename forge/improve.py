@@ -309,6 +309,15 @@ def apply_lesson_edits(lessons: list[str], edits: list[LessonEdit]) -> list[str]
     return out[-MAX_LESSONS:]
 
 
+def apply_lesson_edits_meta(lessons: list[str], meta: dict | None, edits: list[LessonEdit], version_n: int, *,
+                            origin: str = "optimizer", at: float | None = None) -> tuple[list[str], dict]:
+    """`apply_lesson_edits` plus the provenance of the resulting lessons (see forge.provenance)."""
+    from forge.provenance import lesson_provenance
+
+    new = apply_lesson_edits(lessons, edits)
+    return new, lesson_provenance(lessons, meta, new, edits, version_n, origin=origin, at=at)
+
+
 # ---------------------------------------------------------------- promotion
 
 
