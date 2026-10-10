@@ -20,6 +20,7 @@ def agent_view(a: dict, *, versions: bool = False) -> dict:
         "id": a["id"], "slug": a["slug"], "name": a["name"], "description": a["description"],
         "prod_version": prod["n"] if prod else None, "auto_promote": a["auto_promote"],
         "share_token": a["share_token"], "created_at": a["created_at"],
+        "suggested_prompts": a.get("suggested_prompts") or [],
     }
     if versions:
         out["versions"] = [version_view(v) for v in db.list_versions(a["id"])]

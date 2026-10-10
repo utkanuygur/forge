@@ -369,3 +369,49 @@ def test_interrupted_runs_marked_failed():
     for rid in (r1["id"], r2["id"]):
         row = db.get_run(rid)
         assert row["status"] == "failed" and row["error"] == "interrupted"
+
+
+def test_suggested_prompts_persist_and_update(client):
+    """Starter prompts are stored on the agent, returned everywhere, and replaced by PATCH or POST versions."""
+    prompts = [{"title": "Say hi", "prompt": "Write hi.txt"}, {"title": "Count", "prompt": "Count the files"}]
+    a = make_agent(client, suggested_prompts=prompts)
+    assert a["suggested_prompts"] == prompts
+    assert client.get("/v1/agents/bot").json()["suggested_prompts"] == prompts
+    assert client.get("/v1/agents").json()[0]["suggested_prompts"] == prompts
+
+    # An agent created without them returns an empty list.
+    assert make_agent(client, slug="plain")["suggested_prompts"] == []
+
+    one = [{"title": "Only", "prompt": "Do one thing"}]
+    assert client.patch("/v1/agents/bot", json={"suggested_prompts": one}).json()["suggested_prompts"] == one
+    # PATCH without the field keeps them.
+    assert client.patch("/v1/agents/bot", json={"name": "Bot 2"}).json()["suggested_prompts"] == one
+
+    v2 = client.post("/v1/agents/bot/versions", json={"lessons": ["L"], "suggested_prompts": prompts}).json()
+    assert v2["n"] == 2 and "suggested_prompts" not in v2
+    assert client.get("/v1/agents/bot").json()["suggested_prompts"] == prompts
+    assert client.patch("/v1/agents/bot", json={"suggested_prompts": []}).json()["suggested_prompts"] == []
+
+    bad = client.patch("/v1/agents/bot", json={"suggested_prompts": [{"title": "", "prompt": "x"}]})
+    assert bad.status_code == 422
+    too_many = [{"title": f"t{i}", "prompt": "p"} for i in range(13)]
+    assert client.patch("/v1/agents/bot", json={"suggested_prompts": too_many}).status_code == 422
+
+
+def test_suggested_prompts_migration_adds_column(tmp_path, monkeypatch):
+    """A database created before suggested_prompts existed gains the column in place."""
+    import sqlite3
+
+    data = tmp_path / "old"
+    data.mkdir()
+    conn = sqlite3.connect(data / "forge.db")
+    conn.execute("CREATE TABLE agents (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL, "
+                 "description TEXT NOT NULL DEFAULT '', prod_version_id TEXT, auto_promote INTEGER NOT NULL DEFAULT 0, "
+                 "api_key_hash TEXT NOT NULL, share_token TEXT NOT NULL UNIQUE, created_at REAL NOT NULL)")
+    conn.execute("INSERT INTO agents VALUES ('ag_1', 'old', 'Old', '', NULL, 0, 'h', 't', 0)")
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("FORGE_DATA_DIR", str(data))
+    assert db.get_agent_by_slug("old")["suggested_prompts"] == []
+    db.update_agent("ag_1", suggested_prompts=[{"title": "a", "prompt": "b"}])
+    assert db.get_agent("ag_1")["suggested_prompts"] == [{"title": "a", "prompt": "b"}]

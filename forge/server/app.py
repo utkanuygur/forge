@@ -80,6 +80,14 @@ def run_and_agent(run_id: str, request: Request, *, allow_share: bool = True) ->
 # ---------------------------------------------------------------- builder
 
 
+class SuggestedPrompt(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    prompt: str = Field(min_length=1, max_length=20_000)
+
+
+MAX_SUGGESTED_PROMPTS = 12
+
+
 class AgentCreate(BaseModel):
     slug: str
     name: str
@@ -92,12 +100,14 @@ class AgentCreate(BaseModel):
     seed_files: dict[str, str] | None = None
     lessons: list[str] | None = None
     auto_promote: bool = False
+    suggested_prompts: list[SuggestedPrompt] | None = Field(default=None, max_length=MAX_SUGGESTED_PROMPTS)
 
 
 class AgentPatch(BaseModel):
     name: str | None = None
     description: str | None = None
     auto_promote: bool | None = None
+    suggested_prompts: list[SuggestedPrompt] | None = Field(default=None, max_length=MAX_SUGGESTED_PROMPTS)
 
 
 class VersionCreate(BaseModel):
@@ -109,6 +119,8 @@ class VersionCreate(BaseModel):
     network: bool | None = None
     seed_files: dict[str, str] | None = None
     rationale: str | None = None
+    # Agent level, not versioned: when given, replaces the agent's starter prompts.
+    suggested_prompts: list[SuggestedPrompt] | None = Field(default=None, max_length=MAX_SUGGESTED_PROMPTS)
 
 
 class Promote(BaseModel):
@@ -121,7 +133,8 @@ async def create_agent(body: AgentCreate) -> dict:
         raise HTTPException(400, "slug must be lowercase letters, digits and dashes")
     if db.get_agent_by_slug(body.slug):
         raise HTTPException(409, f"agent {body.slug!r} already exists")
-    agent, key = db.create_agent(body.slug, body.name, body.description, body.auto_promote)
+    prompts = [p.model_dump() for p in body.suggested_prompts] if body.suggested_prompts else None
+    agent, key = db.create_agent(body.slug, body.name, body.description, body.auto_promote, prompts)
     v = db.create_version(
         agent["id"], system_prompt=body.system_prompt, model=body.model or evals.default_model(), tools=body.tools,
         http_tools=[t.model_dump() for t in body.http_tools] if body.http_tools else None, network=body.network,
@@ -158,7 +171,9 @@ async def create_version(slug: str, body: VersionCreate, request: Request) -> di
     authorize(request, agent, allow_share=False)
     prod = version_or_404(agent, "prod")
     fields = {k: prod[k] for k in ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files")}
-    fields.update(body.model_dump(exclude_none=True, exclude={"rationale"}))
+    fields.update(body.model_dump(exclude_none=True, exclude={"rationale", "suggested_prompts"}))
+    if body.suggested_prompts is not None:
+        db.update_agent(agent["id"], suggested_prompts=[p.model_dump() for p in body.suggested_prompts])
     v = db.create_version(agent["id"], **fields, parent_id=prod["id"], created_by="human",
                           rationale=body.rationale or "")
     return version_view(v)

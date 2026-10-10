@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS agents (
   api_key_hash     TEXT NOT NULL,
   share_token      TEXT NOT NULL UNIQUE,
   created_at       REAL NOT NULL
+  -- suggested_prompts TEXT (JSON list[{title, prompt}]) is added by ADDED_COLUMNS in forge/db.py
 );
 
 CREATE TABLE IF NOT EXISTS agent_versions (
