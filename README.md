@@ -44,6 +44,7 @@ Expose it to others: `cloudflared tunnel --url http://localhost:8000`.
 | [TESTING.md](TESTING.md) | Six test layers, commands and requirement traceability |
 | [demo/README.md](demo/README.md) | The reference agent, its conventions and evaluation cases |
 | [docs/test-cases.md](docs/test-cases.md) | What to try first: example agents, suggested prompts, expected results, eval splits |
+| [docs/tech-stack.md](docs/tech-stack.md) | Technology stack: every layer with exact versions, status per branch, dependencies, security choices |
 
 ## Tests
 
