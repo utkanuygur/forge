@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { api, errMsg, type Agent } from "../../api";
 import ApiKeyCallout from "../../components/ApiKeyCallout";
 import { CopyButton, ErrorBox, Section } from "../../components/ui";
+import TriggersSection from "./TriggersSection";
 
 function CodeBlock({ code }: { code: string }) {
   return (
@@ -111,6 +112,8 @@ export default function DeployTab({ agent }: { agent: Agent; onChanged: () => vo
           <CodeBlock code={webhook} />
         </div>
       </Section>
+
+      <TriggersSection agent={agent} />
     </div>
   );
 }
