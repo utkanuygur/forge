@@ -91,7 +91,8 @@ desktop app's Settings window (Keychain). `.env.example` is generated from the r
 | [demo/README.md](demo/README.md) | The reference agent, its conventions and evaluation cases |
 | [docs/test-cases.md](docs/test-cases.md) | What to try first: example agents, suggested prompts, expected results, eval splits |
 | [desktop/README.md](desktop/README.md) | The macOS app: build, install, how it works, testing |
-| [.env.example](.env.example) | Every environment variable Forge reads |
+| [.env.example](.env.example) | Every setting and environment variable Forge reads (generated from the settings registry) |
+| [docs/tech-stack.md](docs/tech-stack.md) | Technology stack: every layer with exact versions, status per branch, dependencies, security choices |
 
 ## Tests
 
