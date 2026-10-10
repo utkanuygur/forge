@@ -68,9 +68,11 @@ layer is its own parallel check, so the commit status names the layer that faile
 | Demo checks | `demo/verify.py --runner docker`, `demo/verify_examples.py` | 5, 5b |
 | Desktop macOS 12 compat | `desktop/scripts/build-server.sh` on macos-14 (arm64), which ends with `check-min-macos.sh` | desktop build |
 
-The Docker jobs share one `forge-sandbox` image: the `Sandbox image` job builds it with Buildx (layers cached
-in the GitHub Actions cache) and uploads it as an artifact, and each Docker job loads it and fails if it is
-missing (otherwise the Docker tests would silently skip). The macOS job is billed at a higher rate, so it runs
+Each Docker job builds `forge-sandbox` itself through `.github/actions/sandbox-image`, which restores the layers
+from the GitHub Actions cache (about 25 s when warm; the Sandbox job writes the cache) and fails if the image is
+missing, since the Docker tests would otherwise skip themselves. Building once and sharing the image as an
+artifact was measured too: download plus `docker load` cost about as much per job and added a serial build job,
+so the run took about 25 s longer. The macOS job is billed at a higher rate, so it runs
 only when `desktop/`, `forge/`, `pyproject.toml`, `uv.lock` or the workflow change (pull requests and pushes
 to `master`), or on manual dispatch (`gh workflow run ci.yml --ref <branch>`). Live tests never run in CI.
 

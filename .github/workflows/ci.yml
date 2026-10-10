@@ -1,5 +1,6 @@
 # One check per deterministic test layer (see TESTING.md), run in parallel. Live model tests are excluded:
-# they need API keys. The forge-sandbox image is built once (sandbox-image) and shared as an artifact.
+# they need API keys. Each Docker job builds forge-sandbox from the GitHub Actions layer cache
+# (.github/actions/sandbox-image); the Sandbox job keeps that cache fresh.
 name: CI
 
 on:
@@ -74,27 +75,6 @@ jobs:
         run: npm test
         working-directory: web
 
-  sandbox-image:
-    name: Sandbox image
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: sandbox
-          tags: forge-sandbox:latest
-          cache-from: type=gha,scope=forge-sandbox
-          cache-to: type=gha,mode=max,scope=forge-sandbox
-          outputs: type=docker,dest=/tmp/forge-sandbox.tar
-      - uses: actions/upload-artifact@v4
-        with:
-          name: forge-sandbox-image
-          path: /tmp/forge-sandbox.tar
-          retention-days: 1
-          compression-level: 1
-
   sandbox:
     name: Sandbox
     runs-on: ubuntu-latest
@@ -106,16 +86,9 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: ./.github/actions/sandbox-image
         with:
-          context: sandbox
-          tags: forge-sandbox:latest
-          load: true
-          cache-from: type=gha,scope=forge-sandbox
-      - name: Load sandbox image
-        # Docker tests skip themselves when the image is missing; fail loudly instead.
-        run: docker image inspect forge-sandbox > /dev/null
+          write-cache: "true"
       - name: "Layer 2: sandbox"
         run: uv run pytest -q -m "docker and not e2e"
 
@@ -130,15 +103,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: sandbox
-          tags: forge-sandbox:latest
-          load: true
-          cache-from: type=gha,scope=forge-sandbox
-      - name: Load sandbox image
-        run: docker image inspect forge-sandbox > /dev/null
+      - uses: ./.github/actions/sandbox-image
       - name: "Layer 3: full stack"
         run: uv run pytest -q -m e2e
 
@@ -163,15 +128,7 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
         working-directory: web
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: sandbox
-          tags: forge-sandbox:latest
-          load: true
-          cache-from: type=gha,scope=forge-sandbox
-      - name: Load sandbox image
-        run: docker image inspect forge-sandbox > /dev/null
+      - uses: ./.github/actions/sandbox-image
       - name: "Layer 4b: browser"
         run: npm run test:e2e -- --workers=2
         working-directory: web
@@ -196,15 +153,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: sandbox
-          tags: forge-sandbox:latest
-          load: true
-          cache-from: type=gha,scope=forge-sandbox
-      - name: Load sandbox image
-        run: docker image inspect forge-sandbox > /dev/null
+      - uses: ./.github/actions/sandbox-image
       - name: "Layer 5: demo eval checkers"
         run: uv run python demo/verify.py --runner docker
       - name: "Layer 5b: example checkers"
