@@ -10,11 +10,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from tests.e2e.conftest import _free_port
 from tests.e2e.helpers import poll, wait_evals
 
 pytestmark = pytest.mark.e2e
-
-STUB_PORT = 8203  # a tiny OpenAI compatible /v1/models endpoint
 
 
 @pytest.fixture
@@ -70,10 +69,12 @@ def stub_models() -> Iterator[str]:
         def log_message(self, *args: object) -> None:
             pass
 
-    srv = ThreadingHTTPServer(("127.0.0.1", STUB_PORT), Handler)
+    # A tiny OpenAI compatible /v1/models endpoint on a free port (FORGE_PYTEST_E2E_PORTS applies).
+    port = _free_port()
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
-        yield f"http://127.0.0.1:{STUB_PORT}/v1"
+        yield f"http://127.0.0.1:{port}/v1"
     finally:
         srv.shutdown()
         srv.server_close()
