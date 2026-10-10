@@ -250,6 +250,29 @@ them (`origin: "optimizer"`) or a human supplies them via `POST /agents` or `POS
 immutable. Schema additions: `improvements.kind TEXT NOT NULL DEFAULT 'improve'`, `agent_versions.lesson_meta`;
 existing databases are migrated on first connect (`forge/db.py`, `ADDED_COLUMNS`).
 
+### Sample tasks (Generate button)
+
+`POST /v1/agents/{slug}/sample-task` body `{version?: int, hint?: str, avoid?: [str]}` returns
+`{title, prompt, rationale}`: one realistic task a user of the agent would send, written by `FORGE_GRADER_MODEL` in
+one structured output call (`forge/sample_task.py`, `SAMPLE_TASK_SYSTEM`, schema `SAMPLE_TASK_SCHEMA`; no
+temperature). Auth: builder (localhost or the agent's API key) or the agent's share token. Share callers always use
+prod (`version` ignored), get exactly those three fields, and are limited to 10 calls per hour per token in memory
+(`FORGE_SAMPLE_TASK_SHARE_LIMIT` overrides; `429` with `Retry-After`). Builders also get `version`, `variety` and
+`context` (`files_listed`, `total_files`, `excerpts` paths, `excerpt_chars`, `system_prompt_chars`, `recent_inputs`,
+`avoid` counts).
+
+The model sees the agent name and description, the version's system prompt (over 6000 chars it is condensed to
+its opening and its end), tools, network setting and configured secret names (never values), up to 200 seed file
+paths plus excerpts of the most informative files (README, top-level modules, configs, CSV headers with row counts,
+first lines of logs; at most 12000 chars in total), the agent's `suggested_prompts` when present, the last 10
+distinct run inputs, `avoid` (up to 20), an optional `hint`, and a `variety` (task type and difficulty) cycled by
+the number of earlier generations for the agent. The reply is valid when the prompt is non-empty, under 1200
+chars, the title is under 100 chars, and the prompt is not a near duplicate (normalized text similarity at least
+0.85) of a recent input or an `avoid` entry. An invalid reply is retried once as a fresh request listing the
+problems; still invalid: `502` with the reason. Each call is recorded in `grader_calls` with kind `sample_task`
+(no improvement), and agent metrics `cost` gains `sample_tasks: {calls, tokens_in, tokens_out, cost_usd,
+cost_complete}` for the period.
+
 ## Promotion rule
 
 Candidate eligible iff `candidate_passed_total > base_passed_total` and no case passed by base fails for candidate,

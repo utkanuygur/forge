@@ -32,7 +32,7 @@ separately by the live layer.
 | `fake:hello` | Writes `hello.py`, runs it with bash, finishes | Run lifecycle, traces, diffs, CLI |
 | `fake:echo` | Finishes immediately echoing the input | Fast API and UI tests |
 | `fake:lessons` | Creates `MARKER.txt` only when a lesson says so | Improvement loop: v1 fails `test -f MARKER.txt`, v2 passes |
-| `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs. With the drafting prompt (`forge.drafting.DRAFT_SYSTEM`): returns the fixed, valid `FAKE_DRAFT` ("Issue triager", network on, `GITHUB_TOKEN`, 3 train and 1 holdout case) whatever the description | Grader, optimizer and agent drafting without API calls |
+| `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs. With the drafting prompt (`forge.drafting.DRAFT_SYSTEM`): returns the fixed, valid `FAKE_DRAFT` ("Issue triager", network on, `GITHUB_TOKEN`, 3 train and 1 holdout case) whatever the description With the sample task prompt (`forge.sample_task.SAMPLE_TASK_SYSTEM`): returns the first of `FAKE_SAMPLE_TASKS` (three fixed, valid tasks) whose prompt is not already in the request (recent run inputs or `avoid`), so consecutive generations differ deterministically | Grader, optimizer, agent drafting and the Generate button without API calls |
 | `fake:loop` | Calls bash forever | Turn limit and `timeout` status |
 | `fake:error` | Raises like a failed API | `failed` status and error events |
 | `fake:flaky` | Alternates per run: the 1st, 3rd, 5th, ... run with a given (system prompt, input) writes `FLAKY.txt`, the others do not. A process-wide counter keyed by sha256(system, input) advances on each run's first model call, so k concurrent runs of one case yield ceil(k/2) passes of `test -f FLAKY.txt` in any order (k=3: 2/3 majority pass; k=2: 1/2 tie fails). Server restart resets it; give each test its own system prompt or input | Repeated evals and the majority rule end to end |
@@ -113,6 +113,11 @@ Requirement IDs are defined in the technical design document. Each row names the
 | PRUNE11 Pruning on majority of k | 1: `train_passes` counts majority verdicts, fewer than k runs is incomplete; 3: `fake:flaky` k=3 prune: every version runs 3 per case, ablations train only, all runs linked to the job in cost |
 | PRUNE12 Reuse copies per-run rows | 1: `_reuse_results` copies eval_run_results and passes/runs, leaves cases with own runs alone |
 | PRUNE13 Prune keeps the feedback window | 1: prune jobs do not move `_last_improvement_time`; auto-improve still fires; improve jobs do move it |
+| GEN1 Sample task context | 1: file listing capped at 200 with a count of the rest, excerpts prefer README, top-level modules, CSV headers and log openings within the 12k char cap, long system prompts condensed, recent inputs deduped and capped, variety cycles with the generation count (`tests/test_sample_task.py`) |
+| GEN2 Sample task validation and retry | 1: empty, over 1200 chars and near duplicate (normalized sequence ratio or word overlap at 0.85) prompts are rejected; one fresh retry lists the problems; a second invalid reply is a 502 |
+| GEN3 Structured output, metered | 1: Claude gets `output_config.format` json_schema and no temperature; each call is a `grader_calls` row with kind `sample_task`, shown as `cost.sample_tasks` in agent metrics |
+| GEN4 Sample task access | 1 and 3: builder (localhost or API key) gets `version`, `variety` and `context`; a share token gets only title, prompt and rationale, always on prod, and its 11th call in an hour is 429 with Retry-After; no credentials is 401 (`tests/e2e/test_sample_task.py`) |
+| GEN5 Generate button | 4: Vitest loading state, fill, replace with Undo for 10 seconds, inline error, Alt+G (`web/tests/unit/GenerateTaskButton.test.tsx`); Playwright Generate on the Runs tab fills the task box and the run succeeds, and the share page generates with its token (`web/tests/e2e/generate.spec.ts`) |
 
 ## Adding a test
 
