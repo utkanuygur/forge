@@ -10,12 +10,14 @@ that version prod); suggested prompts are replaced when they differ; eval cases 
 Each example is demo/examples/<slug>/agent.json plus seed/ and evals.json next to it. An agent.json
 may instead point elsewhere: "extends" (a base agent definition), "seed_dir" and "evals", all relative
 to the agent.json file. repo-maintainer uses this to reuse the reference demo unchanged.
+
+Discovery and parsing live in forge/examples.py (shared with the server's one click install,
+POST /v1/examples/{key}/install); this script is the HTTP client for a running server.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -24,41 +26,20 @@ import httpx
 HERE = Path(__file__).resolve().parent
 EXAMPLES = HERE / "examples"
 sys.path.insert(0, str(HERE))
-from load import CASE_FIELDS, check, read_seed_files  # noqa: E402
+sys.path.insert(1, str(HERE.parent))  # the forge package, even without the editable install
+from load import check  # noqa: E402
+
+from forge.examples import CASE_FIELDS, ExampleError, read_seed_files, resolve  # noqa: E402,F401
+from forge.examples import discover as _discover  # noqa: E402
 
 VERSION_FIELDS = ("system_prompt", "tools", "network", "seed_files")
-LOCAL_KEYS = {"extends", "seed_dir", "evals"}
-
-
-def resolve(example: Path) -> dict:
-    """The full agent spec, its seed directory and its eval cases for one example directory."""
-    raw = json.loads((example / "agent.json").read_text())
-    spec: dict = {}
-    if "extends" in raw:
-        spec.update(json.loads((example / raw["extends"]).resolve().read_text()))
-    spec.update({k: v for k, v in raw.items() if k not in LOCAL_KEYS})
-    seed_dir = (example / raw.get("seed_dir", "seed")).resolve()
-    evals_path = (example / raw.get("evals", "evals.json")).resolve()
-    return {
-        "dir": example,
-        "spec": spec,
-        "seed_dir": seed_dir,
-        "evals_path": evals_path,
-        "own_evals": "evals" not in raw,
-        "cases": json.loads(evals_path.read_text()) if evals_path.exists() else [],
-    }
 
 
 def discover(only: list[str] | None = None) -> list[dict]:
-    out = []
-    for path in sorted(EXAMPLES.glob("*/agent.json")):
-        ex = resolve(path.parent)
-        if only is None or ex["spec"]["slug"] in only:
-            out.append(ex)
-    if only and len(out) != len(set(only)):
-        have = sorted(p.parent.name for p in EXAMPLES.glob("*/agent.json"))
-        sys.exit(f"unknown example slug in {only}; have {have}")
-    return out
+    try:
+        return _discover(only, root=EXAMPLES)
+    except ExampleError as exc:
+        sys.exit(str(exc))
 
 
 def load_one(api: httpx.Client, ex: dict, *, promote: bool) -> dict:
