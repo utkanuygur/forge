@@ -187,10 +187,12 @@ def test_overview_includes_agent_row_and_failure_reasons(api, observed):
 
 
 def test_improvement_cycle_cost_and_promotion_marker(api, make_agent):
-    """OBS2, OBS1: an improvement cycle's cost sums its eval runs plus judge and optimizer calls; promoting the
-    candidate adds a promotion marker to the agent's metrics."""
+    """OBS2, OBS1, FR9: an improvement cycle's cost sums all k repeated eval runs plus judge and optimizer calls;
+    promoting the candidate adds a promotion marker to the agent's metrics."""
     agent = make_agent("obsimp", model="fake:lessons")
     slug = agent["slug"]
+    k = 3
+    assert api.patch(f"/agents/{slug}", json={"eval_repeats": k}).status_code == 200
     for name, ctype, checker, split in (("job-alpha", "shell", "test -f MARKER.txt", "train"),
                                         ("job-judge", "judge", "The work is complete.", "holdout")):
         assert api.post(f"/agents/{slug}/evals", json={"name": name, "input": f"Do {name}.", "checker_type": ctype,
@@ -200,15 +202,16 @@ def test_improvement_cycle_cost_and_promotion_marker(api, make_agent):
     assert done["status"] == "eligible", done
     m = api.get(f"/agents/{slug}/metrics").json()
     cyc = next(c for c in m["cost"]["improvements"] if c["id"] == im["id"])
-    assert cyc["eval_runs"] == 4 and cyc["grader_calls"] == 3
-    assert cyc["judge_cost_usd"] == pytest.approx(2 * (50 * 100 + 10 * 500) / 1e6)
+    # 2 cases x 2 versions x k runs; one judge call per run of the judge case (2 versions x k) plus the optimizer
+    assert cyc["eval_runs"] == 4 * k and cyc["grader_calls"] == 2 * k + 1
+    assert cyc["judge_cost_usd"] == pytest.approx(2 * k * (50 * 100 + 10 * 500) / 1e6)
     assert cyc["optimizer_cost_usd"] == pytest.approx((200 * 100 + 40 * 500) / 1e6)
-    # base: 2 one-turn runs (10 in, 5 out); candidate: 2 two-turn runs (20 in, 10 out), at $1000 / $2000
-    assert cyc["eval_cost_usd"] == pytest.approx((2 * 0.02) + (2 * 0.04))
+    # base: 2k one-turn runs (10 in, 5 out); candidate: 2k two-turn runs (20 in, 10 out), at $1000 / $2000
+    assert cyc["eval_cost_usd"] == pytest.approx(k * ((2 * 0.02) + (2 * 0.04)))
     assert cyc["total_cost_usd"] == pytest.approx(cyc["eval_cost_usd"] + cyc["judge_cost_usd"]
                                                   + cyc["optimizer_cost_usd"])
     assert m["summary"]["runs"] == 0  # eval runs are not production usage
-    assert api.get(f"/agents/{slug}/metrics", params={"include_eval": "true"}).json()["summary"]["runs"] == 4
+    assert api.get(f"/agents/{slug}/metrics", params={"include_eval": "true"}).json()["summary"]["runs"] == 4 * k
     evals = {v["version"]: v["eval"] for v in m["versions"]}
     assert evals[1]["train"]["passed"] == 0 and evals[2]["train"]["passed"] == 1 and evals[2]["holdout"]["pass_rate"] == 1
 

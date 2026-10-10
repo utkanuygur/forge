@@ -127,6 +127,9 @@ export default function StepTimeline({ runId, refreshKey }: { runId: string; ref
         Cost {tl.cost_usd === null ? "unknown (unknown price)" : fmtUsd(tl.cost_usd)}
         {tl.cost_note && tl.cost_usd !== null && ` (${tl.cost_note})`} for {tl.tokens_in.toLocaleString()} input and{" "}
         {tl.tokens_out.toLocaleString()} output tokens
+        {(tl.cache_read_tokens || tl.cache_write_tokens)
+          ? ` (plus ${(tl.cache_read_tokens ?? 0).toLocaleString()} cache read and ${(tl.cache_write_tokens ?? 0).toLocaleString()} cache write tokens, not priced)`
+          : ""}
       </p>
     </div>
   );

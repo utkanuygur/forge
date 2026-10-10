@@ -64,6 +64,7 @@ def _annotate(runs: list[dict], versions: dict[str, dict]) -> list[dict]:
 
 
 RUN_COLS = ("r.id, r.agent_id, r.version_id, r.source, r.status, r.error, r.turns, r.tokens_in, r.tokens_out, "
+            "r.cache_read_tokens, r.cache_write_tokens, "
             "r.created_at, r.started_at, r.ended_at, r.eval_case_id, substr(r.input, 1, 160) AS input")
 
 
@@ -243,7 +244,8 @@ async def run_timeline(run_id: str, request: Request) -> dict:
     authorize(request, agent, allow_share=False)  # type: ignore[arg-type]
     v = db.get_version(r["version_id"]) or {}
     tl = metrics.build_timeline(r, db.list_events(run_id))
-    tl.update(tokens_in=r["tokens_in"], tokens_out=r["tokens_out"], price=price_view(v.get("model")),
+    tl.update(tokens_in=r["tokens_in"], tokens_out=r["tokens_out"], cache_read_tokens=r.get("cache_read_tokens") or 0,
+              cache_write_tokens=r.get("cache_write_tokens") or 0, price=price_view(v.get("model")),
               **cost_fields(v.get("model"), r["tokens_in"], r["tokens_out"]))
     return tl
 
@@ -376,14 +378,19 @@ def agent_metrics(agent: dict, days: float, include_eval: bool, tz_offset_min: i
         known = [r["cost_usd"] for r in rs if r["cost_usd"] is not None]
         per_version.append({"version": v["n"], "model": v["model"], "price": price_view(v["model"]), "runs": len(rs),
                             "tokens_in": sum(r["tokens_in"] for r in rs), "tokens_out": sum(r["tokens_out"] for r in rs),
+                            "cache_read_tokens": sum(r.get("cache_read_tokens") or 0 for r in rs),
+                            "cache_write_tokens": sum(r.get("cache_write_tokens") or 0 for r in rs),
                             "cost_usd": sum(known) if known or not rs else None,
                             "cost_per_run": metrics.ratio(sum(known), len(known)) if known else None})
 
     # failures (period). Eval check failures are always included: they are a category of their own.
     period_where, period_args = "r.agent_id = ? AND r.created_at >= ? AND r.created_at <= ?", [agent["id"], since, until]
     tool_errors = _tool_errors_by_run(period_where, period_args)
+    # Per-run verdicts (each of a case's k repeated runs), not the case's majority verdict: the breakdown counts
+    # runs, so every run whose own check failed is an eval failure even when its case passed by majority.
+    # Pass rates (_eval_scores) use the majority verdicts in eval_results.
     eval_res = {e["run_id"]: e for e in _rows(
-        "SELECT er.run_id, er.passed, er.reason FROM eval_results er JOIN runs r ON r.id = er.run_id "
+        "SELECT er.run_id, er.passed, er.reason FROM eval_run_results er JOIN runs r ON r.id = er.run_id "
         f"WHERE {period_where}", period_args)}
     period_all = [r for r in all_runs if since <= r["created_at"] <= until]
     classify_set = [r for r in period_all if metrics.include_source(r, include_eval) or

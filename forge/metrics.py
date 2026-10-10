@@ -74,7 +74,7 @@ def health(runs: list[dict], feedback: list[dict]) -> dict[str, Any]:
     """
     by_status: dict[str, int] = defaultdict(int)
     durations, turns = [], []
-    tokens_in = tokens_out = 0
+    tokens_in = tokens_out = cache_read = cache_write = 0
     cost, unknown = 0.0, 0
     for r in runs:
         by_status[r["status"]] += 1
@@ -83,6 +83,8 @@ def health(runs: list[dict], feedback: list[dict]) -> dict[str, Any]:
             turns.append(r.get("turns") or 0)
         tokens_in += r.get("tokens_in") or 0
         tokens_out += r.get("tokens_out") or 0
+        cache_read += r.get("cache_read_tokens") or 0
+        cache_write += r.get("cache_write_tokens") or 0
         c = r.get("cost_usd")
         if c is None and "cost_usd" in r:
             unknown += 1
@@ -107,6 +109,8 @@ def health(runs: list[dict], feedback: list[dict]) -> dict[str, Any]:
         "thumbs_up_rate": ratio(up, up + down),
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
+        "cache_read_tokens": cache_read,  # not priced, see forge.pricing.cost
+        "cache_write_tokens": cache_write,
         "cost_usd": cost,
         "cost_per_run": ratio(cost, len(runs)),
         "unpriced_runs": unknown,

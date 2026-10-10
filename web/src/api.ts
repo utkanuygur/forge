@@ -62,6 +62,9 @@ export interface Run {
   turns: number;
   tokens_in: number;
   tokens_out: number;
+  // Prompt-cache usage (not included in tokens_in, not priced in cost_usd).
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   has_artifacts: boolean;
   created_at: number;
   started_at: number | null;
@@ -102,6 +105,8 @@ export interface Health {
   thumbs_up_rate: number | null;
   tokens_in: number;
   tokens_out: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   cost_usd: number;
   cost_per_run: number | null;
   unpriced_runs: number;
@@ -228,7 +233,7 @@ export interface AgentMetrics {
   cost: {
     total_usd: number;
     unpriced_runs: number;
-    versions: { version: number; model: string; price: Price; runs: number; tokens_in: number; tokens_out: number; cost_usd: number | null; cost_per_run: number | null }[];
+    versions: { version: number; model: string; price: Price; runs: number; tokens_in: number; tokens_out: number; cache_read_tokens?: number; cache_write_tokens?: number; cost_usd: number | null; cost_per_run: number | null }[];
     improvements: ImprovementCost[];
   };
   failures: { all: FailureBreakdown; versions: (FailureBreakdown & { version: number })[] };
@@ -276,6 +281,8 @@ export interface Timeline {
   spans: import("./lib/timeline").TimelineSpan[];
   tokens_in: number;
   tokens_out: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   cost_usd: number | null;
   cost_note: string;
   price: Price;

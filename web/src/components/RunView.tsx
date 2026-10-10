@@ -97,6 +97,11 @@ export default function RunView({
           <span>
             {run.tokens_in.toLocaleString()} in / {run.tokens_out.toLocaleString()} out tokens
           </span>
+          {(run.cache_read_tokens || run.cache_write_tokens) ? (
+            <span data-testid="run-header-cache" title="Prompt-cache tokens (not included in cost yet)">
+              cache {(run.cache_read_tokens ?? 0).toLocaleString()} read / {(run.cache_write_tokens ?? 0).toLocaleString()} write
+            </span>
+          ) : null}
           <span>{run.turns} turns</span>
           {run.cost_usd !== undefined && (
             <span data-testid="run-header-cost">

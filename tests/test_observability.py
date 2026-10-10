@@ -416,3 +416,25 @@ def test_overview_kpis_compare_with_previous_period(tmpdb):
     assert rows["delta"]["health"]["unpriced_runs"] == 1
     assert o["top_failure_reasons"][0]["agent"] == "gamma" and o["top_failing_agents"][0]["slug"] == "gamma"
     assert overview(7, now=now)["bucket"] == "day"
+
+
+def test_repeated_eval_runs_failures_pass_rates_and_cache_tokens(tmpdb):
+    """OBS4, OBS2, FR9: with k repeated eval runs, `eval_failed` counts each run whose own check failed (even when
+    its case passed by majority) while pass rates use the majority verdict; cache tokens are reported, not priced."""
+    from forge.server.observability import agent_metrics
+
+    a, v = _agent("repeat")
+    case = db.create_eval_case(a["id"], name="c", input="task", checker_type="shell", checker="true", split="train")
+    runs = [_seed_run(a, v, source="eval") for _ in range(3)]
+    for i, (r, ok) in enumerate(zip(runs, (True, False, True))):
+        db.add_eval_run_result(v["id"], case["id"], i, r["id"], ok, "ok" if ok else "missing FLAKY.txt")
+    db.upsert_eval_result(v["id"], case["id"], runs[0]["id"], True, "ok", passes=2, runs=3)
+    db.update_run(runs[0]["id"], cache_read_tokens=800, cache_write_tokens=30)
+    m = agent_metrics(db.get_agent(a["id"]), 14, include_eval=True)
+    cats = {c["category"]: c for c in m["failures"]["all"]["categories"]}
+    assert cats["eval_failed"]["runs"] == 1
+    assert cats["eval_failed"]["example_run_ids"] == [runs[1]["id"]]
+    assert m["versions"][0]["eval"]["train"]["passed"] == 1  # majority verdict: 2/3 passes
+    assert m["summary"]["cache_read_tokens"] == 800 and m["summary"]["cache_write_tokens"] == 30
+    assert m["summary"]["cost_usd"] == pytest.approx(3 * 0.12)  # cache tokens do not change cost
+    assert m["cost"]["versions"][0]["cache_read_tokens"] == 800

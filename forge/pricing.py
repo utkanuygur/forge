@@ -108,7 +108,12 @@ def price_for(model: str | None) -> Price:
 
 
 def cost(model: str | None, tokens_in: int, tokens_out: int) -> float | None:
-    """USD for the given token counts, or None when the model's price is unknown."""
+    """USD for the given token counts, or None when the model's price is unknown.
+
+    `tokens_in` is the uncached input count. Prompt-cache reads and writes (runs.cache_read_tokens /
+    cache_write_tokens) are reported as separate counts and are not priced here.
+    TODO: price cache tokens once their multipliers relative to the input price are documented in this repo.
+    """
     p = price_for(model)
     if p.input is None or p.output is None:
         return None

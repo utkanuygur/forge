@@ -184,7 +184,10 @@ Optional; events recorded before they existed simply lack them (consumers must t
 | `assistant` | `turn` (1 based), `duration_ms` (model call latency), `tokens_in`, `tokens_out` (this turn only) |
 | `tool_call` | `turn`; the first call of a turn that produced no text also carries `model_duration_ms`, `tokens_in`, `tokens_out` (a tool-only turn emits no `assistant` event) |
 | `tool_result` | `duration_ms` (tool execution time) |
-| `error` | `duration_ms` when the model call itself failed |
+| `error` | `duration_ms` when the model call itself failed; for a refused turn (see "Stop reasons") also `turn`, `duration_ms`, `tokens_in`, `tokens_out` |
+
+The per-turn usage on `assistant`, `tool_call` and refusal `error` events also carries `cache_read_tokens` and
+`cache_write_tokens` when they are nonzero.
 
 ### Additive Run fields
 
@@ -198,7 +201,9 @@ USD per million tokens (input / output): `claude-opus-5-5` 4 / 20, `claude-sonne
 `claude-haiku-4-5` 1 / 5. `openai_compat:` and `fake:` models cost 0 and are labeled self-hosted (GPU time is billed
 by the GPU provider). Unknown `anthropic:` models have a null cost. `FORGE_PRICES` (JSON) overrides or extends the
 table: keys are full model strings or bare Anthropic ids, values `[input, output]` or `{"input": x, "output": y}`.
-Run cost uses `runs.tokens_in/out` and the run's version model.
+Run cost uses `runs.tokens_in/out` and the run's version model. Prompt-cache tokens (`cache_read_tokens`,
+`cache_write_tokens`) are not priced yet: `tokens_in` is the uncached input count, and cache counts are reported
+separately (Run objects, timelines, Health, per-version cost rows) until cache multipliers are documented here.
 
 ### Metric definitions
 
@@ -209,7 +214,9 @@ Run cost uses `runs.tokens_in/out` and the run's version model.
   or less, daily otherwise, aligned to the client's local midnight via `tz_offset_min` (minutes east of UTC).
 - Failure categories: `timeout`, `model_error`, `sandbox_error` (executor, runtime or interrupted), `tool_errors`
   (runs with `is_error` tool results; `count` is the number of failed calls), `eval_failed` (first line of the
-  checker reason; always included because it is its own category), `negative_feedback` (the comment).
+  checker reason; always included because it is its own category). `eval_failed` uses each repeated run's own
+  verdict (`eval_run_results`), since the breakdown counts runs: a run whose check failed counts even when its case
+  passed by majority. Eval pass rates per version use the majority verdicts (`eval_results`), `negative_feedback` (the comment).
   Entries count runs (`runs`) and occurrences (`count`) and carry up to 3 `example_run_ids`, newest first.
 
 ### Endpoints
@@ -221,7 +228,7 @@ All `/v1` routes below are builder-only: localhost (or the agent's API key for a
 |---|---|---|
 | GET | `/metrics/overview?days=14&include_eval=false&tz_offset_min=0` | `{days, since, until, bucket, summary: Health, previous: Health, kpis: {runs, success_rate, p95_ms, cost_usd, thumbs_up_rate: Delta}, series: [Bucket], agents: [{slug, name, prod_version, health, failing_runs, flagged_runs, last_run_at, spark: [runs per bucket]}], top_failure_reasons: [Failure + agent, agent_name], top_failing_agents}` (localhost only) |
 | GET | `/agents/{slug}/metrics?days=14&include_eval=false&tz_offset_min=0` | `{summary, previous, kpis, series, promotions, versions, cost, failures, tools, slowest_runs, prod_version, previous_prod_version, bucket, ...}` (below) |
-| GET | `/runs/{id}/timeline` | `{run_id, status, estimated, total_ms, model_ms, tool_ms, other_ms, queue_ms, turns, tool_calls, spans: [Span], tokens_in, tokens_out, cost_usd, cost_note, price}` |
+| GET | `/runs/{id}/timeline` | `{run_id, status, estimated, total_ms, model_ms, tool_ms, other_ms, queue_ms, turns, tool_calls, spans: [Span], tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, cost_usd, cost_note, price}` |
 | GET | `/agents/{slug}/runs` | Extended with filters (below); still `[Run]`; total match count in the `X-Total-Count` header. Share-token callers only ever get share runs. |
 | GET | `/runs` | Same filters plus `agent=<slug>`, across agents (localhost only) |
 
@@ -234,7 +241,8 @@ Run filters (all optional): `status`, `version`, `source` (comma separated lists
 // Health
 {"runs": 5, "finished": 5, "succeeded": 3, "failed": 1, "timeout": 1, "in_progress": 0, "success_rate": 0.6,
  "p50_ms": 410.0, "p95_ms": 2800.0, "avg_turns": 8.6, "feedback_count": 2, "thumbs_up": 1, "thumbs_down": 1,
- "thumbs_up_rate": 0.5, "tokens_in": 390, "tokens_out": 195, "cost_usd": 0.18, "cost_per_run": 0.036, "unpriced_runs": 0}
+ "thumbs_up_rate": 0.5, "tokens_in": 390, "tokens_out": 195, "cache_read_tokens": 0, "cache_write_tokens": 0,
+ "cost_usd": 0.18, "cost_per_run": 0.036, "unpriced_runs": 0}
 // Delta
 {"value": 0.6, "previous": 0.8, "change": -0.2, "change_pct": -0.25}
 // Bucket
@@ -249,7 +257,7 @@ Run filters (all optional): `status`, `version`, `source` (comma separated lists
                                          "train_pass_rate": Delta, "holdout_pass_rate": Delta}}],  // prod row only
 "cost": {"total_usd": 0.18, "unpriced_runs": 0,
          "versions": [{"version": 1, "model": "..", "price": Price, "runs": 2, "tokens_in": 60, "tokens_out": 30,
-                       "cost_usd": 0.12, "cost_per_run": 0.06}],
+                       "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.12, "cost_per_run": 0.06}],
          "improvements": [{"id": "im_..", "status": "eligible", "base_version": 1, "candidate_version": 2,
                            "eval_runs": 4, "eval_cost_usd": 0.12, "judge_cost_usd": 0.02, "optimizer_cost_usd": 0.04,
                            "grader_calls": 3, "tokens_in": 0, "tokens_out": 0, "total_cost_usd": 0.18,
@@ -276,8 +284,9 @@ Run filters (all optional): `status`, `version`, `source` (comma separated lists
 
 Timelines for runs recorded before the timing fields existed are built from event timestamps (`estimated: true`):
 a model turn spans from the previous step to the event that reports it, a tool call from `tool_call` to `tool_result`.
-Improvement cycle cost = its eval runs (linked when the cycle starts them; cached results are not re-counted) plus
-its judge and optimizer calls.
+Improvement cycle cost = its eval runs (all k repeated runs of each case, linked when the cycle starts them;
+stored runs reused from earlier evals are not re-counted) plus its judge and optimizer calls (one judge call per
+judged run).
 
 ### Ops (no `/v1` prefix)
 
@@ -294,5 +303,6 @@ Structured logs: logger `forge.lifecycle` writes one JSON line per run event (`r
 
 `promotions` (every prod pointer change: create, human, auto), `grader_calls` (judge and optimizer token usage,
 with `improvement_id` and the judged `run_id`), `improvement_runs` (eval runs started by a cycle) and an index on
-`runs(created_at)`. All are `CREATE ... IF NOT EXISTS`, so existing databases upgrade in place. Promotions before
+`runs(created_at)`. All are `CREATE ... IF NOT EXISTS`, so existing databases upgrade in place (columns added after the first schema,
+such as `runs.cache_read_tokens`, go through `forge.db.ADDED_COLUMNS`, applied by `_migrate` on connect). Promotions before
 this change are not known; an agent without records shows one synthetic promotion at its creation time.
