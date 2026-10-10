@@ -13,21 +13,30 @@ test.describe("Runs", () => {
     await expect(page).toHaveURL(/\/runs\/r_[0-9a-f]{12}$/);
     const runId = page.url().split("/").pop()!;
 
-    // Live trace over SSE: tool cards appear without a reload.
-    const trace = page.getByRole("region", { name: "Trace" });
-    await expect(trace.locator('[data-testid="tool-card"][data-tool="write_file"]')).toBeVisible({ timeout: RUN_TIMEOUT });
-    const bash = trace.locator('[data-testid="tool-card"][data-tool="bash"]');
+    // Live transcript over SSE: tool blocks appear without a reload.
+    const transcript = page.getByRole("region", { name: "Transcript" });
+    await expect(transcript.locator('[data-testid="tool-card"][data-tool="write_file"]')).toBeVisible({ timeout: RUN_TIMEOUT });
+    const bash = transcript.locator('[data-testid="tool-card"][data-tool="bash"]');
     await expect(bash).toBeVisible({ timeout: RUN_TIMEOUT });
     await expect(bash).toContainText("python hello.py");
     await expectRunSucceeded(page);
-    await expect(trace).toContainText("Finished succeeded");
+    await expect(transcript.getByTestId("status-line")).toContainText("Done in");
 
-    // Bash tool output is visible on expand.
-    await bash.getByRole("button").click();
+    // Short bash output is shown inline under the header.
     await expect(bash).toContainText("hello from forge");
     await expect(bash).not.toHaveAttribute("data-error", "true");
+    await expect(transcript.locator('[data-testid="narration"][data-kind="final"]')).toContainText("Created and ran hello.py.");
 
+    // The timeline view is still one click away.
+    await page.getByRole("button", { name: "Timeline" }).click();
+    const trace = page.getByRole("region", { name: "Trace" });
+    await expect(trace).toContainText("Finished succeeded");
+    const timelineBash = trace.locator('[data-testid="tool-card"][data-tool="bash"]');
+    await timelineBash.getByRole("button").click();
+    await expect(timelineBash).toContainText("hello from forge");
     await expect(page.getByRole("region", { name: "Output" })).toContainText("Created and ran hello.py.");
+    await page.getByRole("button", { name: "Transcript" }).click();
+    await expect(transcript).toBeVisible();
 
     const changes = page.getByRole("region", { name: "Changes" });
     const diff = changes.getByTestId("diff-view");
