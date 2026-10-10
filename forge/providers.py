@@ -293,25 +293,54 @@ class ScenarioProvider:
       grader   acts as judge (always passes) and as optimizer (proposes MARKER_LESSON)
       loop     calls bash forever (exercises the turn limit)
       error    raises, as if the model API failed
+      session  turn 1 writes hello.py; later turns `cat hello.py` and report what they saw (playground)
+      slow     runs `sleep 30` forever (exercises cancel / Stop)
     """
 
     def __init__(self, scenario: str):
-        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error"}:
+        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "session", "slow"}:
             raise ValueError(f"unknown fake scenario {scenario!r}")
         self.scenario = scenario
 
     async def complete(
         self, system: str, messages: list[Message], tools: list[ToolSpec], temperature: float | None = None
     ) -> ModelResponse:
-        step = sum(1 for m in messages if m.role == "assistant")
-        user = next((m.text for m in messages if m.role == "user"), "")
+        # Steps count from the latest user message, so playground sessions (history + new input) replay
+        # the scenario per turn; ids stay unique across turns.
+        last_user = max(i for i, m in enumerate(messages) if m.role == "user")
+        turn = sum(1 for m in messages if m.role == "user") - 1
+        step = sum(1 for m in messages[last_user:] if m.role == "assistant")
+        user = messages[last_user].text
+        if turn:
+            def _call_t(name: str, args: dict[str, Any], i: int, note: str = "") -> ModelResponse:
+                r = _call(name, args, i, note)
+                r.tool_calls[0].id = f"call_t{turn}_{i}"
+                return r
+        else:
+            _call_t = _call
         match self.scenario:
             case "error":
                 raise RuntimeError("fake model failure")
             case "echo":
                 return ModelResponse(text=f"echo: {user}", tokens_in=10, tokens_out=5)
             case "loop":
-                return _call("bash", {"cmd": "true"}, step)
+                return _call_t("bash", {"cmd": "true"}, step)
+            case "slow":
+                return _call_t("bash", {"cmd": "sleep 30"}, step, "Waiting a while.")
+            case "session":
+                # Turn 1 writes hello.py; later turns read it back from the carried-over workspace and
+                # report how many earlier turns the history contained.
+                if turn == 0:
+                    if step == 0:
+                        return _call_t("write_file", {"path": "hello.py", "content": "print('hello from forge')\n"}, 0,
+                                       "I'll create hello.py.")
+                    return ModelResponse(text="Created hello.py.", tokens_in=10, tokens_out=5)
+                if step == 0:
+                    return _call_t("bash", {"cmd": "cat hello.py"}, 0, "Reading the file from the last turn.")
+                seen = messages[-1].text if messages[-1].role == "tool" else ""
+                content = seen.split("--- stdout ---\n", 1)[-1].split("\n--- stderr ---", 1)[0].strip()
+                return ModelResponse(text=f"Turn {turn + 1}: hello.py contains `{content}` "
+                                          f"(history had {turn} earlier turn(s)).", tokens_in=10, tokens_out=5)
             case "hello":
                 script = [
                     ("write_file", {"path": "hello.py", "content": "print('hello from forge')\n"}, "I'll create hello.py."),
@@ -319,7 +348,7 @@ class ScenarioProvider:
                 ]
                 if step < len(script):
                     name, args, note = script[step]
-                    return _call(name, args, step, note)
+                    return _call_t(name, args, step, note)
                 return ModelResponse(text="Created and ran hello.py.", tokens_in=10, tokens_out=5)
             case "lessons":
                 if step == 0 and "MARKER.txt" in system:

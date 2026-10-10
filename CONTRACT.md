@@ -139,6 +139,39 @@ Auth amendments (server implementation):
 | POST | `/runs` | `{agent_slug, version_n, input, source: "local"}` | `Run` (status `running`) |
 | POST | `/runs/{id}/events` | `[Event]` | `{"ok": true}` (a `run_finished` event finalizes the run) |
 
+### Sessions
+
+Playground sessions (additive). Builder-only (localhost or the agent's API key; share tokens get 401). JSON.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/agents/{slug}/sessions` | `{version?: int, draft?: {system_prompt?, model?, tools?, network?, lessons?}}` | `Session` |
+| GET | `/agents/{slug}/sessions?limit=20` | | `[Session]` newest first (turns omitted) |
+| GET | `/sessions/{id}` | | `Session` with `turns: [Run]` ordered by `turn_index` |
+| POST | `/sessions/{id}/messages` | `{input: str}` | `Run` (status `queued`/`running`; has `session_id`, `turn_index`); 409 if a turn is still running |
+| POST | `/runs/{id}/cancel` | | `Run` (status becomes `cancelled`; idempotent; 409 if already finished) |
+
+```jsonc
+// Session
+{"id": "s_..", "agent_slug": "repo-maintainer", "version_n": 1,   // int, or null for a draft
+ "draft": null,                                                    // draft config object, or null
+ "title": "..", "created_at": 0.0, "updated_at": 0.0}
+```
+
+- Run objects gain `session_id` (str|null) and `turn_index` (int|null). Session turns are runs with source `playground`.
+- Each turn is a normal run: its model history is rebuilt from the earlier turns' events (user inputs, assistant
+  text, tool calls and results; tool outputs clipped, oldest turns dropped to fit), and its workspace starts from
+  the latest earlier turn's exported archive. Containers are not kept between turns.
+- A draft session runs its unsaved config over the version it was started from (`version`, default prod) without
+  creating a version. Draft runs are excluded from `GET /agents/{slug}/runs`, metrics and improvement feedback,
+  and never affect evals or promotion.
+- Implementation extras (not required by clients): Session also carries `agent_id`, `base_version_n`, `is_draft`,
+  `turn_count` and (on `GET /sessions/{id}`) `running`; `POST /sessions/{id}/messages` accepts `wait: bool`;
+  `POST /sessions/{id}/save-version {rationale?}` creates (does not promote) a version from a draft's config.
+- Run status gains `cancelled` (additive). Cancel stops the task and the sandbox, appends an `error` event
+  `"Stopped by user"`, then `run_finished` with status `cancelled`; it works for every server run (local CLI runs
+  return 409). The cancelled turn's workspace is still exported, so a session continues from it.
+
 ## Promotion rule
 
 Candidate eligible iff `candidate_passed_total > base_passed_total` and no case passed by base fails for candidate.

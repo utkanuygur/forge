@@ -33,9 +33,10 @@ def test_run_lifecycle_with_api_key_produces_trace_diff_and_artifacts(api, make_
 
     evs = events(api, run["id"], headers=hdr)
     assert_gapless(evs)
-    assert [e["type"] for e in evs] == ["run_started", "tool_call", "tool_result", "tool_call", "tool_result",
-                                        "assistant", "run_finished"]
-    bash_result = evs[4]["payload"]
+    assert [e["type"] for e in evs] == ["run_started", "assistant", "tool_call", "tool_result", "assistant",
+                                        "tool_call", "tool_result", "assistant", "run_finished"]
+    assert [e["payload"].get("kind") for e in evs if e["type"] == "assistant"] == ["progress", "progress", "final"]
+    bash_result = evs[6]["payload"]
     assert bash_result["name"] == "bash" and "hello from forge" in bash_result["output"]
     assert not bash_result["is_error"]
     assert evs[-1]["payload"]["status"] == "succeeded"

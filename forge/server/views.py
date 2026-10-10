@@ -36,6 +36,7 @@ def run_view(r: dict, *, version_n: int | None = None) -> dict:
         "error": r["error"], "turns": r["turns"], "tokens_in": r["tokens_in"], "tokens_out": r["tokens_out"],
         "has_artifacts": bool(r["artifact_path"] and Path(r["artifact_path"]).exists()),
         "eval_case_id": r["eval_case_id"],
+        "session_id": r.get("session_id"), "turn_index": r.get("turn_index"),  # additive (playground)
         "created_at": r["created_at"], "started_at": r["started_at"], "ended_at": r["ended_at"],
         "feedback": [feedback_view(f) for f in db.list_feedback(r["id"])],
     }

@@ -214,7 +214,9 @@ async def run_agent(
     temperature: float | None = None,
     max_turns: int = 30,
     max_seconds: int = 600,
+    history: list[Message] | None = None,
 ) -> RunResult:
+    """`history` (playground sessions) is prepended to the conversation; only this turn's events are emitted."""
     # Longest first so a secret containing another secret is fully redacted.
     secret_values = sorted({v for v in (secrets or {}).values() if v}, key=len, reverse=True)
     seq = 0
@@ -229,7 +231,7 @@ async def run_agent(
     system = build_system_prompt(version)
     allowed = [t for t in version.tools if t in TOOL_SPECS]
     tools = [TOOL_SPECS[t] for t in allowed]
-    messages: list[Message] = [Message(role="user", text=input)]
+    messages: list[Message] = [*(history or []), Message(role="user", text=input)]
     result = RunResult(status="running")
     last_text = ""
 

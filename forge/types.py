@@ -149,7 +149,7 @@ class Executor(Protocol):
 
 # ---------------------------------------------------------------- run result
 
-RunStatus = Literal["queued", "running", "succeeded", "failed", "timeout"]
+RunStatus = Literal["queued", "running", "succeeded", "failed", "timeout", "cancelled"]  # cancelled: additive
 
 
 class RunResult(BaseModel):
@@ -175,6 +175,7 @@ class RunResult(BaseModel):
 #       temperature: float | None = None,
 #       max_turns: int = 30,
 #       max_seconds: int = 600,
+#       history: list[Message] | None = None,   # additive: earlier session turns
 #   ) -> RunResult
 #
 # Factories (forge/providers.py, forge/executors.py):

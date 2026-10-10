@@ -15,7 +15,20 @@ from typing import Any, Iterator
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
-JSON_COLUMNS = {"lessons", "tools", "http_tools", "seed_files", "payload", "summary"}
+JSON_COLUMNS = {"lessons", "tools", "http_tools", "seed_files", "payload", "summary", "draft_config"}
+
+# Runs that belong to a draft playground session: excluded from run lists, metrics and improvement.
+NOT_DRAFT = "(session_id IS NULL OR session_id NOT IN (SELECT id FROM sessions WHERE version_id IS NULL))"
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive, idempotent column migrations for databases created before a column existed."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if "session_id" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN session_id TEXT")
+    if "turn_index" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN turn_index INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS runs_session ON runs(session_id, turn_index)")
 BOOL_COLUMNS = {"auto_promote", "network", "passed"}
 
 # ---------------------------------------------------------------- basics
@@ -55,6 +68,7 @@ def connect() -> Iterator[sqlite3.Connection]:
     conn.execute("PRAGMA foreign_keys = ON")
     if path not in _initialized:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         _initialized.add(path)
     try:
         yield conn
@@ -215,13 +229,16 @@ def get_secrets(agent_id: str) -> dict[str, str]:
 
 
 def create_run(agent_id: str, version_id: str, source: str, input: str, *, status: str = "queued",
-               eval_case_id: str | None = None, callback_url: str | None = None) -> dict:
+               eval_case_id: str | None = None, callback_url: str | None = None,
+               session_id: str | None = None, turn_index: int | None = None) -> dict:
     t = now()
     row = {
         "id": new_id("r"), "agent_id": agent_id, "version_id": version_id, "source": source, "input": input,
         "status": status, "eval_case_id": eval_case_id, "callback_url": callback_url, "created_at": t,
         "started_at": t if status == "running" else None,
     }
+    if session_id:
+        row.update(session_id=session_id, turn_index=turn_index)
     _insert("runs", row)
     return get_run(row["id"])  # type: ignore[return-value]
 
@@ -232,9 +249,10 @@ def get_run(run_id: str) -> dict | None:
 
 def list_runs(agent_id: str, limit: int = 50, source: str | None = None) -> list[dict]:
     if source:
-        return _all("SELECT * FROM runs WHERE agent_id = ? AND source = ? ORDER BY created_at DESC LIMIT ?",
-                    agent_id, source, limit)
-    return _all("SELECT * FROM runs WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?", agent_id, limit)
+        return _all(f"SELECT * FROM runs WHERE agent_id = ? AND source = ? AND {NOT_DRAFT} "
+                    "ORDER BY created_at DESC LIMIT ?", agent_id, source, limit)
+    return _all(f"SELECT * FROM runs WHERE agent_id = ? AND {NOT_DRAFT} ORDER BY created_at DESC LIMIT ?",
+                agent_id, limit)
 
 
 def update_run(run_id: str, **fields: Any) -> dict | None:
@@ -291,9 +309,47 @@ def negative_feedback_since(agent_id: str, since: float) -> list[dict]:
     """Negative feedback on the agent's non-eval runs created after `since`, joined with run fields."""
     return _all(
         "SELECT f.*, r.input AS run_input, r.output AS run_output FROM feedback f JOIN runs r ON r.id = f.run_id "
-        "WHERE r.agent_id = ? AND r.source != 'eval' AND f.rating < 0 AND f.created_at > ? ORDER BY f.created_at",
+        f"WHERE r.agent_id = ? AND r.source != 'eval' AND {NOT_DRAFT.replace('session_id', 'r.session_id')} "
+        "AND f.rating < 0 AND f.created_at > ? ORDER BY f.created_at",
         agent_id, since,
     )
+
+
+# ---------------------------------------------------------------- playground sessions
+
+
+def create_session(agent_id: str, base_version_id: str, *, version_id: str | None,
+                   draft_config: dict | None = None, title: str = "") -> dict:
+    t = now()
+    row = {"id": new_id("s"), "agent_id": agent_id, "version_id": version_id, "base_version_id": base_version_id,
+           "draft_config": draft_config, "title": title, "created_at": t, "updated_at": t}
+    _insert("sessions", row)
+    return get_session(row["id"])  # type: ignore[return-value]
+
+
+def get_session(session_id: str) -> dict | None:
+    return _one("SELECT * FROM sessions WHERE id = ?", session_id)
+
+
+def list_sessions(agent_id: str, limit: int = 50) -> list[dict]:
+    return _all("SELECT s.*, (SELECT COUNT(*) FROM runs r WHERE r.session_id = s.id) AS turn_count "
+                "FROM sessions s WHERE s.agent_id = ? ORDER BY s.updated_at DESC LIMIT ?", agent_id, limit)
+
+
+def update_session(session_id: str, **fields: Any) -> dict | None:
+    _update("sessions", "id", session_id, fields)
+    return get_session(session_id)
+
+
+def session_runs(session_id: str) -> list[dict]:
+    return _all("SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index", session_id)
+
+
+def is_draft_run(run: dict) -> bool:
+    if not run.get("session_id"):
+        return False
+    s = get_session(run["session_id"])
+    return bool(s and s["version_id"] is None)
 
 
 # ---------------------------------------------------------------- eval cases and results

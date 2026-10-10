@@ -29,7 +29,9 @@ separately by the live layer.
 
 | Model string | Behavior | Used for |
 |---|---|---|
-| `fake:hello` | Writes `hello.py`, runs it with bash, finishes | Run lifecycle, traces, diffs, CLI |
+| `fake:hello` | Narrates, writes `hello.py`, narrates, runs it with bash, finishes | Run lifecycle, traces, diffs, CLI, transcript |
+| `fake:session` | Turn 1 writes `hello.py`; later turns `cat hello.py` and report what they saw and how many earlier turns the history held | Playground sessions: history and workspace carry-over |
+| `fake:slow` | Runs `sleep 30` forever | Cancel and the Stop button |
 | `fake:echo` | Finishes immediately echoing the input | Fast API and UI tests |
 | `fake:lessons` | Creates `MARKER.txt` only when a lesson says so | Improvement loop: v1 fails `test -f MARKER.txt`, v2 passes |
 | `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs | Grader and optimizer without API calls |
@@ -71,6 +73,8 @@ Requirement IDs are defined in the technical design document. Each row names the
 | FR13 Local runner | 1: path confinement, ask mode; 3: `forge run` creates files locally and syncs a `local` run that never affects eval results |
 | FR14 Webhook | 3: receiver gets the final Run JSON |
 | FR15 HTTP tools | Not implemented (P2); no test |
+| Run transcript and narration | 1: progress updates become `assistant` events with `kind` before tool calls, progress-update request shape, environment note (`tests/test_narration.py`), CLI transcript and NO_COLOR (`tests/test_transcript.py`); 3: `forge run` prints `● Write(hello.py)`; 4: tool renderers, diff, markdown sanitization, Ctrl+O, auto-scroll (`web/tests/unit/transcript.test.tsx`), `fake:hello` transcript on run and share pages (`web/tests/e2e/transcript.spec.ts`) |
+| Playground sessions | 1: history reconstruction, truncation, archive carry-over, column migration, draft exclusion (`tests/test_sessions.py`); 3: two-turn `fake:session`, cancel of `fake:slow` and `fake:loop`, 409 while busy, draft excluded and saved as a version (`tests/e2e/test_sessions.py`); 4: composer keys (`web/tests/unit/Composer.test.tsx`), two-turn session, Stop, Test from Configure (`web/tests/e2e/playground.spec.ts`) |
 | NFR1 Isolation | 2: network none, non-root user, limits; 3: no leaked containers after the suite |
 | NFR2 Reproducibility | 3: every run and eval result records its version |
 | NFR3 Live trace | 3: SSE delivers events before the run ends; 4: trace renders live |

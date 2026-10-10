@@ -111,3 +111,18 @@ CREATE TABLE IF NOT EXISTS improvements (
   created_at            REAL NOT NULL,
   ended_at              REAL
 );
+
+-- Playground sessions (additive). version_id NULL means a draft: an unsaved config in draft_config that
+-- runs on top of base_version_id; draft runs are excluded from run lists, metrics and improvement.
+-- runs.session_id / runs.turn_index are added by a guarded migration in forge/db.py.
+CREATE TABLE IF NOT EXISTS sessions (
+  id               TEXT PRIMARY KEY,
+  agent_id         TEXT NOT NULL REFERENCES agents(id),
+  version_id       TEXT REFERENCES agent_versions(id),
+  base_version_id  TEXT NOT NULL REFERENCES agent_versions(id),
+  draft_config     TEXT,              -- JSON, null unless draft
+  title            TEXT NOT NULL DEFAULT '',
+  created_at       REAL NOT NULL,
+  updated_at       REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_agent ON sessions(agent_id, updated_at DESC);

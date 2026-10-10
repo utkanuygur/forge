@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from forge import db
-from forge.server import evals, runs
+from forge.server import evals, runs, sessions_api
 from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
@@ -32,7 +32,7 @@ load_dotenv()
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 MAX_SEED_FILE = 1_000_000
-TERMINAL = {"succeeded", "failed", "timeout"}
+TERMINAL = {"succeeded", "failed", "timeout", "cancelled"}
 
 
 @asynccontextmanager
@@ -525,6 +525,7 @@ async def list_improvements(slug: str, request: Request) -> list[dict]:
 
 
 app.include_router(api)
+app.include_router(sessions_api.router)
 
 # ---------------------------------------------------------------- SPA
 
