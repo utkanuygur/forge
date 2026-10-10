@@ -603,7 +603,7 @@ async function parseError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, msg);
 }
 
-async function request<T>(method: string, path: string, body?: unknown, share?: string): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown, share?: string): Promise<T> {
   const headers: Record<string, string> = {};
   let payload: BodyInit | undefined;
   if (body instanceof FormData) {

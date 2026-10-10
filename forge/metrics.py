@@ -52,6 +52,11 @@ def run_duration_ms(run: dict) -> float | None:
     return max(0.0, (e - s) * 1000)
 
 
+# Every run source. Production metrics include all of them except `eval`: runs started by agent__ tools
+# (`agent`) and by triggers (`schedule`, `github`, `slack`) are production traffic like `ui` or `api`.
+SOURCES = ("ui", "api", "share", "local", "agent", "schedule", "github", "slack", "eval")
+
+
 def include_source(run: dict, include_eval: bool) -> bool:
     return include_eval or run.get("source") != "eval"
 

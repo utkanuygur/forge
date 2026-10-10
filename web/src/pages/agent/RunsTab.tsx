@@ -30,7 +30,7 @@ function Rating({ run }: { run: Run }) {
 }
 
 const STATUS_OPTIONS = ["succeeded", "failed", "timeout", "budget_exceeded", "awaiting_approval", "running", "queued"];
-const SOURCE_OPTIONS = ["ui", "api", "share", "eval", "agent", "local"];
+const SOURCE_OPTIONS = ["ui", "api", "share", "eval", "agent", "schedule", "github", "slack", "local"];
 
 function filtersFromParams(p: URLSearchParams): RunFilters {
   const sort = p.get("sort");
