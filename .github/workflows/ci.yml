@@ -1,0 +1,62 @@
+# Runs every deterministic test layer (see TESTING.md). Live model tests are excluded: they need API keys.
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          uv sync --locked
+          cd web && npm ci
+
+      - name: Build sandbox image
+        run: docker build -q -t forge-sandbox sandbox/
+
+      - name: "Layers 1 to 3: unit, sandbox, full stack"
+        run: uv run pytest -q -m "not live"
+
+      - name: "Layer 4a: web unit tests"
+        run: cd web && npm test
+
+      - name: "Layer 4b: browser tests"
+        run: |
+          cd web
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+
+      - name: "Layer 5: demo eval checkers"
+        run: uv run python demo/verify.py
+
+      - name: Upload browser test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 7
