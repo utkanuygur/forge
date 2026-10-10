@@ -35,6 +35,7 @@ separately by the live layer.
 | `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs | Grader and optimizer without API calls |
 | `fake:loop` | Calls bash forever | Turn limit and `timeout` status |
 | `fake:error` | Raises like a failed API | `failed` status and error events |
+| `fake:risky` | Runs `rm -rf build` with bash, then finishes saying whether it was allowed | Approval prompts: approve, deny, timeout and deny rules |
 
 ## Workflow
 
@@ -78,6 +79,17 @@ Requirement IDs are defined in the technical design document. Each row names the
 | NFR6 Secret redaction | 1: redaction helper; 3: secret absent from stored events and output |
 | NFR7 Single machine | Implicit: every layer runs on one laptop with one process and one database file |
 | NFR8 Vendor independence | 1: both adapters; 6: three model sources |
+| GOV1 Approval policy rules | 1: bash regex presets, file globs, deny precedence, validation (`tests/test_governance.py`); 1: invalid policy is a 400 |
+| GOV2 Approve executes the paused call | 1: loop pause and approve; 3: `test_approve_executes_the_paused_call_and_notifies_the_webhook` (status `awaiting_approval`, share token 403, 409 after decision); 4: GOV10 approve |
+| GOV3 Deny returns `Denied by reviewer: <note>`, run continues | 1: loop deny; 3: `test_deny_with_note_returns_error_and_the_run_continues`; 4: GOV10 deny |
+| GOV4 Timeout auto-denies | 1: `test_timeout_auto_denies_and_the_run_continues` (1 s timeout); 3: `test_timeout_auto_denies` |
+| GOV5 Deny rules never execute | 1 and 3: deny rule tests, no approval events |
+| GOV6 Pricing and per-run cap | 1: fallback table, free providers, FORGE_PRICES, `forge.pricing` hook; 1 and 3: priced `fake:loop` ends `budget_exceeded` with the cap and spend in the error |
+| GOV7 Monthly budget | 1: month-to-date math and 402 on runs, evals, improve; 3: `test_monthly_budget_refuses_new_runs_with_402`, `test_improvement_stops_when_the_budget_runs_out`; 4: GOV11 banner and refused run |
+| GOV8 80% warnings | 1 and 3: `budget_warning` for `run` and `month` scopes; 4: banner (GOV11) and trace row (Vitest) |
+| GOV9 Restart and auth | 1: restart marks `awaiting_approval` runs failed (interrupted) and approvals expired; share token cannot approve; 3: approval webhook |
+| GOV10 Approval card UI | 4: Vitest `Governance.test.tsx`; Playwright `governance.spec.ts` (live card, header and Runs tab badges, approve, deny with note) |
+| GOV11 Policy editor and caps UI | 4: Vitest presets, edits, timeout; Playwright saves presets, mode, run cap and monthly budget, meter and banner |
 
 ## Adding a test
 

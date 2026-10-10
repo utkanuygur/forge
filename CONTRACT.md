@@ -141,3 +141,77 @@ Auth amendments (server implementation):
 Candidate eligible iff `candidate_passed_total > base_passed_total` and no case passed by base fails for candidate.
 `auto_promote` agents: eligible candidates are promoted automatically; an improvement cycle also starts when 3 new
 negative feedback items arrive since the last improvement.
+
+## Governance: approvals and spending caps (additive, feat/governance)
+
+All changes are additive; an agent without a policy, cap or budget behaves exactly as before.
+Logic lives in `forge/policy.py` (rule matching), `forge/budget.py` (pricing and month-to-date spend),
+`forge/governance.py` (the `RunGovernor` hooks and the approval Future registry) and
+`forge/server/governance.py` (routes).
+
+### New fields
+
+| Object | Field | Notes |
+|---|---|---|
+| Version | `approval_policy` | `{"rules": [Rule], "timeout_seconds": 900}`; `{}` means no rules. Copied from prod into new versions and optimizer candidates. Invalid policies are a 400. |
+| Version | `max_run_cost_usd` | float or null (no cap). Explicit `null` in `POST /versions` removes the cap. |
+| Agent | `monthly_budget_usd` | float or null (no budget). Set on `POST /agents` or `PATCH /agents/{slug}` (explicit `null` removes it). |
+| Agent | `month_to_date_usd`, `budget_state`, `pending_approvals` | read only; `budget_state` is `none`, `ok`, `warning` (at 80%) or `exceeded` |
+| Run | `cost_usd` | estimated spend, updated after every model turn |
+
+Rule: `{"tool": "bash"|"read_file"|"write_file"|"edit_file"|"*", "pattern"?: str, "mode": "ask"|"deny", "label"?: str}`.
+For `bash` the pattern is a regular expression searched in `cmd`; for file tools it is a path glob (`*` within
+a directory, `**` across directories, a glob without `/` also matches the file name anywhere). No pattern
+matches every call to the tool; `*` cannot have a pattern. A matching `deny` wins, otherwise the first
+matching `ask`. Database: additive columns `agents.monthly_budget_usd`, `agent_versions.approval_policy`,
+`agent_versions.max_run_cost_usd`, `runs.cost_usd` (added to existing databases on startup by
+`db.ADDED_COLUMNS`) and a new `approvals` table.
+
+### New run statuses
+
+| Status | Terminal | Meaning |
+|---|---|---|
+| `awaiting_approval` | no | Paused before a tool call that matched an `ask` rule; the sandbox stays alive. Server restart marks it `failed` with error `interrupted` (pending approvals become `expired`). |
+| `budget_exceeded` | yes | Cumulative estimated cost went over the version's `max_run_cost_usd`. |
+
+### New events
+
+| Type | Payload |
+|---|---|
+| `approval_requested` | `{id, tool_call_id, name, args, rule: {index, tool, pattern, mode, label, description}, expires_at}` |
+| `approval_resolved` | `{id, tool_call_id, decision: "approve" or "deny", note, by: "ui", "api" or "timeout"}` |
+| `budget_warning` | `{scope: "run" or "month", limit_usd, spent_usd, fraction}`; once per scope per run, at 80% |
+
+Order for an `ask` call: `tool_call`, `approval_requested`, `approval_resolved`, `tool_result`. Approve executes
+the call. Deny, or no decision before `timeout_seconds` (default 15 minutes), returns an `is_error` tool result
+`Denied by reviewer: <note>` and the run continues. A `deny` rule returns `Denied by policy: <rule>` at once with
+no approval events. Time spent waiting does not count toward the run's wall-clock limit, but a paused run
+keeps its slot in the run concurrency limit. Exceeding the run cap emits `error`
+`Run stopped: per-run spending cap of $X exceeded ($Y spent).` and ends `budget_exceeded`. Policies apply to
+every hosted run, eval runs included.
+
+### New endpoints
+
+| Method | Path | Auth | Body | Returns |
+|---|---|---|---|---|
+| GET | `/runs/{id}/approvals` | runtime (share allowed) | | `[Approval]` |
+| POST | `/runs/{id}/approvals/{approval_id}` | localhost builder or API key; share token gets 403 | `{decision: "approve" or "deny", note?}` | `Approval`; 404 unknown, 409 no longer pending |
+| GET | `/agents/{slug}/governance` | builder | | `{monthly_budget_usd, month_to_date_usd, fraction, state, pending_approvals, awaiting_runs: [run_id]}` |
+
+`Approval`: `{id: "ap_..", run_id, tool_call_id, name, args, rule, status: "pending"|"approved"|"denied"|"expired",
+note, resolved_by, created_at, expires_at, resolved_at}`.
+
+Spending: month-to-date spend is the sum of `cost_usd` of the agent's runs created since the first of the
+calendar month (UTC), eval runs included. When it is at or over `monthly_budget_usd`, `POST /agents/{slug}/runs`,
+`POST /agents/{slug}/evals/run` and `POST /agents/{slug}/improve` return **402** `{"detail": "Monthly budget of $X
+reached ..."}`; an improvement already running stops starting eval runs and ends `failed` with that reason.
+Prices (USD per million input and output tokens) come from `forge.pricing` when present, else the fallback table
+in `forge/budget.py` (claude-opus-5-5 4/20, claude-sonnet-5-5 2/10, claude-haiku-5-5 0.10/0.50; `fake:` and
+`openai_compat:` free); `FORGE_PRICES='{"<model>": [in, out]}'` overrides both. Unknown models are not priced.
+
+Webhook: when a run with a `callback_url` pauses, the URL also receives the Run JSON (status
+`awaiting_approval`) with an extra `approval` field. The final Run JSON is posted as before.
+
+Runtime: `run_agent(..., hooks=None)` accepts an optional hooks object with `after_turn(result, send)` and
+`before_tool(call, send)`; the run manager passes `forge.governance.RunGovernor` when `run_agent` accepts it.
+Local CLI runs are not governed.
