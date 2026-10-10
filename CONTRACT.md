@@ -136,6 +136,79 @@ Auth amendments (server implementation):
 | POST | `/runs` | `{agent_slug, version_n, input, source: "local"}` | `Run` (status `running`) |
 | POST | `/runs/{id}/events` | `[Event]` | `{"ok": true}` (a `run_finished` event finalizes the run) |
 
+## Triggers
+
+Additive (tables `triggers` and `trigger_fires` in `forge/schema.sql`, code in `forge/triggers/`). A trigger starts runs of
+one agent. Runs it starts have `source` `schedule`, `github` or `slack` (new sources) and use the production version
+unless the trigger's `config.version` pins one. IDs: `tr_` (trigger), `tf_` (fire).
+
+```jsonc
+// Trigger
+{"id": "tr_..", "agent_id": "ag_..", "kind": "schedule",          // schedule | github | slack
+ "config": {...}, "enabled": true, "created_at": 0.0, "last_fired_at": 0.0, "last_run_id": "r_..",
+ "last_error": null, "has_secret": false, "has_token": false,
+ "hook_path": "/v1/hooks/github/tr_..",                            // null for schedules
+ "public_url": null,                                               // $FORGE_PUBLIC_URL if set
+ "next_fire_times": [0.0, 0.0, 0.0]}                               // schedules only
+// TriggerFire (history)
+{"id": "tf_..", "trigger_id": "tr_..", "status": "started",       // started | skipped | missed | rate_limited | error
+ "detail": "", "test": false, "run_id": "r_..", "delivery": null,  // null | delivered | failed | skipped
+ "delivery_error": null, "created_at": 0.0, "run": Run}
+```
+
+Config (unknown keys are rejected; every kind also takes `input_template`, `version` and `max_runs_per_hour`, default
+`$FORGE_TRIGGER_RATE_LIMIT` or 30):
+- `schedule`: `cron` (5 fields or macros such as `@hourly`), `timezone` (IANA, default UTC), `input_template`
+  (required; `{date}`, `{time}`, `{datetime}`, `{weekday}`), `skip_if_running` (default true).
+- `github`: `events` (subset of `issues`, `issue_comment`, `pull_request`, `push`), `label`, `command` (default
+  `/forge`), `branches` (globs), `pr_actions` (default `opened`, `synchronize`), `comment_back` (default true),
+  `api_base` (default `https://api.github.com`). Template fields: `{event} {action} {repo} {number} {title} {body}
+  {comment} {url} {issue_url} {pr_url} {sender} {author} {label} {branch} {base} {ref} {commits} {commit_count}
+  {compare} {head_sha}`. An empty template uses a default per event.
+- `slack`: `input_template` (default `{text}`; also `{user} {channel} {command} {team}`), `response_type`
+  (`in_channel` or `ephemeral`), `api_base` (default `https://slack.com/api`).
+
+Templates replace only known `{name}` fields (no format specs or attribute access); `{{` and `}}` are literal braces.
+
+### Trigger builder routes (localhost or the agent's API key; share tokens get 401)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/agents/{slug}/triggers` | | `[Trigger]` |
+| POST | `/agents/{slug}/triggers` | `{kind, config, enabled?, signing_secret? (slack), token? (GitHub token or Slack bot token)}` | `Trigger`; GitHub adds `"secret"` (generated, shown once) |
+| GET | `/triggers/{id}` | | `Trigger` |
+| PATCH | `/triggers/{id}` | `{config? (merged), enabled?, signing_secret?, token? ("" removes)}` | `Trigger` |
+| DELETE | `/triggers/{id}` | | `{"ok": true}` |
+| POST | `/triggers/{id}/rotate-secret` | | `{"secret": ".."}` (GitHub) |
+| POST | `/triggers/{id}/test` | `{input?}` | 202 `{run_id, run_url, input}`; fires once with a sample payload; results are not posted out |
+| GET | `/triggers/{id}/history?limit=20` | | `[TriggerFire]` newest first |
+
+Secrets and tokens are never returned after creation.
+
+### Hooks (no auth besides the signature; they work through the public tunnel)
+
+| Method | Path | Verification | Returns |
+|---|---|---|---|
+| POST | `/hooks/github/{id}` | `X-Hub-Signature-256`: HMAC SHA256 of the raw body with the trigger secret | `ping` 200; matching event 202 `{run_id, run_url}`; ignored or disabled 204 (reason in `X-Forge-Ignored`); bad or missing signature 401 |
+| POST | `/hooks/slack/{id}` | `X-Slack-Signature` v0 with `X-Slack-Request-Timestamp`, rejected when more than 5 minutes off | Slash command (form): 200 ephemeral `Working on it` with the run link, final output later POSTed to `response_url`. Events API (JSON): `url_verification` echoes `challenge`; `app_mention` 200 `{ok, run_id}` and a threaded `chat.postMessage` reply when a bot token is set. Bad signature 401 |
+
+Both return 429 with `Retry-After` past `max_runs_per_hour`, 404 for an unknown trigger and 413 above 5 MB.
+GitHub comment-back (token set, `comment_back`, issue or PR events) and Slack replies are best effort: 3 retries with
+backoff on network errors, 429 and 5xx; failures land in `delivery_error` and the trigger's `last_error`. Events from
+bots are ignored to avoid loops; duplicate Slack `event_id`s are ignored. `response_url` must start with
+`https://hooks.slack.com/` unless `$FORGE_SLACK_RESPONSE_URL_PREFIXES` (comma separated) says otherwise. Links in
+replies use `$FORGE_PUBLIC_URL` if set, else the URL the hook arrived on.
+
+### Scheduler
+
+Started with the app (`FORGE_SCHEDULER=0` disables it; `FORGE_SCHEDULER_INTERVAL` seconds, default 15). Each slot fires
+at most once: `last_slot_at` is advanced atomically before the run starts, so restarts never double fire. Slots more
+than 10 minutes late are skipped and recorded as one `missed` fire; of several recent slots only the latest fires.
+With `skip_if_running` a slot is recorded as `skipped` while the previous run is queued or running. Enabling a schedule
+or changing its cron or time zone starts counting from that moment. DST: a nonexistent local time runs shifted forward
+by the gap; a repeated local time runs once, unless the hour field is `*`. Test hook: `FORGE_TEST_CLOCK_FILE` makes the
+scheduler read the current unix time from that file.
+
 ## Promotion rule
 
 Candidate eligible iff `candidate_passed_total > base_passed_total` and no case passed by base fails for candidate.

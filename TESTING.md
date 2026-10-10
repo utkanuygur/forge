@@ -78,6 +78,14 @@ Requirement IDs are defined in the technical design document. Each row names the
 | NFR6 Secret redaction | 1: redaction helper; 3: secret absent from stored events and output |
 | NFR7 Single machine | Implicit: every layer runs on one laptop with one process and one database file |
 | NFR8 Vendor independence | 1: both adapters; 6: three model sources |
+| TRG1 Cron parsing and next fire times | 1: `test_triggers_unit.py` fields, names, steps, macros, invalid expressions, day of month or weekday, month ends, leap years, time zones, DST spring forward and fall back; 4: `cron.test.ts` mirrors the same cases |
+| TRG2 GitHub webhook | 1: signature (incl. GitHub's test vector), issue, label, comment command, PR and push filters, bots ignored, comment back with retry and recorded failure (mock transport); 3: `test_triggers.py` signed payload starts a run, unsigned and wrongly signed get 401, comment command filter, comment back to a local mock API |
+| TRG3 Slack | 1: v0 signature and 5 minute replay window, mrkdwn conversion, truncation, slash command reply, url_verification, app_mention dedupe and bot filter; 3: slash command answers within 3 s and `response_url` (local receiver) gets the final output |
+| TRG4 Input templates | 1: known fields only, braces escape, no attribute access, field and total limits; 3: rendered input reaches the run |
+| TRG5 Hook rate limit and tunnel access | 1: sliding window limiter; 429 with Retry-After; hooks accepted with proxy headers while builder routes are refused |
+| TRG6 Scheduler | 1: once per slot across a restart, skip while running (configurable), missed slots older than 10 minutes recorded, long downtime fires the latest slot once, disabled, rate limit; 3: fake clock file, one fire per slot, missed record, next slot fires |
+| TRG7 Trigger builder API | 1: CRUD, validation, GitHub secret shown once and rotated, tokens never returned, localhost or API key only, test fire with sample payload, history, version pin |
+| TRG8 Triggers UI | 4: cron preview text and next times (Vitest); Playwright creates a schedule with preview, toggles it, tests it; creates a GitHub trigger, sees the secret once, a signed delivery shows up in recent runs |
 
 ## Adding a test
 

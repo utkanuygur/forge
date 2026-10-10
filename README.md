@@ -37,6 +37,7 @@ Expose it to others: `cloudflared tunnel --url http://localhost:8000`.
 | File | Contents |
 |---|---|
 | [CONTRACT.md](CONTRACT.md) | HTTP API, objects, conventions, promotion rule |
+| [docs/triggers.md](docs/triggers.md) | Schedules, GitHub webhooks and Slack commands that start runs |
 | [TESTING.md](TESTING.md) | Six test layers, commands and requirement traceability |
 | [demo/README.md](demo/README.md) | The reference agent, its conventions and evaluation cases |
 
