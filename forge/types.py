@@ -24,7 +24,7 @@ class Event(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     # Payload shapes by type:
     #   run_started:  {"version_id", "model", "input"}
-    #   assistant:    {"text"}
+    #   assistant:    {"text", "kind"}  kind: "progress" (narration before tool calls) | "final" (answer)
     #   tool_call:    {"id", "name", "args"}
     #   tool_result:  {"id", "name", "output", "is_error"}
     #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out"}
@@ -99,6 +99,9 @@ class Message(BaseModel):
 class ModelResponse(BaseModel):
     text: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    # Short progress updates the model wrote between tool calls (e.g. Claude progress-update
+    # thinking summaries), in order. Not replayed as text; the provider keeps the raw blocks.
+    notes: list[str] = Field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
 

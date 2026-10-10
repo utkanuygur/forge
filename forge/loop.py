@@ -108,6 +108,9 @@ def build_system_prompt(version: AgentVersion) -> str:
         "## Environment\n"
         "- Your working directory is the workspace root (/workspace). All file paths are relative to it.\n"
         f"- Network access is {net}.\n"
+        "- Before each group of tool calls, say in one short sentence what you are about to do.\n"
+        "- Use read_file, write_file and edit_file to view and change files; use bash for running commands "
+        "(tests, builds, git, search), not for editing files.\n"
         "- When you are done, reply without calling any tools and summarize what you did."
     )
     return "\n\n".join(p for p in parts if p)
@@ -248,9 +251,13 @@ async def run_agent(
             result.turns += 1
             result.tokens_in += resp.tokens_in
             result.tokens_out += resp.tokens_out
+            # Narration first, so the trace reads in order: what the model is about to do, then the calls.
+            for note in resp.notes:
+                if note.strip():
+                    await send("assistant", {"text": note.strip(), "kind": "progress"})
             if resp.text:
                 last_text = resp.text
-                await send("assistant", {"text": resp.text})
+                await send("assistant", {"text": resp.text, "kind": "progress" if resp.tool_calls else "final"})
             messages.append(Message(role="assistant", text=resp.text, tool_calls=resp.tool_calls))
             if not resp.tool_calls:
                 result.status, result.output = "succeeded", resp.text

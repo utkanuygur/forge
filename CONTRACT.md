@@ -114,6 +114,9 @@ Auth amendments (server implementation):
 - A share token may `GET /agents/{slug}` and its versions (for the share page) and start/read its own share runs; it gets 401 on builder, eval and improve routes. With a share token, `GET /agents/{slug}/runs` lists only share-sourced runs.
 - Share page URL: `/s/{slug}?share=<token>`.
 - Extras: Run includes `eval_case_id`; eval results include `"running": bool`; `PUT secrets` with an empty value deletes it.
+- Narration (additive): `ModelResponse.notes: list[str]` carries the model's between-tool-call progress updates
+  (Claude: `thinking.display: "updates"` summaries). The loop emits each note, then any text, as `assistant` events
+  before that turn's `tool_call` events; `assistant` payloads gain `"kind": "progress" | "final"` (absent in old traces).
 
 ### Improvement
 

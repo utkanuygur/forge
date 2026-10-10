@@ -22,6 +22,18 @@ _SAMPLING_MODELS = re.compile(r"^claude-(3[-.]|(opus|sonnet|haiku)-4(-[0-6])?(-\
 
 def accepts_temperature(model: str) -> bool:
     return bool(_SAMPLING_MODELS.match(model))
+
+# Models that return between-tool-call progress updates as `thinking` blocks (empty by default) and
+# accept `thinking.display: "updates"` under this beta to get them back as short summaries.
+PROGRESS_UPDATES_BETA = "thinking-display-updates-2026-08-18"
+_UPDATES_MODELS = re.compile(r"^claude-(opus-5-5|sonnet-5-5|fable-5|fable-5-1|mythos-5-1)$")
+INTERRUPTED_NOTE = "This part of the response was interrupted before it finished."
+
+
+def supports_progress_updates(model: str) -> bool:
+    return bool(_UPDATES_MODELS.match(model))
+
+
 BACKOFF = (1.0, 2.0, 4.0)  # up to 3 retries after the first attempt
 
 
@@ -118,10 +130,20 @@ class AnthropicProvider:
             ]
         if temperature is not None and accepts_temperature(self.model):
             kwargs["temperature"] = temperature
-        resp = await with_retry(lambda: self.client.messages.create(**kwargs))
-        texts, calls = [], []
+        if supports_progress_updates(self.model):
+            kwargs["thinking"] = {"type": "adaptive", "display": "updates"}
+            kwargs["betas"] = [PROGRESS_UPDATES_BETA]
+            create = self.client.beta.messages.create
+        else:
+            create = self.client.messages.create
+        resp = await with_retry(lambda: create(**kwargs))
+        texts, calls, notes = [], [], []
         for b in resp.content:
-            if b.type == "text":
+            if b.type == "thinking":
+                note = (getattr(b, "thinking", "") or "").strip()
+                if note and note != INTERRUPTED_NOTE:
+                    notes.append(note)
+            elif b.type == "text":
                 texts.append(b.text)
             elif b.type == "tool_use":
                 calls.append(
@@ -134,6 +156,7 @@ class AnthropicProvider:
         return ModelResponse(
             text=text,
             tool_calls=calls,
+            notes=notes,
             tokens_in=resp.usage.input_tokens or 0,
             tokens_out=resp.usage.output_tokens or 0,
         )
@@ -250,8 +273,13 @@ class FakeProvider:
 MARKER_LESSON = "Always create a file named MARKER.txt in the workspace root before finishing."
 
 
-def _call(name: str, args: dict[str, Any], i: int) -> ModelResponse:
-    return ModelResponse(tool_calls=[ToolCall(id=f"call_{i}", name=name, args=args)], tokens_in=10, tokens_out=5)
+def _call(name: str, args: dict[str, Any], i: int, note: str = "") -> ModelResponse:
+    return ModelResponse(
+        tool_calls=[ToolCall(id=f"call_{i}", name=name, args=args)],
+        notes=[note] if note else [],
+        tokens_in=10,
+        tokens_out=5,
+    )
 
 
 class ScenarioProvider:
@@ -286,11 +314,12 @@ class ScenarioProvider:
                 return _call("bash", {"cmd": "true"}, step)
             case "hello":
                 script = [
-                    ("write_file", {"path": "hello.py", "content": "print('hello from forge')\n"}),
-                    ("bash", {"cmd": "python hello.py"}),
+                    ("write_file", {"path": "hello.py", "content": "print('hello from forge')\n"}, "I'll create hello.py."),
+                    ("bash", {"cmd": "python hello.py"}, "Now I'll run it to check the output."),
                 ]
                 if step < len(script):
-                    return _call(*script[step], step)
+                    name, args, note = script[step]
+                    return _call(name, args, step, note)
                 return ModelResponse(text="Created and ran hello.py.", tokens_in=10, tokens_out=5)
             case "lessons":
                 if step == 0 and "MARKER.txt" in system:
