@@ -636,6 +636,83 @@ export interface TaskSuggestion {
   prompt: string;
 }
 
+/** Result of the "eval_case" kind (one item of "eval_cases"). Nothing is saved until the user adds it. */
+export interface EvalCaseSuggestion {
+  name: string;
+  input: string;
+  checker_type: "shell" | "judge";
+  checker: string;
+  split: Split;
+  rationale: string;
+}
+
+/** Result of the "eval_cases" kind. */
+export interface EvalCasesSuggestion {
+  cases: EvalCaseSuggestion[];
+}
+
+/** Result of the "instructions" kind. */
+export interface InstructionsSuggestion {
+  instructions: string;
+  summary: string;
+}
+
+/** Result of the "rubric" kind. */
+export interface RubricSuggestion {
+  rubric: string;
+}
+
+/** Result of the "seed_file" kind. */
+export interface SeedFileSuggestion {
+  path: string;
+  content: string;
+  description: string;
+}
+
+/** Result of the "version_note" kind. */
+export interface VersionNoteSuggestion {
+  note: string;
+}
+
+/** Result of the "approval_rules" kind. `pattern` "" means no pattern. */
+export interface ApprovalRulesSuggestion {
+  rules: { tool: string; pattern: string; mode: ApprovalMode; label: string }[];
+  explanation: string;
+}
+
+/** Result of the "budget" kind. */
+export interface BudgetSuggestion {
+  max_run_cost_usd: number;
+  monthly_budget_usd: number;
+  explanation: string;
+  stats: { runs: number; mean_usd: number; p95_usd: number; max_usd: number; monthly_usd: number };
+}
+
+/** Result of the "http_tool" kind. */
+export interface HttpToolSuggestion {
+  name: string;
+  description: string;
+  method: HttpMethod;
+  url: string;
+  parameters: Record<string, unknown>;
+  headers: Record<string, string>;
+  query_params: string[];
+}
+
+/** Result of the "cron" kind; `next_fire_times` are epoch seconds computed by the server. */
+export interface CronSuggestion {
+  cron: string;
+  timezone: string;
+  explanation: string;
+  next_fire_times: number[];
+}
+
+/** Result of the "trigger_template" kind. */
+export interface TriggerTemplateSuggestion {
+  template: string;
+  explanation: string;
+}
+
 export interface NewVersionBody {
   system_prompt?: string;
   lessons?: string[];

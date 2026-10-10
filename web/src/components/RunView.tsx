@@ -31,11 +31,14 @@ export default function RunView({
   share,
   simple,
   header,
+  agentSlug,
 }: {
   runId: string;
   share?: string;
   simple?: boolean;
   header?: (run: Run) => React.ReactNode;
+  /** The run's agent slug (enables Generate in Save as test case). */
+  agentSlug?: (run: Run) => string | undefined;
 }) {
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -236,7 +239,7 @@ export default function RunView({
           </Panel>
           {!simple && (
             <Panel title="Save as test case">
-              <SaveAsEval runId={run.id} />
+              <SaveAsEval runId={run.id} slug={agentSlug?.(run) ?? run.agent_slug} />
             </Panel>
           )}
         </div>

@@ -531,7 +531,8 @@ Playground sessions (additive). Builder-only (localhost or the agent's API key; 
 
 Generate buttons: grader-written suggestions for fields users would otherwise type by hand. Every kind goes through
 one registry (`forge/assist/registry.py`), one engine (`forge/assist/engine.py`) and one route
-(`forge/server/assist.py`). Built-in kinds: `task`.
+(`forge/server/assist.py`). Built-in kinds: `task`, `eval_case`, `eval_cases`, `instructions`, `rubric`,
+`seed_file`, `version_note`, `approval_rules`, `budget`, `http_tool`, `cron`, `trigger_template`.
 
 ### Endpoint
 
@@ -580,6 +581,52 @@ credentials), naming real files, endpoints or columns, 1 to 4 sentences phrased 
 prompt is non-empty and under 1200 chars, the title is under 100 chars, and the prompt is not a near duplicate
 (normalized text similarity at least 0.85) of a recent input or an avoided text. Share links allowed.
 
+### Kind `eval_case`
+
+One evaluation case (task input plus checker) drafted for the agent. Never saved: the client creates it with
+`POST /agents/{slug}/evals` (or `POST /runs/{id}/save-as-eval`) only when the user clicks Add. Builders only (no
+share links). Stable interface (other features call it):
+
+`input` (all optional): `{split?: "train"|"holdout" (default train), focus?: str, checker_type?: "shell"|"judge"
+(default: the model picks shell when the result is checkable by commands, else judge), from_run_id?: str,
+task?: str}`. `from_run_id` (one of this agent's runs, else `400`) turns the run's input, reply and feedback into a
+case whose input is the run's input verbatim; `task` fixes the case input (verbatim) so only the checker and name
+are written (the Add case form's checker button).
+`result`: `{name, input, checker_type: "shell"|"judge", checker, split: "train"|"holdout", rationale}`. The
+context is the shared agent context plus the existing cases (split, type, name, input; the agent's own longest
+shell checker as a style reference), `avoid`, and the request. Valid when: `name` is a lowercase hyphenated slug
+under 60 chars not used by an existing case; `input` is non-empty, under 3000 chars, and not a near duplicate of
+an existing case input or an avoided text (or equals the fixed input); `checker_type` and `split` match the request
+when given; a shell checker contains `set -euo pipefail` and a `FAIL` line and, when network is off, no network
+commands (curl, wget, pip install, npm install, apt install, git clone, uv add); a judge rubric says "Pass only if"
+and lists at least two numbered criteria; `rationale` is non-empty. Holdout requests ask for a different task that
+exercises the same skills as the train cases.
+
+### Kind `eval_cases`
+
+A batch for the "Generate several" review list. `input`: `{n?: 1..6 (default 3), holdout?: 0..n (default n // 2),
+focus?: str, checker_type?: "shell"|"judge"}` (out of range `400`). `result`: `{cases: [<eval_case result>]}` with
+exactly `n` cases, exactly `holdout` of them holdout, each valid as above, with unique names and no near duplicates
+among themselves.
+
+### Configuration and deploy kinds
+
+All builders only (no share links), all grounded in the shared agent context unless noted, all fill fields only.
+A missing required input or an out of range option is `400`. Some kinds convert the model's fields or add
+computed ones after validation (registry `finalize`); the result below is what the endpoint returns.
+
+| Kind | `input` | `result` | Valid when |
+|---|---|---|---|
+| `instructions` | `{current?: str (the unsaved text; default the version's prompt), goal?: str}` | `{instructions, summary}` | The context adds the full current text, learned lessons (not to be copied in), the last 10 negative feedback comments and the failing eval cases of the version. Instructions non-empty, under 20000 chars, changed, between 0.4 and 2.5 times the current length when that is at least 400 chars, never naming an eval case; summary non-empty, under 300 chars. The web shows a diff to accept or reject. |
+| `rubric` | `{task: str (required), current?: str}` | `{rubric}` | Says "Pass only if", at least two numbered criteria, a line starting "Fail if", differs from `current`. |
+| `seed_file` | `{description?: str, path?: str, existing?: [str] (unsaved paths)}` | `{path, content, description}` | Relative path without `..`, the requested path when given, otherwise not an existing path; content non-empty, under 20000 chars; CSV with a header, two rows and a constant column count; JSON and Python parse; nothing that looks like a real credential. |
+| `version_note` | `{config: {system_prompt?, model?, tools?, network?, seed_files?, http_tools?, mcp_servers?, callable_agents?, approval_policy?, max_run_cost_usd?}}` (missing keys are unchanged) | `{note}` | The server diffs the draft against the request's version (prod by default); no change is `400`. One paragraph under 300 chars, no dashes as punctuation. |
+| `approval_rules` | `{tools?: [str], network?: bool, http_tools?: [str], current?: {rules}}` (defaults from the version) | `{rules: [{tool, pattern, mode: "ask"\|"deny", label}], explanation}` | 1 to 8 rules, each a valid policy rule (`forge/policy.py`) naming a tool the agent has (or `*`, `mcp__<server>__...`, `agent__<slug>`), with a label, not already in `current`, no repeats; `pattern` `""` means every call. |
+| `budget` | `{}` | `{max_run_cost_usd, monthly_budget_usd, explanation, stats: {runs, mean_usd, p95_usd, max_usd, monthly_usd, grader_usd, days}}` | `stats` come from the last 30 days of priced, finished, non draft runs plus grader spend (`monthly_usd` is the projection). No priced run yet is `400`. Cap positive and at least the 95th percentile; monthly at least the cap and the projection. |
+| `http_tool` | `{source: str (required; description, curl command or API doc), existing?: [str]}` | `{name, description, method, url, parameters: object, headers: {name: value}, query_params: [str]}` | Passes the version tool validation (name, JSON schema object, https URL, placeholders are parameters); name not in use; credential headers are `{{SECRET}}` references; no credentials in the URL. Literal credentials found in the source are replaced with `[REDACTED]` before the model sees it and may not appear in the result. |
+| `cron` | `{text: str (required), timezone?: str (default zone)}` | `{cron, timezone, explanation, next_fire_times: [unix seconds] x3}` | Parses with `forge/triggers/cron.py` and the zone exists; `next_fire_times` computed by the server. Needs no agent (localhost only without `slug`, metered with one). |
+| `trigger_template` | `{source: "github"\|"slack" (required), event?: issues\|issue_comment\|pull_request\|push (GitHub), slash\|mention (Slack), current?: str}` | `{template, explanation}` | Uses at least one `{field}` placeholder and only the source's template fields (see Triggers), under 4000 chars, differs from `current`. |
+
 ### Adding a kind
 
 1. Create `forge/assist/kinds/<kind>.py` with a system prompt (it must differ from every other kind's), a result
@@ -588,6 +635,9 @@ prompt is non-empty and under 1200 chars, the title is under 100 chars, and the 
    `render_agent_context` for agent grounding, `req.input` for the kind's own fields), `validate(result, data)
    -> [problems]`, and a deterministic `fake(user_text) -> {result, rationale}` for `fake:grader`. Finish with
    `SPEC = register("<kind>", build_context, SYSTEM, SCHEMA, validate, share_allowed=..., needs_agent=..., fake=fake)`.
+   Optional: `finalize(result, data) -> result` converts the model's reply to the documented result after
+   validation (a JSON string to an object, computed fields), and `result_text` feeds the server's earlier
+   suggestions. A `ValueError` from `build_context` is a `400`.
 2. Import the module in `forge/assist/kinds/__init__.py`.
 3. Web: mount `<AssistButton kind="<kind>" slug=... input={...} resultText={...} onResult={...} undoValue={value}
    onUndo={setValue} inputRef={ref} ariaLabel="..." />` next to the field (or wrap it like `GenerateTaskButton`).
