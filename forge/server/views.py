@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forge import db
+from forge import db, pricing
 
 VERSION_KEYS = ("id", "agent_id", "n", "system_prompt", "lessons", "model", "tools", "http_tools", "network",
                 "seed_files", "parent_id", "created_by", "rationale", "created_at")
@@ -26,10 +26,12 @@ def agent_view(a: dict, *, versions: bool = False) -> dict:
     return out
 
 
-def run_view(r: dict, *, version_n: int | None = None) -> dict:
-    if version_n is None:
+def run_view(r: dict, *, version_n: int | None = None, model: str | None = None) -> dict:
+    if version_n is None or model is None:
         v = db.get_version(r["version_id"])
-        version_n = v["n"] if v else None
+        version_n = v["n"] if v else version_n
+        model = v["model"] if v else model
+    price = pricing.price_for(model)
     return {
         "id": r["id"], "agent_id": r["agent_id"], "version_id": r["version_id"], "version_n": version_n,
         "source": r["source"], "input": r["input"], "status": r["status"], "output": r["output"],
@@ -38,6 +40,10 @@ def run_view(r: dict, *, version_n: int | None = None) -> dict:
         "eval_case_id": r["eval_case_id"],
         "created_at": r["created_at"], "started_at": r["started_at"], "ended_at": r["ended_at"],
         "feedback": [feedback_view(f) for f in db.list_feedback(r["id"])],
+        # Additive observability fields (CONTRACT.md "Observability").
+        "duration_ms": round((r["ended_at"] - r["started_at"]) * 1000, 1) if r["ended_at"] and r["started_at"] else None,
+        "cost_usd": pricing.cost(model, r["tokens_in"], r["tokens_out"]),
+        "cost_note": price.note,
     }
 
 

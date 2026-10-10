@@ -29,6 +29,12 @@ class Event(BaseModel):
     #   tool_result:  {"id", "name", "output", "is_error"}
     #   run_finished: {"status", "output", "turns", "tokens_in", "tokens_out"}
     #   error:        {"message"}
+    # Additive observability fields (optional; absent on events recorded before they existed):
+    #   assistant:    "turn", "duration_ms" (model call latency), "tokens_in", "tokens_out" (this turn)
+    #   tool_call:    "turn"; the first call of a turn without text also has "model_duration_ms",
+    #                 "tokens_in", "tokens_out"
+    #   tool_result:  "duration_ms" (tool execution time)
+    #   error:        "duration_ms" (time until the model call failed), when raised by the model
 
 
 Emit = Callable[[Event], Awaitable[None]]

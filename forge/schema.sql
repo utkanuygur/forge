@@ -111,3 +111,39 @@ CREATE TABLE IF NOT EXISTS improvements (
   created_at            REAL NOT NULL,
   ended_at              REAL
 );
+
+-- Observability (additive; see CONTRACT.md "Observability").
+CREATE INDEX IF NOT EXISTS runs_created ON runs(created_at);
+
+-- Every change of an agent's production pointer (creation, manual promote, auto promote).
+CREATE TABLE IF NOT EXISTS promotions (
+  id               TEXT PRIMARY KEY,
+  agent_id         TEXT NOT NULL REFERENCES agents(id),
+  version_id       TEXT NOT NULL,
+  from_version_id  TEXT,
+  source           TEXT NOT NULL,     -- create | human | auto
+  created_at       REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS promotions_agent ON promotions(agent_id, created_at);
+
+-- Token usage of judge and optimizer calls (they run outside any agent run).
+CREATE TABLE IF NOT EXISTS grader_calls (
+  id              TEXT PRIMARY KEY,
+  agent_id        TEXT NOT NULL,
+  improvement_id  TEXT,              -- set when the call happened inside an improvement cycle
+  run_id          TEXT,              -- for judge calls: the eval run being graded
+  kind            TEXT NOT NULL,     -- judge | optimizer
+  model           TEXT NOT NULL,
+  tokens_in       INTEGER NOT NULL DEFAULT 0,
+  tokens_out      INTEGER NOT NULL DEFAULT 0,
+  duration_ms     REAL,
+  created_at      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS grader_calls_agent ON grader_calls(agent_id, created_at);
+
+-- Eval runs started by an improvement cycle (cached results from earlier evals are not included).
+CREATE TABLE IF NOT EXISTS improvement_runs (
+  improvement_id  TEXT NOT NULL,
+  run_id          TEXT NOT NULL,
+  PRIMARY KEY (improvement_id, run_id)
+);

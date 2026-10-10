@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import time
@@ -26,10 +27,36 @@ def default_model() -> str:
     return os.environ.get("FORGE_DEFAULT_MODEL") or DEFAULT_MODEL
 
 
+def grader_model() -> str:
+    return os.environ.get("FORGE_GRADER_MODEL") or default_model()
+
+
 def grader() -> Provider:
     from forge.providers import make_provider
 
-    return make_provider(os.environ.get("FORGE_GRADER_MODEL") or default_model())
+    return make_provider(grader_model())
+
+
+# The improvement cycle a task belongs to (copied into tasks it creates), for cost attribution.
+current_improvement: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_improvement", default=None)
+
+
+class MeteredProvider:
+    """Wraps a grader provider and records each call's token usage in `grader_calls`."""
+
+    def __init__(self, inner: Provider, model: str, agent_id: str, kind: str, run_id: str | None = None) -> None:
+        self.inner, self.model, self.agent_id, self.kind, self.run_id = inner, model, agent_id, kind, run_id
+
+    async def complete(self, system: str, messages: list, tools: list, temperature: float | None = None) -> Any:
+        t0 = time.monotonic()
+        resp = await self.inner.complete(system, messages, tools, temperature)
+        try:
+            db.record_grader_call(self.agent_id, self.kind, self.model, resp.tokens_in, resp.tokens_out,
+                                  duration_ms=round((time.monotonic() - t0) * 1000, 1),
+                                  improvement_id=current_improvement.get(), run_id=self.run_id)
+        except Exception:  # noqa: BLE001  (metering must never break grading)
+            log.exception("could not record grader usage")
+        return resp
 
 
 def to_agent_version(v: dict) -> AgentVersion:
@@ -62,15 +89,21 @@ def eval_summary(agent: dict, version: dict) -> dict:
 async def _eval_case(agent: dict, version: dict, case: dict, sem: asyncio.Semaphore, judge: list) -> None:
     from forge import improve
 
+    holder: dict[str, str] = {}
+
     async def after(executor: Any, result: Any) -> tuple[bool, str]:
         if not judge:
             judge.append(grader())
-        return await improve.check_case(case, executor, result.output, judge[0])
+        metered = MeteredProvider(judge[0], grader_model(), agent["id"], "judge", run_id=holder.get("run_id"))
+        return await improve.check_case(case, executor, result.output, metered)
 
     async with sem:
         mgr = get_manager()
         run_id = await mgr.start_run(agent, version, case["input"], "eval", eval_case=case, after=after,
                                      temperature=0)
+        holder["run_id"] = run_id
+        if (im_id := current_improvement.get()) is not None:
+            db.link_improvement_run(im_id, run_id)
         run = await mgr.wait(run_id)
         checked = mgr.after_results.pop(run_id, None)
         if checked is None:  # infrastructure failure before the check ran: do not cache, retry next time
@@ -122,7 +155,9 @@ def start_improve(agent: dict) -> dict:
     if base is None:
         raise ValueError("agent has no prod version")
     im = db.create_improvement(agent["id"], base["id"])
-    t = asyncio.create_task(_improve(agent, base, im["id"]))
+    ctx = contextvars.copy_context()
+    ctx.run(current_improvement.set, im["id"])
+    t = asyncio.create_task(_improve(agent, base, im["id"]), context=ctx)
     _improve_tasks[im["id"]] = t
     t.add_done_callback(lambda _t: _improve_tasks.pop(im["id"], None))
     return im
@@ -161,7 +196,8 @@ async def _improve(agent: dict, base: dict, improvement_id: str) -> None:
         feedback = [{"run_id": f["run_id"], "input": f["run_input"], "output": f["run_output"],
                      "rating": f["rating"], "comment": f["comment"], "events": _events(f["run_id"])}
                     for f in db.negative_feedback_since(agent["id"], since)]
-        edits = await improve.propose_lessons(to_agent_version(base), failures, feedback, grader(), train)
+        optimizer = MeteredProvider(grader(), grader_model(), agent["id"], "optimizer")
+        edits = await improve.propose_lessons(to_agent_version(base), failures, feedback, optimizer, train)
         diff = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in edits]
         summary["lessons_diff"] = diff
         if not edits:
@@ -181,7 +217,7 @@ async def _improve(agent: dict, base: dict, improvement_id: str) -> None:
         status = "eligible" if eligible else "rejected"
         fresh = db.get_agent(agent["id"]) or agent
         if eligible and fresh["auto_promote"]:
-            db.update_agent(agent["id"], prod_version_id=cand["id"])
+            db.set_prod_version(agent["id"], cand["id"], "auto")
             status = "promoted"
         db.update_improvement(improvement_id, status=status, summary=summary, ended_at=time.time())
     except Exception as exc:  # noqa: BLE001

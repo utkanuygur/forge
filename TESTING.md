@@ -16,8 +16,8 @@ separately by the live layer.
 |---|---|---|---|---|---|
 | 1 | Unit | `make test-unit` | nothing | Loop logic, tool semantics, truncation, redaction, providers' message mapping, retry, lesson validation, promotion rule, DB helpers, API handlers with fakes | seconds |
 | 2 | Sandbox | `make test-docker` | Docker, `forge-sandbox` image | Network isolation, resource limits, file persistence, diff and archive export, timeouts kill processes, no leaked containers | ~10 s |
-| 3 | Full stack | `make test-e2e` | Docker | Real server + Docker + fake models: run lifecycle, SSE, uploads, versions, auth, feedback, secrets, limits, webhook, local CLI, **full improvement loop including regression blocking and auto-promotion** | 1 to 3 min |
-| 4 | Web | `make test-web` | Docker, Chromium (Playwright) | Component and hook logic (Vitest); browser flows against the real backend: create, run, feedback, versions, evaluate, improve, promote, share page hides config, phone width | 1 to 3 min |
+| 3 | Full stack | `make test-e2e` | Docker | Real server + Docker + fake models: run lifecycle, SSE, uploads, versions, auth, feedback, secrets, limits, webhook, local CLI, **full improvement loop including regression blocking and auto-promotion**, observability metrics, cost, search, timelines, health and Prometheus endpoints | 1 to 3 min |
+| 4 | Web | `make test-web` | Docker, Chromium (Playwright) | Component and hook logic (Vitest); browser flows against the real backend: create, run, feedback, versions, evaluate, improve, promote, share page hides config, dashboard, monitoring, run filters, step timeline, phone width | 1 to 3 min |
 | 5 | Demo validity | `make test-demo` | Docker | Each demo eval case FAILS on the untouched repo, FAILS on a correct but convention-violating fix, PASSES on the reference fix (21 expectations) | ~1 min |
 | 6 | Live models | `make test-live` | `ANTHROPIC_API_KEY`; optional Ollama, `FORGE_VLLM_URL` | Real Claude completes a task in the sandbox; judge gives sensible verdicts; local and GPU models emit valid tool calls | 1 to 2 min, costs tokens |
 
@@ -35,6 +35,10 @@ separately by the live layer.
 | `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs | Grader and optimizer without API calls |
 | `fake:loop` | Calls bash forever | Turn limit and `timeout` status |
 | `fake:error` | Raises like a failed API | `failed` status and error events |
+
+Cost assertions are deterministic because the end-to-end server (`tests/e2e/conftest.py`) and the browser test
+server (`web/playwright.config.ts`) set `FORGE_PRICES` to give the fake models a price; scripted grader responses
+report fixed token counts.
 
 ## Workflow
 
@@ -78,6 +82,13 @@ Requirement IDs are defined in the technical design document. Each row names the
 | NFR6 Secret redaction | 1: redaction helper; 3: secret absent from stored events and output |
 | NFR7 Single machine | Implicit: every layer runs on one laptop with one process and one database file |
 | NFR8 Vendor independence | 1: both adapters; 6: three model sources |
+| OBS1 Version health and dashboard | 1: percentiles, success and thumbs up rates, eval exclusion, period deltas, local day buckets, overview and agent metrics over a temp DB (`tests/test_observability.py`); 3: fake:hello, fake:error and fake:loop runs give the expected health, promotion marker after promote (`tests/e2e/test_observability.py`); 4: chart scales and ticks, KPI deltas, period storage (Vitest); dashboard KPIs and charts, Monitoring version comparison with prod highlighted and a promotion marker (Playwright) |
+| OBS2 Cost tracking | 1: known, overridden, unknown and self-hosted prices; 3: run, version and improvement cycle cost (eval runs plus judge and optimizer) with FORGE_PRICES; 4: run cost on the run page |
+| OBS3 Step timing | 1: loop emits additive duration and token fields, timeline from recorded durations, fallback for old events, failed model calls; 3: timeline spans and durations for a real run; 4: timeline layout (Vitest), run page waterfall (Playwright) |
+| OBS4 Failure breakdown | 1: classification of every category, aggregation with example runs; 3: categories and reasons per version from real failing runs; 4: Monitoring failure lists link example runs |
+| OBS5 Run search and filters | 1: every filter, sort and count over a temp DB; 3: agent and global endpoints, X-Total-Count, builder-only global route, share tokens keep their restricted view; 4: filter query building (Vitest), Runs tab filters narrow results (Playwright) |
+| OBS6 Tool statistics | 1: per tool calls, error rate, p50, p95, totals, slowest calls, duration fallback; 3: tool stats from real runs |
+| OBS7 Ops endpoints and logs | 1: Prometheus text format; 3: /healthz 200 and 503 (missing sandbox image), /metrics content and localhost restriction |
 
 ## Adding a test
 

@@ -236,6 +236,7 @@ async def run_agent(
             if remaining <= 0:
                 result.status, result.error = "timeout", f"time limit of {max_seconds}s reached"
                 break
+            t0 = time.monotonic()
             try:
                 resp = await asyncio.wait_for(provider.complete(system, messages, tools, temperature), remaining)
             except TimeoutError:
@@ -243,22 +244,35 @@ async def run_agent(
                 break
             except Exception as exc:  # noqa: BLE001
                 result.status, result.error = "failed", f"model error: {type(exc).__name__}: {exc}"
-                await send("error", {"message": result.error})
+                await send("error", {"message": result.error, "duration_ms": _ms_since(t0)})
                 break
+            model_ms = _ms_since(t0)
             result.turns += 1
             result.tokens_in += resp.tokens_in
             result.tokens_out += resp.tokens_out
+            # Per-turn timing and usage (additive payload fields). A turn with text reports them on its
+            # assistant event; a tool-only turn reports them on its first tool_call as model_duration_ms.
+            turn_usage: dict[str, Any] | None = {"tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out}
             if resp.text:
                 last_text = resp.text
-                await send("assistant", {"text": resp.text})
+                await send("assistant", {"text": resp.text, "turn": result.turns, "duration_ms": model_ms,
+                                         **turn_usage})
+                turn_usage = None
             messages.append(Message(role="assistant", text=resp.text, tool_calls=resp.tool_calls))
             if not resp.tool_calls:
                 result.status, result.output = "succeeded", resp.text
                 break
             for call in resp.tool_calls:
-                await send("tool_call", {"id": call.id, "name": call.name, "args": call.args})
+                call_payload: dict[str, Any] = {"id": call.id, "name": call.name, "args": call.args,
+                                                "turn": result.turns}
+                if turn_usage is not None:
+                    call_payload.update(model_duration_ms=model_ms, **turn_usage)
+                    turn_usage = None
+                await send("tool_call", call_payload)
+                t_tool = time.monotonic()
                 output, is_error = await _run_tool(call, executor, set(allowed), deadline)
-                await send("tool_result", {"id": call.id, "name": call.name, "output": output, "is_error": is_error})
+                await send("tool_result", {"id": call.id, "name": call.name, "output": output, "is_error": is_error,
+                                           "duration_ms": _ms_since(t_tool)})
                 messages.append(Message(role="tool", tool_call_id=call.id, text=output, is_error=is_error))
     except asyncio.CancelledError:
         raise
@@ -282,3 +296,7 @@ async def run_agent(
         },
     )
     return result
+
+
+def _ms_since(t0: float) -> float:
+    return round((time.monotonic() - t0) * 1000, 1)

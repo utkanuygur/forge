@@ -69,6 +69,215 @@ export interface Run {
   eval_case_id?: string | null;
   // Not in CONTRACT.md; used if the backend includes it.
   agent_slug?: string;
+  // Observability (additive): null cost means the model's price is unknown.
+  duration_ms?: number | null;
+  cost_usd?: number | null;
+  cost_note?: string;
+}
+
+// ---------------------------------------------------------------- observability
+
+export interface Delta {
+  value: number | null;
+  previous: number | null;
+  change: number | null;
+  change_pct: number | null;
+}
+
+export interface Health {
+  runs: number;
+  finished: number;
+  succeeded: number;
+  failed: number;
+  timeout: number;
+  in_progress: number;
+  success_rate: number | null;
+  p50_ms: number | null;
+  p95_ms: number | null;
+  avg_turns: number | null;
+  feedback_count: number;
+  thumbs_up: number;
+  thumbs_down: number;
+  thumbs_up_rate: number | null;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  cost_per_run: number | null;
+  unpriced_runs: number;
+}
+
+export type KpiKey = "runs" | "success_rate" | "p95_ms" | "cost_usd" | "thumbs_up_rate";
+
+export interface SeriesPoint {
+  t: number;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  timeout: number;
+  in_progress: number;
+  cost_usd: number;
+  success_rate: number | null;
+}
+
+export interface Price {
+  model: string | null;
+  kind: "metered" | "self_hosted" | "unknown";
+  input_per_mtok: number | null;
+  output_per_mtok: number | null;
+  note: string;
+}
+
+export interface FailureEntry {
+  category: string;
+  label: string;
+  reason?: string;
+  runs: number;
+  count: number;
+  example_run_ids: string[];
+}
+
+export interface FailureBreakdown {
+  runs: number;
+  categories: FailureEntry[];
+  reasons: FailureEntry[];
+}
+
+export interface ToolStat {
+  name: string;
+  calls: number;
+  errors: number;
+  error_rate: number | null;
+  p50_ms: number | null;
+  p95_ms: number | null;
+  total_ms: number;
+}
+
+export interface SlowCall {
+  run_id: string;
+  seq: number;
+  name: string;
+  duration_ms: number;
+  is_error: boolean;
+  summary: string;
+  version_n: number | null;
+}
+
+export interface EvalScore {
+  passed: number;
+  total: number;
+  evaluated: number;
+  pass_rate: number | null;
+}
+
+export interface VersionHealth {
+  version: number;
+  model: string;
+  created_by: string;
+  created_at: number;
+  is_prod: boolean;
+  is_previous_prod: boolean;
+  promoted_at: number | null;
+  price: Price;
+  period_runs: number;
+  health: Health;
+  eval: { train: EvalScore; holdout: EvalScore } | null;
+  delta_vs_previous_prod?: Record<string, Delta>;
+}
+
+export interface Promotion {
+  version: number | null;
+  from_version: number | null;
+  source: string;
+  at: number;
+}
+
+export interface ImprovementCost {
+  id: string;
+  status: string;
+  base_version: number | null;
+  candidate_version: number | null;
+  created_at: number;
+  ended_at: number | null;
+  eval_runs: number;
+  eval_cost_usd: number;
+  judge_cost_usd: number;
+  optimizer_cost_usd: number;
+  grader_calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  total_cost_usd: number;
+  cost_complete: boolean;
+}
+
+export interface AgentMetrics {
+  agent: string;
+  days: number;
+  include_eval: boolean;
+  since: number;
+  until: number;
+  bucket: "hour" | "day";
+  prod_version: number | null;
+  previous_prod_version: number | null;
+  summary: Health;
+  previous: Health;
+  kpis: Record<KpiKey, Delta>;
+  series: SeriesPoint[];
+  promotions: Promotion[];
+  versions: VersionHealth[];
+  cost: {
+    total_usd: number;
+    unpriced_runs: number;
+    versions: { version: number; model: string; price: Price; runs: number; tokens_in: number; tokens_out: number; cost_usd: number | null; cost_per_run: number | null }[];
+    improvements: ImprovementCost[];
+  };
+  failures: { all: FailureBreakdown; versions: (FailureBreakdown & { version: number })[] };
+  tools: { tools: ToolStat[]; slowest: SlowCall[]; versions: { version: number; tools: ToolStat[] }[] };
+  slowest_runs: { id: string; version: number; status: RunStatus; source: string; duration_ms: number; input: string; cost_usd: number | null; created_at: number }[];
+}
+
+export interface OverviewAgent {
+  slug: string;
+  name: string;
+  prod_version: number | null;
+  health: Health;
+  failing_runs: number;
+  flagged_runs: number;
+  last_run_at: number | null;
+  spark: number[];
+}
+
+export interface Overview {
+  days: number;
+  include_eval: boolean;
+  since: number;
+  until: number;
+  bucket: "hour" | "day";
+  summary: Health;
+  previous: Health;
+  kpis: Record<KpiKey, Delta>;
+  series: SeriesPoint[];
+  agents: OverviewAgent[];
+  top_failure_reasons: (FailureEntry & { agent: string; agent_name: string })[];
+  top_failing_agents: { slug: string; name: string; flagged_runs: number; failing_runs: number }[];
+}
+
+export interface Timeline {
+  run_id: string;
+  status: RunStatus;
+  estimated: boolean;
+  total_ms: number;
+  model_ms: number;
+  tool_ms: number;
+  other_ms: number;
+  queue_ms: number | null;
+  turns: number;
+  tool_calls: number;
+  spans: import("./lib/timeline").TimelineSpan[];
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number | null;
+  cost_note: string;
+  price: Price;
 }
 
 export interface ForgeEvent {
@@ -235,6 +444,22 @@ async function request<T>(method: string, path: string, body?: unknown, share?: 
   return (await res.text()) as unknown as T;
 }
 
+/** GET returning the JSON list and the X-Total-Count header. */
+async function requestWithTotal<T>(path: string, share?: string): Promise<{ items: T[]; total: number }> {
+  const headers: Record<string, string> = {};
+  if (share) headers["X-Share-Token"] = share;
+  let res: Response;
+  try {
+    res = await fetch(withShare(`/v1${path}`, share), { method: "GET", headers });
+  } catch (e) {
+    throw new ApiError(0, `Could not reach the Forge server (${(e as Error).message})`);
+  }
+  if (!res.ok) throw await parseError(res);
+  const items = (await res.json()) as T[];
+  const total = Number(res.headers.get("x-total-count"));
+  return { items, total: Number.isFinite(total) && res.headers.has("x-total-count") ? total : items.length };
+}
+
 const enc = encodeURIComponent;
 
 // ---------------------------------------------------------------- endpoints
@@ -298,6 +523,19 @@ export const api = {
     ),
   evalResults: (slug: string, version: number) =>
     request<EvalResults>("GET", `/agents/${enc(slug)}/evals/results?version=${version}`),
+  // observability
+  searchRuns: (slug: string, query: string, share?: string) =>
+    requestWithTotal<Run>(`/agents/${enc(slug)}/runs${query ? `?${query}` : ""}`, share),
+  searchAllRuns: (query: string) => requestWithTotal<Run>(`/runs${query ? `?${query}` : ""}`),
+  overview: (days: number, tzOffsetMin = 0) =>
+    request<Overview>("GET", `/metrics/overview?days=${days}&tz_offset_min=${tzOffsetMin}`),
+  agentMetrics: (slug: string, days: number, includeEval = false, tzOffsetMin = 0) =>
+    request<AgentMetrics>(
+      "GET",
+      `/agents/${enc(slug)}/metrics?days=${days}&include_eval=${includeEval}&tz_offset_min=${tzOffsetMin}`,
+    ),
+  timeline: (id: string) => request<Timeline>("GET", `/runs/${enc(id)}/timeline`),
+
   improve: (slug: string) => request<Improvement>("POST", `/agents/${enc(slug)}/improve`, {}),
   getImprovement: (id: string) => request<Improvement>("GET", `/improvements/${enc(id)}`),
   listImprovements: (slug: string) => request<Improvement[]>("GET", `/agents/${enc(slug)}/improvements`),

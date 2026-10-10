@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable
 import httpx
 
 from forge import db
+from forge.server import obslog
 from forge.server.views import run_view
 from forge.types import AgentVersion, Event, Executor, RunResult
 
@@ -44,6 +45,7 @@ class RunManager:
         if eval_case:
             seed.update({k: v.encode() for k, v in (eval_case.get("seed_files") or {}).items()})
         seed.update(seed_overrides or {})
+        obslog.lifecycle("queued", run, agent["slug"])
         task = asyncio.create_task(self._execute(run["id"], agent, version, input, seed, after, temperature))
         self.tasks[run["id"]] = task
         task.add_done_callback(lambda _t, rid=run["id"]: self.tasks.pop(rid, None))
@@ -69,7 +71,8 @@ class RunManager:
                                          network=bool(version.get("network")))
                 secrets = db.get_secrets(agent["id"])
                 await executor.start(seed, dict(secrets))
-                db.update_run(run_id, status="running", started_at=time.time())
+                started = db.update_run(run_id, status="running", started_at=time.time())
+                obslog.lifecycle("started", started or {"id": run_id}, agent["slug"])
                 v = AgentVersion(**{k: version[k] for k in AgentVersion.model_fields if k in version})
 
                 async def emit(e: Event) -> None:
@@ -106,6 +109,8 @@ class RunManager:
                         log.exception("executor stop failed for %s", run_id)
             self._finalize(run_id, result or RunResult(status="failed", error="no result"))
         run = db.get_run(run_id)
+        if run:
+            obslog.finished(run, agent["slug"], version.get("model"))
         if run and run["callback_url"]:
             await post_webhook(run["callback_url"], run_view(run))
 

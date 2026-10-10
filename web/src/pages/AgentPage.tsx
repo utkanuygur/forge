@@ -6,12 +6,14 @@ import Tabs from "../components/Tabs";
 import { Badge, ErrorBox, Loading } from "../components/ui";
 import ConfigureTab from "./agent/ConfigureTab";
 import RunsTab from "./agent/RunsTab";
+import MonitoringTab from "./agent/MonitoringTab";
 import EvalsTab from "./agent/EvalsTab";
 import DeployTab from "./agent/DeployTab";
 
 const TABS = [
   { key: "configure", label: "Configure" },
   { key: "runs", label: "Runs" },
+  { key: "monitoring", label: "Monitoring" },
   { key: "evals", label: "Evaluations" },
   { key: "deploy", label: "Deploy" },
 ];
@@ -56,6 +58,7 @@ export default function AgentPage() {
       <Tabs tabs={TABS} active={tab} onChange={(k) => navigate(`/agents/${slug}/${k}`)} />
       {tab === "configure" && <ConfigureTab agent={agent} onChanged={reload} />}
       {tab === "runs" && <RunsTab agent={agent} />}
+      {tab === "monitoring" && <MonitoringTab agent={agent} />}
       {tab === "evals" && <EvalsTab agent={agent} onChanged={reload} />}
       {tab === "deploy" && <DeployTab agent={agent} onChanged={reload} />}
     </div>

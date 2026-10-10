@@ -363,3 +363,35 @@ def fail_interrupted_improvements() -> int:
         cur = c.execute("UPDATE improvements SET status = 'failed', ended_at = ?, "
                         "summary = json_set(summary, '$.error', 'interrupted') WHERE status = 'running'", (now(),))
         return cur.rowcount
+
+
+# ---------------------------------------------------------------- observability
+
+
+def set_prod_version(agent_id: str, version_id: str, source: str) -> dict | None:
+    """Points the agent's prod at `version_id` and records the promotion (source: create | human | auto)."""
+    agent = get_agent(agent_id)
+    prev = agent["prod_version_id"] if agent else None
+    _update("agents", "id", agent_id, {"prod_version_id": version_id})
+    if prev != version_id:
+        _insert("promotions", {"id": new_id("pr"), "agent_id": agent_id, "version_id": version_id,
+                               "from_version_id": prev, "source": source, "created_at": now()})
+    return get_agent(agent_id)
+
+
+def list_promotions(agent_id: str) -> list[dict]:
+    return _all("SELECT * FROM promotions WHERE agent_id = ? ORDER BY created_at", agent_id)
+
+
+def record_grader_call(agent_id: str, kind: str, model: str, tokens_in: int, tokens_out: int, *,
+                       duration_ms: float | None = None, improvement_id: str | None = None,
+                       run_id: str | None = None) -> None:
+    _insert("grader_calls", {"id": new_id("gc"), "agent_id": agent_id, "improvement_id": improvement_id,
+                             "run_id": run_id, "kind": kind, "model": model, "tokens_in": tokens_in,
+                             "tokens_out": tokens_out, "duration_ms": duration_ms, "created_at": now()})
+
+
+def link_improvement_run(improvement_id: str, run_id: str) -> None:
+    with connect() as c:
+        c.execute("INSERT OR IGNORE INTO improvement_runs (improvement_id, run_id) VALUES (?, ?)",
+                  (improvement_id, run_id))

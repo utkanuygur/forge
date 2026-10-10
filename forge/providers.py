@@ -301,8 +301,8 @@ class ScenarioProvider:
                     run_ids = sorted(set(re.findall(r"\br_[0-9a-f]{12}\b", user)))
                     edits = [{"op": "add", "text": MARKER_LESSON, "evidence_run_ids": run_ids[:2],
                               "rationale": "Runs failed because MARKER.txt was missing."}] if run_ids else []
-                    return ModelResponse(text=json.dumps({"lessons": edits}))
-                return ModelResponse(text='{"passed": true, "reason": "fake judge"}')
+                    return ModelResponse(text=json.dumps({"lessons": edits}), tokens_in=200, tokens_out=40)
+                return ModelResponse(text='{"passed": true, "reason": "fake judge"}', tokens_in=50, tokens_out=10)
         raise AssertionError("unreachable")
 
 

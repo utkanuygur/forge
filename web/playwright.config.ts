@@ -35,6 +35,9 @@ export default defineConfig({
       FORGE_EXECUTOR: "docker",
       FORGE_DEFAULT_MODEL: "fake:hello",
       FORGE_GRADER_MODEL: "fake:grader",
+      // Give fake:hello a price (USD per million tokens) so spend shows up in the observability screens.
+      FORGE_LOG_JSON: "0",
+      FORGE_PRICES: JSON.stringify({ "fake:hello": [1000, 2000] }),
     },
   },
 });

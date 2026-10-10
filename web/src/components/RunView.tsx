@@ -8,6 +8,8 @@ import FeedbackWidget from "./FeedbackWidget";
 import StatusPill from "./StatusPill";
 import SaveAsEval from "./SaveAsEval";
 import { Badge, ErrorBox, Loading } from "./ui";
+import StepTimeline from "./StepTimeline";
+import { fmtUsd } from "../lib/format";
 
 function Panel({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
@@ -96,6 +98,12 @@ export default function RunView({
             {run.tokens_in.toLocaleString()} in / {run.tokens_out.toLocaleString()} out tokens
           </span>
           <span>{run.turns} turns</span>
+          {run.cost_usd !== undefined && (
+            <span data-testid="run-header-cost">
+              {run.cost_usd === null ? "unknown price" : fmtUsd(run.cost_usd)}
+              {run.cost_usd !== null && run.cost_note ? <span className="text-neutral-400"> ({run.cost_note})</span> : null}
+            </span>
+          )}
           <span className="text-neutral-400">{fmtTime(run.created_at)}</span>
         </div>
       )}
@@ -113,6 +121,12 @@ export default function RunView({
         <TraceTimeline events={events} live={live} simple={simple} />
         {streamError && <p className="mt-3 text-xs text-amber-600">Live stream interrupted: {streamError}</p>}
       </Panel>
+
+      {!simple && (
+        <Panel title="Step timeline">
+          <StepTimeline runId={run.id} refreshKey={`${run.status}-${events.length}`} />
+        </Panel>
+      )}
 
       {(terminal || run.output) && (
         <Panel title="Output">

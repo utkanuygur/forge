@@ -13,14 +13,14 @@ from pathlib import Path, PurePosixPath
 from typing import Any, AsyncIterator, Literal
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from forge import db
-from forge.server import evals, runs
+from forge.server import evals, observability, obslog, runs
 from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
@@ -37,6 +37,7 @@ TERMINAL = {"succeeded", "failed", "timeout"}
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    obslog.configure()
     runs.reset_manager()
     db.fail_interrupted_runs()
     db.fail_interrupted_improvements()
@@ -125,7 +126,7 @@ async def create_agent(body: AgentCreate) -> dict:
         agent["id"], system_prompt=body.system_prompt, model=body.model or evals.default_model(), tools=body.tools,
         http_tools=[t.model_dump() for t in body.http_tools] if body.http_tools else None, network=body.network,
         seed_files=body.seed_files, lessons=body.lessons)
-    agent = db.update_agent(agent["id"], prod_version_id=v["id"])
+    agent = db.set_prod_version(agent["id"], v["id"], "create")
     return {**agent_view(agent), "api_key": key}  # type: ignore[arg-type]
 
 
@@ -175,7 +176,7 @@ async def promote(slug: str, body: Promote, request: Request) -> dict:
     agent = agent_or_404(slug)
     authorize(request, agent, allow_share=False)
     v = version_or_404(agent, body.version)
-    return agent_view(db.update_agent(agent["id"], prod_version_id=v["id"]))  # type: ignore[arg-type]
+    return agent_view(db.set_prod_version(agent["id"], v["id"], "human"))  # type: ignore[arg-type]
 
 
 @api.put("/agents/{slug}/secrets")
@@ -290,12 +291,14 @@ async def create_run(slug: str, request: Request) -> dict:
 
 
 @api.get("/agents/{slug}/runs")
-async def list_runs(slug: str, request: Request, limit: int = Query(50, ge=1, le=500)) -> list[dict]:
+async def list_runs(slug: str, request: Request, response: Response,
+                    filters: dict = Depends(observability.run_filters)) -> list[dict]:
     agent = agent_or_404(slug)
-    source = authorize(request, agent)
-    nums = db.version_numbers(agent["id"])
-    rows = db.list_runs(agent["id"], limit, source="share" if source == "share" else None)
-    return [run_view(r, version_n=nums.get(r["version_id"])) for r in rows]
+    if authorize(request, agent) == "share":
+        filters["source"] = "share"  # share-link callers only ever see share runs
+    rows, total = await asyncio.to_thread(lambda: observability.search_runs(agent_id=agent["id"], **filters))
+    response.headers["X-Total-Count"] = str(total)
+    return observability.run_list_view(rows)
 
 
 @api.get("/runs/{run_id}")
@@ -383,12 +386,13 @@ async def create_local_run(body: LocalRunIn, request: Request) -> dict:
     authorize(request, agent, allow_share=False)
     v = version_or_404(agent, body.version_n)
     r = db.create_run(agent["id"], v["id"], "local", body.input, status="running")
+    obslog.lifecycle("started", r, agent["slug"])
     return run_view(r, version_n=v["n"])
 
 
 @api.post("/runs/{run_id}/events")
 async def upload_events(run_id: str, request: Request, body: list[dict[str, Any]] = Body(...)) -> dict:
-    r, _, _ = run_and_agent(run_id, request, allow_share=False)
+    r, agent, _ = run_and_agent(run_id, request, allow_share=False)
     if r["source"] != "local":
         raise HTTPException(409, "events can only be uploaded for local runs")
     for raw in body:
@@ -400,6 +404,8 @@ async def upload_events(run_id: str, request: Request, body: list[dict[str, Any]
             db.update_run(run_id, status=status, output=str(p.get("output") or ""), turns=int(p.get("turns") or 0),
                           tokens_in=int(p.get("tokens_in") or 0), tokens_out=int(p.get("tokens_out") or 0),
                           ended_at=e.ts or time.time())
+            if (fin := db.get_run(run_id)) is not None:
+                obslog.finished(fin, agent["slug"], (db.get_version(fin["version_id"]) or {}).get("model"))
         elif e.type == "error":
             db.update_run(run_id, error=str(e.payload.get("message") or ""))
     return {"ok": True}
@@ -525,6 +531,8 @@ async def list_improvements(slug: str, request: Request) -> list[dict]:
 
 
 app.include_router(api)
+app.include_router(observability.api)
+app.include_router(observability.ops)
 
 # ---------------------------------------------------------------- SPA
 

@@ -6,6 +6,7 @@ The server runs with a temporary FORGE_DATA_DIR, FORGE_EXECUTOR=docker and deter
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -22,6 +23,7 @@ from tests.conftest import docker_unavailable
 from tests.e2e.helpers import poll
 
 REPO = Path(__file__).resolve().parents[2]
+E2E_PRICES = {"fake:hello": [1000, 2000], "fake:lessons": [1000, 2000], "fake:grader": [100, 500]}
 SANDBOX_FILTER = ["--filter", "ancestor=" + os.environ.get("FORGE_SANDBOX_IMAGE", "forge-sandbox")]
 
 
@@ -62,6 +64,8 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
         "FORGE_EXECUTOR": "docker",
         "FORGE_DEFAULT_MODEL": "fake:hello",
         "FORGE_GRADER_MODEL": "fake:grader",
+        # Give the fake models prices so cost tracking is nonzero and deterministic (USD per million tokens).
+        "FORGE_PRICES": json.dumps(E2E_PRICES),
         # uvicorn trusts X-Forwarded-For from this address; tests use it to look like a remote client.
         "FORWARDED_ALLOW_IPS": "127.0.0.1",
         "PYTHONUNBUFFERED": "1",
