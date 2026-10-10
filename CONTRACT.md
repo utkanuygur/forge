@@ -17,7 +17,7 @@ Change any of these only with a note in this file and updates to every implement
 | `forge/improve.py` | improve | Eval runner, judge, optimizer, promotion rule |
 | `forge/cli.py` | cli | `forge` Typer app |
 | `web/` | web | React + Vite + Tailwind single-page app |
-| `demo/` | demo | `acme-orders` seed repo, `repo-maintainer` agent definition, eval cases |
+| `demo/` | demo | `acme-orders` seed repo, `repo-maintainer` agent definition, eval cases; `examples/` example agents (`load_examples.py`, `verify_examples.py`) |
 | `tests/` | each owner | `tests/test_<area>.py` |
 
 ## Conventions

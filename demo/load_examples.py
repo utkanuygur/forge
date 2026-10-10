@@ -69,7 +69,8 @@ def load_one(api: httpx.Client, ex: dict, *, promote: bool) -> dict:
     existing = api.get(f"/agents/{slug}")
     if existing.status_code == 404:
         agent = check(api.post("/agents", json=spec))
-        notes.append(f"created (v{agent['prod_version']}, {len(spec['seed_files'])} seed files)")
+        notes.append(f"created (v{agent['prod_version']}, {len(spec['seed_files'])} seed files, "
+                     f"API key {agent['api_key']} shown once)")
     else:
         agent = check(existing)
         prod = check(api.get(f"/agents/{slug}/versions/prod"))

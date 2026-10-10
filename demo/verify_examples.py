@@ -140,17 +140,15 @@ def reason(output: str) -> str:
     return (fails or lines or [""])[-1][:100]
 
 
-def judge_variant(example: Path, item: dict, variant: str, root: Path) -> tuple[bool, str, float]:
+async def judge_variant(example: Path, item: dict, variant: str, root: Path, grader) -> tuple[bool, str, float]:
     from forge.improve import judge
-    from forge.providers import make_provider
-    from forge.server.evals import grader_model
 
     ws = prepare(example, item, variant, root)
     subprocess.run(["git", "add", "-A"], cwd=ws, check=True)
     diff = subprocess.run(["git", "diff", "--cached", "baseline"], cwd=ws, capture_output=True, text=True).stdout
     output = "Done. The requested files are written in the workspace." if variant == "reference" else "Done."
     start = time.monotonic()
-    passed, why = asyncio.run(judge(item["checker"], item["input"], output, diff, make_provider(grader_model())))
+    passed, why = await judge(item["checker"], item["input"], output, diff, grader)
     return passed, why, time.monotonic() - start
 
 
@@ -192,9 +190,16 @@ def main() -> int:
             from dotenv import load_dotenv
 
             load_dotenv(HERE.parent / ".env")
-            for ex, it in judge_items:
-                for variant in ("seed", "reference"):
-                    judged.append((ex, it, variant, *judge_variant(ex, it, variant, root)))
+            from forge.providers import make_provider
+            from forge.server.evals import grader_model
+
+            async def grade_all() -> None:  # one event loop for every call, so the API client is reused
+                grader = make_provider(grader_model())
+                for ex, it in judge_items:
+                    for variant in ("seed", "reference"):
+                        judged.append((ex, it, variant, *await judge_variant(ex, it, variant, root, grader)))
+
+            asyncio.run(grade_all())
 
     failures = 0
     print(f"{'example':15} {'case':42} {'split':8} {'variant':10} {'result':6} {'ok':4} {'secs':>5}  reason")

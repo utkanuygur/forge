@@ -244,6 +244,12 @@ class Gen:
             self.request(base + timedelta(milliseconds=1500 * k), "POST", "/api/v1/cart/items", "checkout",
                          ip="198.51.100.23", ua=UAS[2], status=429 if k in (31, 32) else 201)
 
+    def slow_orders(self) -> None:
+        """Early risers opening their order history during the slow query window (slow, but no errors)."""
+        for k in range(8):
+            t = SLOW_START + timedelta(seconds=40 + 101 * k, milliseconds=self.rng.randrange(0, 1000))
+            self.request(t, "GET", "/api/v1/orders", "checkout")
+
     def search_blip(self) -> None:
         """The search-api deploy at 09:15 causes three 503s on search (a distractor, not an incident)."""
         base = DAY.replace(hour=9, minute=15, second=31)
@@ -393,6 +399,7 @@ def build(out: Path) -> dict:
     g.bad_deploy()
     g.scraper()
     g.search_blip()
+    g.slow_orders()
     g.postgres()
     certs_text, soon = g.certwatch()
 
