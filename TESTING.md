@@ -35,6 +35,7 @@ separately by the live layer.
 | `fake:grader` | As judge: passes. As optimizer: proposes the MARKER lesson citing real failing run IDs | Grader and optimizer without API calls |
 | `fake:loop` | Calls bash forever | Turn limit and `timeout` status |
 | `fake:error` | Raises like a failed API | `failed` status and error events |
+| `fake:tools` | Calls non-builtin tools named by the first JSON object in the input: `{"tool": "<name or prefix>", "args": {..}}` or `{"calls": [{"tool", "args"}, ..]}` (no hint: the first non-builtin tool with empty args), then finishes with `Tool results:` and every tool output | HTTP tools, MCP tools, agents calling agents |
 
 ## Workflow
 
@@ -70,7 +71,16 @@ Requirement IDs are defined in the technical design document. Each row names the
 | FR12 Model choice | 1: provider message mapping and retries; 6: Claude, local model, GPU model |
 | FR13 Local runner | 1: path confinement, ask mode; 3: `forge run` creates files locally and syncs a `local` run that never affects eval results |
 | FR14 Webhook | 3: receiver gets the final Run JSON |
-| FR15 HTTP tools | Not implemented (P2); no test |
+| FR15 HTTP tools, MCP servers, agents calling agents | TOOL1 to TOOL9 below |
+| TOOL1 HTTP tool schema, URL templates, query and body mapping | 1: `test_schema_validation_rejects_bad_schemas_and_bad_args`, `test_url_template_encodes_values_and_splits_query_and_body`, `test_success_non_2xx_truncation_and_body_mapping`; 3: `test_http_tool_runs_from_server_with_secret_header_and_query` |
+| TOOL2 Secret headers substituted, never logged | 1: `test_secret_substitution_and_missing_secret`, `test_http_tool_through_loop_is_traced_and_secret_redacted`; 3: secret absent from events and from the Test endpoint output |
+| TOOL3 SSRF protection | 1: private ranges, `localhost`, a hostname resolving to 127.0.0.1, mixed DNS answers, redirect to a private IP, IP pinning, redirect cap, headers dropped across origins; 3: `test_http_tool_to_loopback_is_blocked_by_default` |
+| TOOL4 Network policy for server side tools | 1: `test_network_policy_and_private_override`, remote MCP refused without network; 3: `test_http_tool_needs_network_and_test_endpoint` |
+| TOOL5 MCP stdio inside the sandbox | 1: stdio on the host with the SDK server and the SDK free fallback, timeouts, ask mode; 3: `test_mcp_stdio_server_runs_inside_the_sandbox` (cwd `/workspace`, no network) |
+| TOOL6 MCP remote servers and failures | 1: `test_mcp_http_headers_policy_and_private_check`, `test_mcp_ask_mode_declined_and_failing_server_emit_errors_and_run_continues`, `test_mcp_result_mapping`; 3: `test_mcp_http_server_and_failing_server` |
+| TOOL7 Agents calling agents with usage rollup | 3: `test_parent_calls_child_with_rollup_and_links`; 4: `tools.spec.ts` child run link and Called by |
+| TOOL8 Depth limit and cycle detection | 1: `test_depth_limit_and_cycle_detection`; 3: `test_cycle_between_two_agents_is_refused` |
+| TOOL9 Tools section in Configure | 4: `ToolsConfig.test.tsx` (schema, headers, placeholders, child run link); `tools.spec.ts` adds, validates, tests and saves an HTTP tool |
 | NFR1 Isolation | 2: network none, non-root user, limits; 3: no leaked containers after the suite |
 | NFR2 Reproducibility | 3: every run and eval result records its version |
 | NFR3 Live trace | 3: SSE delivers events before the run ends; 4: trace renders live |
