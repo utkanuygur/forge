@@ -3,6 +3,8 @@ import { Download } from "lucide-react";
 import { api, errMsg, fmtDuration, fmtTime, isTerminal, type Run } from "../api";
 import { useRunEvents } from "./useRunEvents";
 import TraceTimeline from "./TraceTimeline";
+import Transcript from "./transcript/Transcript";
+import ViewToggle, { useRunViewMode } from "./transcript/ViewToggle";
 import DiffView from "./DiffView";
 import FeedbackWidget from "./FeedbackWidget";
 import StatusPill from "./StatusPill";
@@ -36,6 +38,10 @@ export default function RunView({
   const [error, setError] = useState<string | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
   const { events, done, streamError } = useRunEvents(runId, share);
+  const [savedMode, setMode] = useRunViewMode();
+  // The share page (simple) always shows the transcript; the builder can switch to the timeline.
+  const mode = simple ? "transcript" : savedMode;
+  const toggle = simple ? undefined : <ViewToggle mode={mode} onChange={setMode} />;
 
   const load = useCallback(async () => {
     try {
@@ -105,16 +111,27 @@ export default function RunView({
         </div>
       )}
 
-      <Panel title="Input">
+      {mode === "transcript" && (
+        <Panel title="Transcript" right={toggle}>
+          <Transcript events={events} run={run} live={live} input={run.input} />
+          {streamError && <p className="mt-3 text-xs text-amber-600">Live stream interrupted: {streamError}</p>}
+        </Panel>
+      )}
+
+      {mode === "timeline" && (
+      <Panel title="Input" right={toggle}>
         <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{run.input}</p>
       </Panel>
+      )}
 
+      {mode === "timeline" && (
       <Panel title="Trace">
         <TraceTimeline events={events} live={live} simple={simple} />
         {streamError && <p className="mt-3 text-xs text-amber-600">Live stream interrupted: {streamError}</p>}
       </Panel>
+      )}
 
-      {(terminal || run.output) && (
+      {mode === "timeline" && (terminal || run.output) && (
         <Panel title="Output">
           {run.output ? (
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{run.output}</p>
