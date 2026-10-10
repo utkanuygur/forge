@@ -417,3 +417,30 @@ so changing them never creates a version and never affects evals.
 Validation: at most 12 items; `title` 1 to 80 characters, `prompt` 1 to 20000 characters; otherwise 422.
 Storage: `agents.suggested_prompts` (JSON text, default `'[]'`), added to existing databases by the guarded
 `ADDED_COLUMNS` migration in `forge/db.py`.
+
+## Examples (additive)
+
+The example agents shipped in `demo/examples` (log triage, data analyst, docs writer, repo maintainer) can be
+installed from the API and the web app with one click. Builder only: every route requires a localhost caller
+(the same rule as `POST /agents`); remote callers get 401. Logic lives in `forge/examples.py`, routes in
+`forge/server/examples.py`. The data is read from `demo/` next to the package, or from `sys._MEIPASS/demo` in
+the frozen desktop server (`FORGE_EXAMPLES_DIR` overrides). Only `agent.json`, `evals.json` and seed files are
+read or bundled; reference solutions and `prompt_checks.json` never are.
+
+```jsonc
+// GET /examples -> ExampleInfo[] (sorted by key)
+{"key": "log-triage", "name": "Log triage", "description": "...", "agent_slug": "log-triage",
+ "installed": false, "eval_cases": 4, "suggested_prompts": 3, "needs_network": false}
+```
+
+| Route | Body | Result |
+|---|---|---|
+| `GET /examples` | | `ExampleInfo[]`; `installed` is true when an agent with `agent_slug` exists |
+| `POST /examples/{key}/install` | `{model?}` | Agent with `versions`, plus `example`, `created`, `installed_version`, `eval_cases_synced {added, replaced, kept}`, and `api_key` (shown once) when created. Unknown key 404. Existing slug 409 with a clear message unless `?replace=1` |
+| `POST /examples/{key}/install?replace=1[&promote=1]` | `{model?}` | Like `demo/load_examples.py`: a new version only when the system prompt, tools, network, seed files or model differ from prod (promoted only with `promote=1`), suggested prompts restored, eval cases synced by name (unchanged kept, changed replaced, missing added). No `api_key` |
+| `POST /examples/install-all` | `{model?}` | `{"installed": [same as install], "skipped": [slug]}`; installed examples are skipped (with `?replace=1` they are re-synced instead) |
+
+Model: `model` when given (any provider string, e.g. `openai_compat:http://localhost:11434/v1|qwen3:4b-instruct`),
+else the example's own model, else (on replace) the current prod model, else the server default
+(`FORGE_DEFAULT_MODEL`). The version created on install has `created_by: "human"` and the rationale
+"Installed from the <key> example".

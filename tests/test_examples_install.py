@@ -81,6 +81,19 @@ def test_frozen_layout_reads_from_meipass(tmp_path, monkeypatch):
         assert examples.read_seed_files(ex["seed_dir"]) == examples.read_seed_files(dev["seed_dir"])
 
 
+def test_frozen_server_installs_from_the_bundle(tmp_path, monkeypatch, client):
+    bundle = tmp_path / "_internal"
+    examples.stage(bundle / "demo")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+    assert [i["key"] for i in client.get("/v1/examples").json()] == KEYS
+    r = client.post("/v1/examples/install-all")
+    assert r.status_code == 200 and len(r.json()["installed"]) == 4
+    v = client.get("/v1/agents/repo-maintainer/versions/prod").json()
+    assert v["seed_files"] == examples.read_seed_files(DEMO / "acme-orders")
+    assert len(client.get("/v1/agents/repo-maintainer/evals").json()) == 7
+
+
 def test_frozen_bundle_without_examples_lists_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
