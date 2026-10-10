@@ -22,10 +22,11 @@ LOCAL = ("127.0.0.1", 5000)
 REMOTE = ("203.0.113.9", 5000)
 
 READS = {"list_agents", "get_agent", "list_runs", "get_run", "explain_failure", "list_eval_cases", "get_eval_results",
-         "get_improvements", "get_metrics", "docs_lookup"}
+         "get_improvements", "get_metrics", "docs_lookup", "list_models", "draft_agent", "get_deploy_info"}
 WRITES = {"create_eval_case", "delete_eval_case", "generate_eval_cases", "start_run", "run_evaluation",
           "start_improvement", "promote_version", "create_version", "set_approval_policy", "set_budget",
-          "create_trigger", "save_run_as_eval", "add_feedback"}
+          "create_trigger", "save_run_as_eval", "add_feedback", "create_agent", "add_example_agents", "add_http_tool",
+          "add_mcp_server", "rollback_version"}
 
 
 # ---------------------------------------------------------------- tool registry
