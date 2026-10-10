@@ -95,9 +95,23 @@ export default function RunView({
           <span>
             {run.tokens_in.toLocaleString()} in / {run.tokens_out.toLocaleString()} out tokens
           </span>
+          {run.child_usage && run.child_usage.tokens_in + run.child_usage.tokens_out > 0 && (
+            <span data-testid="child-usage">
+              plus {run.child_usage.tokens_in.toLocaleString()} in / {run.child_usage.tokens_out.toLocaleString()} out in
+              called agents
+            </span>
+          )}
           <span>{run.turns} turns</span>
           <span className="text-neutral-400">{fmtTime(run.created_at)}</span>
         </div>
+      )}
+      {!simple && run.parent_run_id && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="called-by">
+          Called by{" "}
+          <a href={`/runs/${run.parent_run_id}`} className="font-mono text-accent-700 hover:underline dark:text-accent-400">
+            {run.parent_run_id}
+          </a>
+        </p>
       )}
       {simple && (
         <div>

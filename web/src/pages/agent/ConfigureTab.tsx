@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { FileText, Plus, Trash2 } from "lucide-react";
-import { api, errMsg, fmtTime, type Agent, type Version } from "../../api";
+import { api, errMsg, fmtTime, type Agent, type HttpTool, type McpServer, type Version } from "../../api";
 import { ModelField, NetworkField, ToolsField } from "../../components/ConfigFields";
+import ToolsConfig from "../../components/ToolsConfig";
 import { useToast } from "../../components/Toast";
 import { Badge, CreatedByBadge, Empty, ErrorBox, Modal, Section, Toggle } from "../../components/ui";
 
@@ -52,6 +53,9 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
   const [tools, setTools] = useState<string[]>([]);
   const [network, setNetwork] = useState(false);
   const [seeds, setSeeds] = useState<Record<string, string>>({});
+  const [httpTools, setHttpTools] = useState<HttpTool[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [callable, setCallable] = useState<string[]>([]);
   const [rationale, setRationale] = useState("");
   const [editing, setEditing] = useState<{ path: string; content: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,6 +68,9 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
     setTools(v.tools);
     setNetwork(v.network);
     setSeeds(v.seed_files || {});
+    setHttpTools(v.http_tools || []);
+    setMcpServers(v.mcp_servers || []);
+    setCallable(v.callable_agents || []);
     setRationale("");
   }
   useEffect(() => reset(prod), [prod?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -74,7 +81,10 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
       model !== prod.model ||
       network !== prod.network ||
       JSON.stringify([...tools].sort()) !== JSON.stringify([...prod.tools].sort()) ||
-      JSON.stringify(seeds) !== JSON.stringify(prod.seed_files || {}));
+      JSON.stringify(seeds) !== JSON.stringify(prod.seed_files || {}) ||
+      JSON.stringify(httpTools) !== JSON.stringify(prod.http_tools || []) ||
+      JSON.stringify(mcpServers) !== JSON.stringify(prod.mcp_servers || []) ||
+      JSON.stringify(callable) !== JSON.stringify(prod.callable_agents || []));
 
   async function save() {
     setBusy(true);
@@ -86,6 +96,9 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
         tools,
         network,
         seed_files: seeds,
+        http_tools: httpTools,
+        mcp_servers: mcpServers,
+        callable_agents: callable,
         rationale,
       });
       toast(`Saved v${v.n}. Promote it to put it in production.`);
@@ -156,6 +169,23 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
             <ModelField value={model} onChange={setModel} />
             <ToolsField value={tools} onChange={setTools} />
             <NetworkField value={network} onChange={setNetwork} />
+            <section aria-label="Tools" className="space-y-3 border-t border-neutral-200 pt-5 dark:border-neutral-800">
+              <div>
+                <h3 className="text-sm font-semibold">Tools</h3>
+                <p className="text-xs text-neutral-500">HTTP endpoints, MCP servers and other agents the model can call.</p>
+              </div>
+              <ToolsConfig
+                agent={agent}
+                network={network}
+                seedFiles={seeds}
+                httpTools={httpTools}
+                onHttpTools={setHttpTools}
+                mcpServers={mcpServers}
+                onMcpServers={setMcpServers}
+                callableAgents={callable}
+                onCallableAgents={setCallable}
+              />
+            </section>
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="label mb-0">Seed files</span>

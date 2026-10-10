@@ -6,6 +6,47 @@ export type CreatedBy = "human" | "optimizer";
 export type ImprovementStatus = "running" | "promoted" | "eligible" | "rejected" | "failed";
 export type EventType = "run_started" | "assistant" | "tool_call" | "tool_result" | "run_finished" | "error";
 
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export interface HttpTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  url: string;
+  method: HttpMethod;
+  headers: Record<string, string>;
+  query_params?: string[];
+  timeout?: number;
+  max_response_chars?: number;
+}
+
+export type McpTransport = "http" | "sse" | "stdio";
+
+export interface McpServer {
+  name: string;
+  transport: McpTransport;
+  url?: string;
+  headers?: Record<string, string>;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  timeout?: number;
+}
+
+export interface McpToolInfo {
+  name: string;
+  tool: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
+export interface ToolTestResult {
+  output: string;
+  is_error: boolean;
+  status: number | null;
+  duration_ms: number;
+}
+
 export interface Version {
   id: string;
   agent_id: string;
@@ -14,7 +55,9 @@ export interface Version {
   lessons: string[];
   model: string;
   tools: string[];
-  http_tools: unknown[];
+  http_tools: HttpTool[];
+  mcp_servers?: McpServer[];
+  callable_agents?: string[];
   network: boolean;
   seed_files: Record<string, string>;
   parent_id: string | null;
@@ -67,6 +110,8 @@ export interface Run {
   ended_at: number | null;
   feedback: Feedback[];
   eval_case_id?: string | null;
+  parent_run_id?: string | null;
+  child_usage?: { tokens_in: number; tokens_out: number; cost_usd: number };
   // Not in CONTRACT.md; used if the backend includes it.
   agent_slug?: string;
 }
@@ -173,6 +218,9 @@ export interface NewVersionBody {
   tools?: string[];
   network?: boolean;
   seed_files?: Record<string, string>;
+  http_tools?: HttpTool[];
+  mcp_servers?: McpServer[];
+  callable_agents?: string[];
   rationale?: string;
 }
 
@@ -252,6 +300,12 @@ export const api = {
   promote: (slug: string, version: number) => request<Agent>("POST", `/agents/${enc(slug)}/promote`, { version }),
   rotateKey: (slug: string) => request<{ api_key: string }>("POST", `/agents/${enc(slug)}/rotate-key`),
   templates: () => request<Template[]>("GET", "/templates"),
+  testTool: (slug: string, body: { tool: HttpTool; args: Record<string, unknown>; network?: boolean }) =>
+    request<ToolTestResult>("POST", `/agents/${enc(slug)}/tools/test`, body),
+  listMcpTools: (
+    slug: string,
+    body: { server: McpServer; network?: boolean; seed_files?: Record<string, string> },
+  ) => request<{ tools: McpToolInfo[] }>("POST", `/agents/${enc(slug)}/mcp/list`, body),
 
   // runtime
   createRun: (

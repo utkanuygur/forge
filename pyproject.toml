@@ -15,6 +15,7 @@ dependencies = [
   "typer>=0.12",
   "python-dotenv>=1.0",
   "mcp>=2.3.0",
+  "jsonschema>=4.20",
 ]
 
 [project.scripts]

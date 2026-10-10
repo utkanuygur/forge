@@ -55,6 +55,7 @@ function ToolCard({ pair, simple }: { pair: ToolPair; simple?: boolean }) {
   const args = (pair.call.payload.args as Record<string, unknown>) || {};
   const isErr = Boolean(pair.result?.payload.is_error);
   const output = str(pair.result?.payload.output);
+  const childRunId = str(pair.result?.payload.child_run_id);
   return (
     <div
       data-testid="tool-card"
@@ -78,6 +79,13 @@ function ToolCard({ pair, simple }: { pair: ToolPair; simple?: boolean }) {
         {!pair.result && <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-blue-500" />}
         {isErr && <span className="shrink-0 text-xs font-medium text-red-600 dark:text-red-400">error</span>}
       </button>
+      {childRunId && !simple && (
+        <div className="border-t border-neutral-200 px-3 py-1.5 text-xs dark:border-neutral-800">
+          <a href={`/runs/${childRunId}`} className="font-medium text-accent-700 hover:underline dark:text-accent-400" data-testid="child-run-link">
+            Open child run <span className="font-mono">{childRunId}</span>
+          </a>
+        </div>
+      )}
       {open && (
         <div className="space-y-2 border-t border-neutral-200 p-3 dark:border-neutral-800">
           {!simple && (
