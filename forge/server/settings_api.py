@@ -89,5 +89,5 @@ async def reset_settings(body: ResetIn) -> dict:
 
 
 @router.get("/models/available")
-async def available(refresh: bool = False) -> dict:
-    return {"providers": await models_available.providers(refresh=refresh)}
+async def available(refresh: bool = False, provider: str | None = None) -> dict:
+    return {"providers": await models_available.providers(refresh=refresh, only=provider)}

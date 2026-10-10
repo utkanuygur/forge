@@ -106,10 +106,14 @@ async def openai_status(base_url: str, name: str | None = None, refresh: bool = 
     return {**out, **await _cached(("openai", base, hash(key)), fetch, refresh)}
 
 
-async def providers(refresh: bool = False) -> list[dict]:
-    """Every configured provider with reachability and model ids, checked concurrently."""
-    tasks = [anthropic_status(refresh)] + [openai_status(e["base_url"], e["name"], refresh)
-                                           for e in settings.endpoints()]
+async def providers(refresh: bool = False, only: str | None = None) -> list[dict]:
+    """Every configured provider (or the one whose id or name is `only`) with reachability and model ids."""
+    tasks = []
+    if only in (None, "anthropic", "Claude"):
+        tasks.append(anthropic_status(refresh))
+    for e in settings.endpoints():
+        if only in (None, e["name"], f"openai_compat:{e['base_url']}"):
+            tasks.append(openai_status(e["base_url"], e["name"], refresh))
     return list(await asyncio.gather(*tasks))
 
 
