@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { Check, CircleAlert } from "lucide-react";
-import { MODEL_PRESETS } from "../../api";
+import { modelPresets } from "../../api";
 import type { ProviderStatus } from "../../settingsApi";
 
 /** Is `model` (a Forge model string) listed by its provider right now? null when unknown. */
@@ -50,7 +50,7 @@ export default function ModelPicker({
   const current = providers?.find((p) => p.id === tab);
   const choices: { model: string; ok: boolean | null }[] =
     tab === PRESETS_TAB
-      ? MODEL_PRESETS.map((m) => ({ model: m, ok: modelInstalled(m, providers) }))
+      ? modelPresets(providers).map((m) => ({ model: m, ok: modelInstalled(m, providers) }))
       : (current?.models ?? []).map((m) => ({ model: current!.prefix + m, ok: true }));
 
   return (

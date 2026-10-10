@@ -6,6 +6,7 @@ import SettingsPage from "../../src/pages/SettingsPage";
 import ModelPicker, { modelInstalled } from "../../src/components/settings/ModelPicker";
 import { fromDraft, toDraft } from "../../src/components/settings/SettingField";
 import { ToastProvider } from "../../src/components/Toast";
+import { modelPresets } from "../../src/api";
 import type { ProviderStatus, SettingView, SettingsPayload } from "../../src/settingsApi";
 
 const json = (body: unknown, status = 200) =>
@@ -210,6 +211,17 @@ describe("ModelPicker", () => {
     expect(screen.getByText("Not available on its provider right now")).toBeInTheDocument();
     rerender(<ModelPicker id="m" label="Model" value="anthropic:claude-sonnet-5-5" onChange={() => {}} providers={PROVIDERS} />);
     expect(screen.getByText("Installed and available")).toBeInTheDocument();
+  });
+
+  it("takes local presets from the installed models, falls back to qwen3:4b-instruct, never offers qwen3:8b", () => {
+    const ollama = "openai_compat:http://localhost:11434/v1|";
+    const withModels = (models: string[]) => PROVIDERS.map((p) => (p.name === "Ollama" ? { ...p, models } : p));
+    expect(modelPresets(withModels(["llama3.2:3b", "qwen3:8b"]))).toEqual([
+      "anthropic:claude-sonnet-5-5", "anthropic:claude-opus-5-5", `${ollama}llama3.2:3b`,
+    ]);
+    expect(modelPresets(withModels([])).slice(2)).toEqual([`${ollama}qwen3:4b-instruct`]);
+    expect(modelPresets(null).slice(2)).toEqual([`${ollama}qwen3:4b-instruct`]);
+    expect(modelPresets(withModels(["qwen3:8b"])).join(" ")).not.toContain("qwen3:8b");
   });
 });
 

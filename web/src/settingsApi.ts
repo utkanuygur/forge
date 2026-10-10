@@ -1,5 +1,6 @@
 // Settings client (CONTRACT.md "Settings"): typed calls for /v1/settings and /v1/models/available, plus the
 // optional desktop bridge the Forge macOS app injects into the main window.
+import { useEffect, useState } from "react";
 import { ApiError, request } from "./api";
 
 export type SettingSource = "env" | "saved" | "default";
@@ -118,6 +119,39 @@ export function flatSettings(p: SettingsPayload | null | undefined): Record<stri
   const out: Record<string, SettingView> = {};
   for (const g of p?.groups ?? []) for (const s of g.settings) out[s.key] = s;
   return out;
+}
+
+let available: { at: number; providers: Promise<ProviderStatus[] | null> } | null = null;
+
+/** The live /v1/models/available providers, cached for 60 seconds like the server; null when unavailable. */
+export function getAvailableModels(): Promise<ProviderStatus[] | null> {
+  if (!available || Date.now() - available.at > 60_000) {
+    available = {
+      at: Date.now(),
+      providers: settingsApi
+        .models()
+        .then((r) => (Array.isArray(r?.providers) ? r.providers : null))
+        .catch(() => null),
+    };
+  }
+  return available.providers;
+}
+
+export function resetAvailableModelsCache() {
+  available = null;
+}
+
+/** React hook over getAvailableModels: null until loaded or when the list is unavailable. */
+export function useAvailableModels(): ProviderStatus[] | null {
+  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    getAvailableModels().then((p) => live && setProviders(p));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return providers;
 }
 
 let publicUrl: Promise<string> | null = null;

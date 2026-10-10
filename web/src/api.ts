@@ -1,4 +1,5 @@
 // Typed client for the Forge HTTP API. Shapes mirror CONTRACT.md.
+import type { ProviderStatus } from "./settingsApi";
 
 export type RunStatus =
   | "queued"
@@ -849,11 +850,28 @@ export const api = {
 
 export const TOOL_NAMES = ["bash", "read_file", "write_file", "edit_file"] as const;
 
-export const MODEL_PRESETS = [
-  "anthropic:claude-sonnet-5-5",
-  "anthropic:claude-opus-5-5",
-  "openai_compat:http://localhost:11434/v1|qwen3:4b-instruct",
-];
+export const CLAUDE_PRESETS = ["anthropic:claude-sonnet-5-5", "anthropic:claude-opus-5-5"];
+
+/** Offered as the local example when no OpenAI compatible endpoint reports installed models. */
+export const LOCAL_FALLBACK_PRESET = "openai_compat:http://localhost:11434/v1|qwen3:4b-instruct";
+
+/** Static presets for when the live model list is not loaded (yet). */
+export const MODEL_PRESETS = [...CLAUDE_PRESETS, LOCAL_FALLBACK_PRESET];
+
+/** Models never offered as presets, even when a server lists them. */
+const NEVER_OFFER = [/\|qwen3:8b$/];
+
+/**
+ * Model presets: the Claude presets plus every model the reachable OpenAI compatible endpoints report as
+ * installed (GET /v1/models/available), or qwen3:4b-instruct on Ollama as the example when none do.
+ */
+export function modelPresets(providers: ProviderStatus[] | null | undefined): string[] {
+  const local = (providers ?? [])
+    .filter((p) => p.kind === "openai_compat" && p.reachable)
+    .flatMap((p) => p.models.map((m) => p.prefix + m))
+    .filter((m) => !NEVER_OFFER.some((re) => re.test(m)));
+  return [...CLAUDE_PRESETS, ...(local.length ? Array.from(new Set(local)) : [LOCAL_FALLBACK_PRESET])];
+}
 
 export function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;

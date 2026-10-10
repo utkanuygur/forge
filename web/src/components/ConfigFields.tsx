@@ -1,7 +1,10 @@
-import { MODEL_PRESETS, TOOL_NAMES } from "../api";
+import { modelPresets, TOOL_NAMES } from "../api";
+import { useAvailableModels } from "../settingsApi";
 import { Toggle } from "./ui";
 
 export function ModelField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  // Local presets come from the models the configured endpoints report as installed.
+  const presets = modelPresets(useAvailableModels());
   return (
     <div>
       <label className="label" htmlFor="model">
@@ -16,12 +19,12 @@ export function ModelField({ value, onChange }: { value: string; onChange: (v: s
         onChange={(e) => onChange(e.target.value)}
       />
       <datalist id="model-presets">
-        {MODEL_PRESETS.map((m) => (
+        {presets.map((m) => (
           <option key={m} value={m} />
         ))}
       </datalist>
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {MODEL_PRESETS.map((m) => (
+        {presets.map((m) => (
           <button
             key={m}
             type="button"
