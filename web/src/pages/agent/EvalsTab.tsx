@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRefresh } from "../../lib/refresh";
 import { Link } from "react-router-dom";
-import { Play, Plus, Trash2 } from "lucide-react";
-import { api, errMsg, type Agent, type EvalCase, type EvalResults, type Split } from "../../api";
+import { Layers, Loader2, Play, Plus, Sparkles, Trash2 } from "lucide-react";
+import { api, errMsg, type Agent, type EvalCase, type EvalCaseSuggestion, type EvalResults, type Split } from "../../api";
+import AssistButton, { useAssist } from "../../components/AssistButton";
+import GenerateCases from "../../components/GenerateCases";
+import { useToast } from "../../components/Toast";
 import { Badge, Empty, ErrorBox, Loading, Modal, Section, SplitBadge } from "../../components/ui";
 import ImprovePanel from "./ImprovePanel";
 import { PassCell, ScoreText } from "./ImprovementView";
 
-function AddCaseForm({ slug, onDone }: { slug: string; onDone: () => void }) {
-  const [name, setName] = useState("");
-  const [input, setInput] = useState("");
-  const [checkerType, setCheckerType] = useState("shell");
-  const [checker, setChecker] = useState("");
-  const [split, setSplit] = useState<Split>("train");
+/** The Add case form. `initial` prefills every field (a generated draft); nothing is saved until Add case. */
+export function AddCaseForm({ slug, onDone, initial }: { slug: string; onDone: () => void; initial?: EvalCaseSuggestion }) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [input, setInput] = useState(initial?.input ?? "");
+  const [checkerType, setCheckerType] = useState<string>(initial?.checker_type ?? "shell");
+  const [checker, setChecker] = useState(initial?.checker ?? "");
+  const [split, setSplit] = useState<Split>(initial?.split ?? "train");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const checkerRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,12 +50,50 @@ function AddCaseForm({ slug, onDone }: { slug: string; onDone: () => void }) {
           </select>
         </div>
       </div>
+      {initial?.rationale && <p className="text-xs text-neutral-500" data-testid="case-rationale">{initial.rationale}</p>}
       <div>
-        <label className="label" htmlFor="case-input">Input</label>
-        <textarea id="case-input" className="input min-h-[100px]" required value={input} onChange={(e) => setInput(e.target.value)} />
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+          <label className="label mb-0" htmlFor="case-input">Input</label>
+          <AssistButton<EvalCaseSuggestion>
+            kind="eval_case"
+            slug={slug}
+            input={{ split, checker_type: checkerType }}
+            resultText={(r) => r.input}
+            onResult={(r) => {
+              setInput(r.input);
+              if (!name.trim()) setName(r.name);
+              if (!checker.trim()) {
+                setCheckerType(r.checker_type);
+                setChecker(r.checker);
+              }
+            }}
+            undoValue={input}
+            onUndo={setInput}
+            inputRef={inputRef}
+            ariaLabel="Generate a task for this case"
+          />
+        </div>
+        <textarea id="case-input" ref={inputRef} className="input min-h-[100px]" required value={input} onChange={(e) => setInput(e.target.value)} />
       </div>
       <div>
-        <label className="label" htmlFor="case-checker">Checker</label>
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+          <label className="label mb-0" htmlFor="case-checker">Checker</label>
+          <AssistButton<EvalCaseSuggestion>
+            kind="eval_case"
+            slug={slug}
+            input={{ task: input, checker_type: checkerType, split }}
+            resultText={(r) => r.checker}
+            onResult={(r) => {
+              setChecker(r.checker);
+              if (!name.trim()) setName(r.name);
+            }}
+            undoValue={checker}
+            onUndo={setChecker}
+            inputRef={checkerRef}
+            disabled={!input.trim()}
+            ariaLabel="Generate grading for this case"
+          />
+        </div>
         <div className="mb-2 inline-flex rounded-lg border border-neutral-300 p-0.5 dark:border-neutral-700">
           {["shell", "judge"].map((t) => (
             <button
@@ -65,6 +110,7 @@ function AddCaseForm({ slug, onDone }: { slug: string; onDone: () => void }) {
         </div>
         <textarea
           id="case-checker"
+          ref={checkerRef}
           className="input min-h-[80px] font-mono text-xs"
           required
           placeholder={checkerType === "shell" ? "make check && ! grep -rn 'print(' src" : "The answer cites the failing test and explains the fix."}
@@ -91,6 +137,10 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
   const [cases, setCases] = useState<EvalCase[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<EvalCaseSuggestion | undefined>(undefined);
+  const [several, setSeveral] = useState(false);
+  const toast = useToast();
+  const gen = useAssist<EvalCaseSuggestion>("eval_case");
   const [results, setResults] = useState<EvalResults | null>(null);
   const [evaluating, setEvaluating] = useState(false);
   const poll = useRef<ReturnType<typeof setInterval>>();
@@ -129,6 +179,14 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
     }, 2000);
   }, [loadResults]);
 
+  // The assistant panel announces changes it made (new cases, an evaluation started).
+  useRefresh([`evals:${agent.slug}`], () => {
+    loadCases();
+    loadResults().then((r) => {
+      if (r?.running) startPolling();
+    });
+  });
+
   useEffect(() => {
     loadCases();
     loadResults().then((r) => {
@@ -151,6 +209,14 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
   }
 
 
+  async function generateCase() {
+    const res = await gen.generate({ slug: agent.slug, resultText: (r) => r.input });
+    if (res) {
+      setDraft(res.result);
+      setAdding(true);
+    }
+  }
+
   async function remove(id: string) {
     if (!confirm("Delete this evaluation case?")) return;
     try {
@@ -169,8 +235,21 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
         title="Evaluation cases"
         actions={
           <div className="flex gap-2">
-            <button className="btn-secondary" onClick={() => setAdding(true)}>
+            <button
+              className="btn-secondary"
+              onClick={() => {
+                setDraft(undefined);
+                setAdding(true);
+              }}
+            >
               <Plus className="h-4 w-4" /> Add case
+            </button>
+            <button className="btn-secondary" onClick={() => void generateCase()} disabled={gen.busy} title="Draft a case for review; nothing is saved until you add it">
+              {gen.busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
+              {gen.busy ? "Generating…" : "Generate case"}
+            </button>
+            <button className="btn-secondary" onClick={() => setSeveral(true)}>
+              <Layers className="h-4 w-4" /> Generate several
             </button>
             <button className="btn-primary" onClick={runEval} disabled={evaluating || !cases || cases.length === 0}>
               <Play className="h-4 w-4" /> {evaluating ? "Evaluating..." : `Run evaluation (v${agent.prod_version})`}
@@ -180,6 +259,7 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
       >
         <ErrorBox error={error} onDismiss={() => setError(null)} />
         {results?.error && <ErrorBox error={results.error} />}
+        <ErrorBox error={gen.error} onDismiss={gen.clearError} />
         {results && (results.train || results.holdout) && (
           <div className="flex flex-wrap gap-3">
             {(["train", "holdout"] as const).map((s) =>
@@ -268,9 +348,24 @@ export default function EvalsTab({ agent, onChanged }: { agent: Agent; onChanged
         onChanged={onChanged}
       />
 
+      {several && (
+        <Modal title="Generate evaluation cases" onClose={() => setSeveral(false)} wide>
+          <GenerateCases
+            slug={agent.slug}
+            onAdded={(n) => {
+              setSeveral(false);
+              toast(`Added ${n} case${n === 1 ? "" : "s"}`);
+              loadCases();
+            }}
+          />
+        </Modal>
+      )}
+
       {adding && (
-        <Modal title="Add evaluation case" onClose={() => setAdding(false)} wide>
+        <Modal title={draft ? "Review generated case" : "Add evaluation case"} onClose={() => setAdding(false)} wide>
           <AddCaseForm
+            key={draft ? draft.name + draft.input : "blank"}
+            initial={draft}
             slug={agent.slug}
             onDone={() => {
               setAdding(false);

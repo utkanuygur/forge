@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { api, errMsg, type Agent, type ApprovalPolicy, type PolicyRule } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { api, errMsg, type Agent, type ApprovalPolicy, type ApprovalRulesSuggestion, type BudgetSuggestion, type PolicyRule } from "../api";
+import AssistButton, { useAssist } from "./AssistButton";
 
 export const DEFAULT_TIMEOUT_SECONDS = 15 * 60;
 const FILE_TOOLS = ["write_file", "edit_file"];
@@ -70,6 +71,83 @@ function sameRule(a: PolicyRule, b: PolicyRule): boolean {
   return a.tool === b.tool && (a.pattern || null) === (b.pattern || null) && a.mode === b.mode;
 }
 
+/** Appends suggested rules (assist kind "approval_rules"), skipping any that already exist. */
+export function addSuggestedRules(policy: ApprovalPolicy, suggested: ApprovalRulesSuggestion["rules"]): ApprovalPolicy {
+  const rules = [...(policy.rules || [])];
+  for (const s of suggested) {
+    const r: PolicyRule = { tool: s.tool, pattern: s.pattern || null, mode: s.mode, label: s.label || null };
+    if (!rules.some((x) => sameRule(x, r))) rules.push(r);
+  }
+  return { ...policy, rules };
+}
+
+/** "Suggest rules": asks for approval rules fitting the agent's tools and network; they are appended, with Undo. */
+function SuggestRules({
+  slug,
+  value,
+  onChange,
+  network,
+  tools,
+  httpTools,
+}: {
+  slug: string;
+  value: ApprovalPolicy;
+  onChange: (p: ApprovalPolicy) => void;
+  network: boolean;
+  tools: string[];
+  httpTools: string[];
+}) {
+  const { generate, busy, error } = useAssist<ApprovalRulesSuggestion>("approval_rules");
+  const [state, setState] = useState<{ previous: ApprovalPolicy; applied: ApprovalPolicy; explanation: string } | null>(null);
+  async function run() {
+    const res = await generate({
+      slug,
+      input: { tools, network, http_tools: httpTools, current: normalizePolicy(value) },
+      resultText: (r) => r.rules.map((x) => `${x.tool} ${x.pattern}`).join(", "),
+    });
+    if (!res) return;
+    const next = addSuggestedRules(value, res.result.rules);
+    onChange(next);
+    setState({ previous: value, applied: next, explanation: res.result.explanation });
+  }
+  const canUndo = state && state.applied === value;
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className="btn-secondary btn-sm"
+          onClick={() => void run()}
+          disabled={busy}
+          aria-label="Suggest approval rules"
+          data-testid="assist-approval_rules"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />}
+          {busy ? "Generating…" : "Suggest rules"}
+        </button>
+        {canUndo && (
+          <button
+            type="button"
+            className="text-xs font-medium text-accent-700 underline underline-offset-2 dark:text-accent-400"
+            onClick={() => {
+              onChange(state.previous);
+              setState(null);
+            }}
+          >
+            Undo
+          </button>
+        )}
+      </div>
+      {state && <p className="text-xs text-neutral-500" data-testid="rules-explanation">{state.explanation}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Adds a preset's rules, skipping any that already exist. */
 export function addPreset(policy: ApprovalPolicy, key: string): ApprovalPolicy {
   const preset = PRESETS.find((p) => p.key === key);
@@ -83,10 +161,17 @@ export default function PolicyEditor({
   value,
   onChange,
   network,
+  slug,
+  tools = [],
+  httpTools = [],
 }: {
   value: ApprovalPolicy;
   onChange: (p: ApprovalPolicy) => void;
   network: boolean;
+  /** Enables "Suggest rules" (assist kind "approval_rules"). */
+  slug?: string;
+  tools?: string[];
+  httpTools?: string[];
 }) {
   const rules = value.rules || [];
   const setRules = (next: PolicyRule[]) => onChange({ ...value, rules: next });
@@ -120,7 +205,7 @@ export default function PolicyEditor({
                 value={r.tool}
                 onChange={(e) => update(i, { tool: e.target.value, pattern: e.target.value === "*" ? null : r.pattern })}
               >
-                {TOOL_OPTIONS.map((o) => (
+                {[...TOOL_OPTIONS, ...(TOOL_OPTIONS.some((o) => o.value === r.tool) ? [] : [{ value: r.tool, label: r.tool }])].map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
@@ -175,6 +260,7 @@ export default function PolicyEditor({
           </button>
         ))}
       </div>
+      {slug && <SuggestRules slug={slug} value={value} onChange={onChange} network={network} tools={tools} httpTools={httpTools} />}
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <label htmlFor="approval-timeout">Deny automatically after</label>
         <input
@@ -204,21 +290,54 @@ export function parseUsd(text: string): number | null | undefined {
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
-export function RunCapField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+/** Explanation line under a budget field after Generate (assist kind "budget"). */
+function BudgetExplanation({ text }: { text: string | null }) {
+  return text ? (
+    <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400" data-testid="budget-explanation">
+      {text}
+    </p>
+  ) : null;
+}
+
+const usd = (n: number) => String(Math.round(n * 100) / 100);
+
+export function RunCapField({ value, onChange, slug }: { value: string; onChange: (v: string) => void; slug?: string }) {
   const invalid = parseUsd(value) === undefined;
+  const ref = useRef<HTMLInputElement>(null);
+  const [explanation, setExplanation] = useState<string | null>(null);
   return (
     <div>
       <label className="label" htmlFor="run-cap">
         Spending cap per run (USD)
       </label>
+      <div className="flex flex-wrap items-center gap-2">
       <input
         id="run-cap"
+        ref={ref}
         className="input w-40"
         inputMode="decimal"
         placeholder="No cap"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
+      {slug && (
+        <AssistButton<BudgetSuggestion>
+          kind="budget"
+          slug={slug}
+          input={{}}
+          resultText={(r) => usd(r.max_run_cost_usd)}
+          onResult={(r) => {
+            onChange(usd(r.max_run_cost_usd));
+            setExplanation(r.explanation);
+          }}
+          undoValue={value}
+          onUndo={onChange}
+          inputRef={ref}
+          ariaLabel="Suggest a per run cap"
+        />
+      )}
+      </div>
+      <BudgetExplanation text={explanation} />
       <p className={`mt-1 text-xs ${invalid ? "text-red-600" : "text-neutral-500"}`}>
         {invalid
           ? "Enter a dollar amount, or leave empty for no cap."
@@ -231,6 +350,8 @@ export function RunCapField({ value, onChange }: { value: string; onChange: (v: 
 export function MonthlyBudgetSetting({ agent, onChanged }: { agent: Agent; onChanged: () => void }) {
   const initial = agent.monthly_budget_usd == null ? "" : String(agent.monthly_budget_usd);
   const [text, setText] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+  const [explanation, setExplanation] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setText(initial), [initial]);
@@ -262,8 +383,24 @@ export function MonthlyBudgetSetting({ agent, onChanged }: { agent: Agent; onCha
           className="input"
           inputMode="decimal"
           placeholder="No budget"
+          ref={ref}
           value={text}
           onChange={(e) => setText(e.target.value)}
+        />
+        <AssistButton<BudgetSuggestion>
+          kind="budget"
+          slug={agent.slug}
+          input={{}}
+          resultText={(r) => usd(r.monthly_budget_usd)}
+          onResult={(r) => {
+            setText(usd(r.monthly_budget_usd));
+            setExplanation(r.explanation);
+          }}
+          undoValue={text}
+          onUndo={setText}
+          inputRef={ref}
+          label="Suggest"
+          ariaLabel="Suggest a monthly budget"
         />
         <button className="btn-secondary" disabled={!dirty || busy || parsed === undefined} onClick={save}>
           {busy ? "Saving..." : "Save"}
@@ -273,6 +410,7 @@ export function MonthlyBudgetSetting({ agent, onChanged }: { agent: Agent; onCha
         Once this month's estimated spend reaches the budget, new runs and evaluations are refused. Evaluation runs
         count toward it.
       </p>
+      <BudgetExplanation text={explanation} />
       {error && <p className="text-xs text-red-600">{error}</p>}
     </div>
   );

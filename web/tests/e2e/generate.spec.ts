@@ -41,6 +41,6 @@ test.describe("Generate sample task", () => {
     const response = await responsePromise;
     expect(response.request().headers()["x-share-token"]).toBe(agent.share_token);
     expect(Object.keys(await response.json()).sort()).toEqual(["rationale", "result"]);
-    await expect(page.getByRole("textbox", { name: "Task" })).toHaveValue(new RegExp(`^${FIRST}`));
+    await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(new RegExp(`^${FIRST}`));
   });
 });

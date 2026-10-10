@@ -109,4 +109,6 @@ async def run_assist(spec: AssistKind, prepared: Prepared, grader: Provider) -> 
         if errs:
             raise AssistError(f"The model could not write a valid {spec.kind} suggestion: " + "; ".join(errs[:4]),
                               errs)
+    if spec.finalize is not None:
+        result = spec.finalize(result, prepared.data)  # type: ignore[arg-type]
     return {"result": result, "rationale": rationale}

@@ -23,6 +23,7 @@ amendment or additive extend the objects and endpoints above; where both describ
 | `gpu/` | runtime | vLLM on Modal for GPU served open models |
 | `forge/cli.py` | cli | `forge` Typer app |
 | `web/` | web | React + Vite + Tailwind single-page app |
+| `forge/copilot/`, `forge/server/copilot_api.py`, `web/src/components/copilot/` | assistant | Forge assistant side panel (see Assistant) |
 | `demo/` | demo | `acme-orders` seed repo, `repo-maintainer` agent definition, eval cases; `examples/` example agents (`load_examples.py`, `verify_examples.py`) |
 | `tests/` | each owner | `tests/test_<area>.py` |
 
@@ -146,12 +147,14 @@ with the agent (used to create a reviewed draft and its selected starter cases i
   (`source: "share"`), read a share run of that agent by id (run, events, artifacts, diff, files, approvals) and
   post feedback on it; any other run id is a 404 (see below). With a share token `GET /agents/{slug}/runs` lists
   only share-sourced runs. It gets 401 on versions, local runs, builder, eval, improve, observability, Playground
-  and webhook-secret routes.
+  and webhook-secret routes. Amendment ("Share and API conversations"): a share token may also hold
+  conversations through the session endpoints and stop its own turns, all scoped to a visitor id; a share run
+  that a visitor started is readable only with that visitor id.
 - Share page URL: `/s/{slug}?share=<token>`.
 - Share tokens reach only share runs: every run-scoped endpoint (`/runs/{id}`, its events, events.json,
   artifacts, diff, files, feedback and approvals) answers **404** (not 401, so ids are not confirmed) when a share
-  token asks for a run whose `source` is not `share`. Timeline, cancel, save-as-eval and Playground sessions are
-  builder only.
+  token asks for a run whose `source` is not `share`, or for another visitor's share run. Timeline and
+  save-as-eval are builder only; cancel and sessions follow "Share and API conversations".
 - Webhooks (`callback_url`, run completion and governance's `awaiting_approval` notification): the URL must be
   `http` or `https` and its host must resolve only to public addresses, else **400** at request time. Deliveries
   go through the HTTP tools' SSRF-safe client (forge/tools/http.py: every resolved address checked, the
@@ -496,7 +499,8 @@ scheduler read the current unix time from that file.
 
 ### Sessions
 
-Playground sessions (additive). Builder-only (localhost or the agent's API key; share tokens get 401). JSON.
+Playground sessions (additive). Localhost or the agent's API key; share tokens get visitor scoped conversations
+(see "Share and API conversations"). JSON.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
@@ -531,7 +535,8 @@ Playground sessions (additive). Builder-only (localhost or the agent's API key; 
 
 Generate buttons: grader-written suggestions for fields users would otherwise type by hand. Every kind goes through
 one registry (`forge/assist/registry.py`), one engine (`forge/assist/engine.py`) and one route
-(`forge/server/assist.py`). Built-in kinds: `task`.
+(`forge/server/assist.py`). Built-in kinds: `task`, `eval_case`, `eval_cases`, `instructions`, `rubric`,
+`seed_file`, `version_note`, `approval_rules`, `budget`, `http_tool`, `cron`, `trigger_template`.
 
 ### Endpoint
 
@@ -580,6 +585,52 @@ credentials), naming real files, endpoints or columns, 1 to 4 sentences phrased 
 prompt is non-empty and under 1200 chars, the title is under 100 chars, and the prompt is not a near duplicate
 (normalized text similarity at least 0.85) of a recent input or an avoided text. Share links allowed.
 
+### Kind `eval_case`
+
+One evaluation case (task input plus checker) drafted for the agent. Never saved: the client creates it with
+`POST /agents/{slug}/evals` (or `POST /runs/{id}/save-as-eval`) only when the user clicks Add. Builders only (no
+share links). Stable interface (other features call it):
+
+`input` (all optional): `{split?: "train"|"holdout" (default train), focus?: str, checker_type?: "shell"|"judge"
+(default: the model picks shell when the result is checkable by commands, else judge), from_run_id?: str,
+task?: str}`. `from_run_id` (one of this agent's runs, else `400`) turns the run's input, reply and feedback into a
+case whose input is the run's input verbatim; `task` fixes the case input (verbatim) so only the checker and name
+are written (the Add case form's checker button).
+`result`: `{name, input, checker_type: "shell"|"judge", checker, split: "train"|"holdout", rationale}`. The
+context is the shared agent context plus the existing cases (split, type, name, input; the agent's own longest
+shell checker as a style reference), `avoid`, and the request. Valid when: `name` is a lowercase hyphenated slug
+under 60 chars not used by an existing case; `input` is non-empty, under 3000 chars, and not a near duplicate of
+an existing case input or an avoided text (or equals the fixed input); `checker_type` and `split` match the request
+when given; a shell checker contains `set -euo pipefail` and a `FAIL` line and, when network is off, no network
+commands (curl, wget, pip install, npm install, apt install, git clone, uv add); a judge rubric says "Pass only if"
+and lists at least two numbered criteria; `rationale` is non-empty. Holdout requests ask for a different task that
+exercises the same skills as the train cases.
+
+### Kind `eval_cases`
+
+A batch for the "Generate several" review list. `input`: `{n?: 1..6 (default 3), holdout?: 0..n (default n // 2),
+focus?: str, checker_type?: "shell"|"judge"}` (out of range `400`). `result`: `{cases: [<eval_case result>]}` with
+exactly `n` cases, exactly `holdout` of them holdout, each valid as above, with unique names and no near duplicates
+among themselves.
+
+### Configuration and deploy kinds
+
+All builders only (no share links), all grounded in the shared agent context unless noted, all fill fields only.
+A missing required input or an out of range option is `400`. Some kinds convert the model's fields or add
+computed ones after validation (registry `finalize`); the result below is what the endpoint returns.
+
+| Kind | `input` | `result` | Valid when |
+|---|---|---|---|
+| `instructions` | `{current?: str (the unsaved text; default the version's prompt), goal?: str}` | `{instructions, summary}` | The context adds the full current text, learned lessons (not to be copied in), the last 10 negative feedback comments and the failing eval cases of the version. Instructions non-empty, under 20000 chars, changed, between 0.4 and 2.5 times the current length when that is at least 400 chars, never naming an eval case; summary non-empty, under 300 chars. The web shows a diff to accept or reject. |
+| `rubric` | `{task: str (required), current?: str}` | `{rubric}` | Says "Pass only if", at least two numbered criteria, a line starting "Fail if", differs from `current`. |
+| `seed_file` | `{description?: str, path?: str, existing?: [str] (unsaved paths)}` | `{path, content, description}` | Relative path without `..`, the requested path when given, otherwise not an existing path; content non-empty, under 20000 chars; CSV with a header, two rows and a constant column count; JSON and Python parse; nothing that looks like a real credential. |
+| `version_note` | `{config: {system_prompt?, model?, tools?, network?, seed_files?, http_tools?, mcp_servers?, callable_agents?, approval_policy?, max_run_cost_usd?}}` (missing keys are unchanged) | `{note}` | The server diffs the draft against the request's version (prod by default); no change is `400`. One paragraph under 300 chars, no dashes as punctuation. |
+| `approval_rules` | `{tools?: [str], network?: bool, http_tools?: [str], current?: {rules}}` (defaults from the version) | `{rules: [{tool, pattern, mode: "ask"\|"deny", label}], explanation}` | 1 to 8 rules, each a valid policy rule (`forge/policy.py`) naming a tool the agent has (or `*`, `mcp__<server>__...`, `agent__<slug>`), with a label, not already in `current`, no repeats; `pattern` `""` means every call. |
+| `budget` | `{}` | `{max_run_cost_usd, monthly_budget_usd, explanation, stats: {runs, mean_usd, p95_usd, max_usd, monthly_usd, grader_usd, days}}` | `stats` come from the last 30 days of priced, finished, non draft runs plus grader spend (`monthly_usd` is the projection). No priced run yet is `400`. Cap positive and at least the 95th percentile; monthly at least the cap and the projection. |
+| `http_tool` | `{source: str (required; description, curl command or API doc), existing?: [str]}` | `{name, description, method, url, parameters: object, headers: {name: value}, query_params: [str]}` | Passes the version tool validation (name, JSON schema object, https URL, placeholders are parameters); name not in use; credential headers are `{{SECRET}}` references; no credentials in the URL. Literal credentials found in the source are replaced with `[REDACTED]` before the model sees it and may not appear in the result. |
+| `cron` | `{text: str (required), timezone?: str (default zone)}` | `{cron, timezone, explanation, next_fire_times: [unix seconds] x3}` | Parses with `forge/triggers/cron.py` and the zone exists; `next_fire_times` computed by the server. Needs no agent (localhost only without `slug`, metered with one). |
+| `trigger_template` | `{source: "github"\|"slack" (required), event?: issues\|issue_comment\|pull_request\|push (GitHub), slash\|mention (Slack), current?: str}` | `{template, explanation}` | Uses at least one `{field}` placeholder and only the source's template fields (see Triggers), under 4000 chars, differs from `current`. |
+
 ### Adding a kind
 
 1. Create `forge/assist/kinds/<kind>.py` with a system prompt (it must differ from every other kind's), a result
@@ -588,6 +639,9 @@ prompt is non-empty and under 1200 chars, the title is under 100 chars, and the 
    `render_agent_context` for agent grounding, `req.input` for the kind's own fields), `validate(result, data)
    -> [problems]`, and a deterministic `fake(user_text) -> {result, rationale}` for `fake:grader`. Finish with
    `SPEC = register("<kind>", build_context, SYSTEM, SCHEMA, validate, share_allowed=..., needs_agent=..., fake=fake)`.
+   Optional: `finalize(result, data) -> result` converts the model's reply to the documented result after
+   validation (a JSON string to an object, computed fields), and `result_text` feeds the server's earlier
+   suggestions. A `ValueError` from `build_context` is a `400`.
 2. Import the module in `forge/assist/kinds/__init__.py`.
 3. Web: mount `<AssistButton kind="<kind>" slug=... input={...} resultText={...} onResult={...} undoValue={value}
    onUndo={setValue} inputRef={ref} ariaLabel="..." />` next to the field (or wrap it like `GenerateTaskButton`).
@@ -727,7 +781,7 @@ judged run).
 
 | Method | Path | Auth | Returns |
 |---|---|---|---|
-| GET | `/healthz` | none | `{"status": "ok" or "error", "executor", "components": {"database": {...}, "docker": {...}}, "time"}`; 200 when every component is ok or skipped, else 503. Docker (daemon and `FORGE_SANDBOX_IMAGE`) is checked only when `FORGE_EXECUTOR=docker` (the default), cached 10 s. |
+| GET | `/healthz` | none | `{"status": "ok" or "error", "executor", "components": {"database": {...}, "docker": {...}}, "build", "time"}` (`build` is the `/v1/version` object); 200 when every component is ok or skipped, else 503. Docker (daemon and `FORGE_SANDBOX_IMAGE`) is checked only when `FORGE_EXECUTOR=docker` (the default), cached 10 s. |
 | GET | `/metrics` | localhost unless `FORGE_METRICS_PUBLIC=1` | Prometheus text: `forge_runs_total{agent,status,source}`, `forge_run_duration_seconds` histogram `{agent}`, `forge_tokens_total{agent,direction}`, `forge_cost_usd_total{agent}`, `forge_tool_calls_total{tool,error}`, `forge_active_runs` (queued, running and awaiting_approval), `forge_runs_awaiting_approval`, `forge_improvements_total{status}`. `forge_runs_total` status labels include `awaiting_approval` and `budget_exceeded`; `forge_cost_usd_total` sums the stored run costs. |
 
 Structured logs: logger `forge.lifecycle` writes one JSON line per run event (`run_queued`, `run_started`,
@@ -940,7 +994,235 @@ register_setting(key="share_rate_limit", env="FORGE_SHARE_RATE_LIMIT", type="int
 
 Registered by other modules (listed in `settings.SETTING_MODULES`, which `settings.load_all()` imports before
 the registry is listed): `trigger_api_hosts`, `trigger_rate_limit` and `slack_response_url_prefixes` (group
-Triggers, `forge/triggers`), `assist_share_limit` (Sharing, `forge/server/assist.py`) and `mcp_connect_timeout`
+Triggers, `forge/triggers`), `assist_share_limit` (Sharing, `forge/server/assist.py`), `share_session_turns`, `share_sessions_per_visitor`,
+`share_daily_turns`, `share_concurrent_turns` and `session_idle_hours` (Sharing, `forge/share_limits.py`) and `mcp_connect_timeout`
 (Tools, `forge/tools/mcp.py`). Triggers read `public_url` for hook paths and reply links. Governance budgets are
 per agent fields, not settings. Development and test switches (`FORGE_ALLOW_PRIVATE_HTTP`, `FORGE_SCHEDULER`,
 `FORGE_TEST_CLOCK_FILE`, desktop entry, scripts) stay environment only and are listed at the end of `.env.example`.
+
+## Build info (additive)
+
+`GET /v1/version` (no auth, no secrets, also through the public tunnel) returns the running build. `/healthz`
+includes the same object as `build`.
+
+```json
+{"version": "0.1.3", "commit": "473b4fa", "built_at": "2026-10-10T19:30:00Z", "channel": "release"}
+```
+
+| Field | Notes |
+|---|---|
+| `version` | `0.1.N` for releases, `0.1.N-preview` for previews, `<latest tag>+dev` (for example `0.1.2+dev`) on a dev server; null when unknown |
+| `commit` | short commit hash, or null |
+| `built_at` | ISO 8601 UTC build time; null on dev servers |
+| `channel` | `release`, `preview` or `dev`; null when unknown |
+
+`forge/buildinfo.py` takes each field from the first source that knows it: env vars `FORGE_VERSION`,
+`FORGE_COMMIT`, `FORGE_BUILT_AT`, `FORGE_CHANNEL` (set by the desktop app); then `build-info.json` next to the
+module (bundled into the frozen server by `desktop/scripts/build-server.sh`); then, outside a frozen build,
+the repository's `git describe --tags --always --dirty` and `git rev-parse --short HEAD` (cached per process,
+channel `dev`). A source with a version but no channel gets one from the version. It never fails: unknown
+fields are null. The web header shows it as a badge (`v0.1.3 · 473b4fa`, `v0.1.4-preview · abc1234`,
+`dev · abc1234`).
+## Share and API conversations (additive)
+
+Multi-turn conversations for people who use a deployed agent: share link visitors and API callers use the
+session endpoints of "Sessions" above. Code: `forge/server/sessions_api.py` (routes), `forge/share_limits.py`
+(visitors, limits, expiry), `forge/triggers/core.py` (Slack threads). Every session turn is an ordinary run with
+the session's history and the previous turn's workspace, as in the Playground.
+
+| Caller | Channel | Version | Turn `source` | Sees |
+|---|---|---|---|---|
+| Localhost builder | `playground` | any, or a draft | `playground` | every session (`?channel=` filters; default `playground`) |
+| Agent API key | `api` | any (`{version}`), or a draft | `api` | the agent's sessions (default `?channel=api`; `all` for every channel) |
+| Share token | `share` | the production version at each turn (no version or draft; either is a 400) | `share` | only its own visitor's sessions and runs |
+| Slack `app_mention` | `slack` | the trigger's pinned version or production | `slack` | (no reader; replies go to the thread) |
+
+Endpoints (all JSON, prefix `/v1`):
+
+| Method | Path | Share token behavior |
+|---|---|---|
+| POST | `/agents/{slug}/sessions` | Body `{}` (or `{title}`). Issues a visitor id when `X-Forge-Visitor` is missing or unknown for this agent, returns it as `visitor_id` and in the `X-Forge-Visitor` response header. 429 `sessions_per_visitor` |
+| GET | `/agents/{slug}/sessions?limit=20` | Only the visitor's conversations; `[]` without a visitor id |
+| GET | `/sessions/{id}` | 404 unless the session belongs to this visitor |
+| POST | `/sessions/{id}/messages` | `{input, wait?}`. 404 for another visitor's session, 410 once expired, 409 while a turn runs, 429 for a limit, 402 for the monthly budget |
+| POST | `/runs/{id}/cancel` | Allowed for the visitor's own share runs; any other run is a 404 |
+| GET | `/runs/{id}`, events, events.json, files, artifacts, diff, approvals; POST feedback | The visitor's own share runs. Share runs without a visitor (one shot runs) stay readable by id as before; every other run is a 404 |
+
+Visitor scoping:
+- A visitor id is `vis_` plus 32 random URL-safe characters, stored in `share_visitors` (per agent) and on
+  `sessions.visitor_id` and `runs.visitor_id`. Clients send it as `X-Forge-Visitor`, or as `?visitor=` where
+  headers cannot be set (EventSource streams, download links). The web share page keeps it in localStorage
+  (`forge.share.visitor.<slug>`).
+- A share token without a visitor id reaches no visitor's sessions or runs; `GET /agents/{slug}/runs` then lists
+  only share runs that no visitor owns. With a visitor id it lists only that visitor's runs.
+- Visitors never see the builder's or other visitors' sessions or runs, and session views for share callers
+  leave out `draft`, `base_version_n`, `is_draft` and `agent_id`.
+- `POST /agents/{slug}/runs` with a share token always runs production and records the visitor when the
+  request carries a known one. It counts toward the daily and concurrency limits below.
+
+Session objects gain (additive): `channel`, and for share and Slack sessions `expires_at` and `expired`; share
+sessions also `max_turns`. Share and Slack conversations idle for `FORGE_SESSION_IDLE_HOURS` (default 24) are
+read only: messages answer **410** (a Slack thread starts a new conversation instead). A running turn keeps a
+session open. Workspace archives of expired sessions stay under `runs/<run_id>/` like every run's (there is no
+automatic retention yet).
+
+Limits per share link (429 `{"detail", "limit", "retry_after"}` plus a `Retry-After` header, in seconds):
+
+| `limit` | Default | Env (global default) | Counted | Retry-After |
+|---|---|---|---|---|
+| `session_turns` | 20 | `FORGE_SHARE_SESSION_TURNS` | turns in one conversation (cancelled included) | 0: start a new conversation |
+| `sessions_per_visitor` | 3 | `FORGE_SHARE_SESSIONS_PER_VISITOR` | the visitor's conversations that have not expired | until the oldest one expires |
+| `daily_turns` | 200 | `FORGE_SHARE_DAILY_TURNS` | runs with source `share` created since 00:00 UTC (one shot share runs included) | until the next 00:00 UTC |
+| `concurrent_turns` | 2 | `FORGE_SHARE_CONCURRENT_TURNS` | share runs `queued`, `running` or `awaiting_approval` | 15 |
+
+- The daily message is exactly "You've reached today's limit for this link. Try again tomorrow."
+- Per agent overrides: `PATCH /agents/{slug} {"share_limits": {"daily_turns": 50}}`. Keys present replace, `null`
+  clears one (back to the default), absent keys are kept; each value is 1..100000 (422 otherwise). Agent objects
+  carry `share_limits` (overrides, null when unset), `share_limits_effective`, `share_limit_defaults` and
+  `session_idle_hours`. The Deploy tab edits them next to the share link.
+- Checks run on the server before the run row exists, without an await between the check and the insert, so
+  concurrent requests on the single server process cannot both pass.
+- Governance applies to every share turn: the monthly budget (402; share callers get "This agent has reached its
+  usage limit for this month. Try again later." without figures) and the version's per-run cap
+  (`budget_exceeded`). Builder and API sessions have no share limits and do not expire.
+
+Slack threads: an `app_mention` continues the conversation keyed by trigger id, channel and `thread_ts` (the
+mention's own `ts` for a top-level mention), so replies that mention the bot in the same thread continue it with
+history and files. The per conversation limit (`session_turns`) applies; a full thread, or a thread with a turn
+still running, gets a short note posted in the thread (bot token required), the fire is recorded as `skipped`
+and the hook answers 200 `{"ok": true, "skipped": "<reason>"}` so Slack does not retry. Slash commands carry no
+thread, so each starts its own run as before. A Slack session expires after the same idle time; the next mention
+in that thread starts a fresh conversation.
+
+API example:
+
+```bash
+SESSION=$(curl -s $FORGE/v1/agents/my-agent/sessions -H "Authorization: Bearer $FORGE_API_KEY" \
+  -H "Content-Type: application/json" -d '{"version": 2}' | jq -r .id)
+curl -s $FORGE/v1/sessions/$SESSION/messages -H "Authorization: Bearer $FORGE_API_KEY" \
+  -H "Content-Type: application/json" -d '{"input": "Create notes.md with three ideas", "wait": true}'
+curl -s $FORGE/v1/sessions/$SESSION/messages -H "Authorization: Bearer $FORGE_API_KEY" \
+  -H "Content-Type: application/json" -d '{"input": "Now expand the second idea", "wait": true}'
+```
+## Assistant (additive)
+
+A chat side panel on every page of the web app (and so the desktop app) that explains Forge and operates it for
+the user. Backend in `forge/copilot/` (prompt, tools, engine, docs search, fake model) and
+`forge/server/copilot_api.py`; web in `web/src/components/copilot/` and `web/src/copilotApi.ts`.
+
+### Endpoints (prefix `/v1/copilot`)
+
+Builder only: localhost, or any agent's API key; share tokens and anonymous remote callers get 401. A session
+belongs to its caller (`local`, or the key's agent) and other callers get 404. Tools act with the caller's own
+credentials through Forge's HTTP API in process, so an API-key caller can only change its own agent.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/sessions` | `{context?}` | `CopilotSession` |
+| GET | `/sessions?limit=10` | | `[CopilotSession]` newest first (limit 1 to 50) |
+| GET | `/sessions/{id}` | | `CopilotSession` + `messages: [CopilotEvent]` + `pending_confirm` (the open `confirm_request` payload or null) |
+| POST | `/sessions/{id}/messages` | `{text: 1..8000 chars, context: {page?, agent_slug?, run_id?, version?}}` | SSE stream of the turn's `CopilotEvent`s (`event: <type>`, `id: <seq>`, `data: CopilotEvent`), ending with `event: end`; 409 while a turn is running |
+| GET | `/sessions/{id}/events?after=<seq>` | | SSE: re-attaches to the latest turn after `seq` (reload while running); ends at once when idle |
+| POST | `/sessions/{id}/confirm` | `{confirm_id, approve: bool}` | `{ok, confirm_id, approved}`; 404 unknown id, 409 already answered or expired |
+| POST | `/sessions/{id}/cancel` | | `{ok, cancelled}`; Stop: the turn ends with `final` status `stopped` and any open confirmation counts as denied |
+
+```jsonc
+// CopilotSession
+{"id": "cs_..", "title": "add 3 eval cases to repo-maintainer", "context": {"page": "/agents/x/evals",
+ "agent_slug": "x"}, "created_at": 0.0, "updated_at": 0.0, "running": false}
+// CopilotEvent: one stored step; the stream and `messages` carry the same objects
+{"seq": 3, "type": "tool_result", "payload": {...}}
+```
+
+| type | payload |
+|---|---|
+| `user` | `{text, context}` |
+| `assistant` | `{text, kind: "progress" or "final", tool_calls?: [{id, name, args}]}`; one per model turn (text per turn, not token deltas); model progress notes are `kind: "progress"` without `tool_calls` |
+| `tool_call` | `{id, tool, args, risk}` |
+| `tool_result` | `{id, tool, risk, ok, summary (one line for the UI), output (what the model saw, at most 6000 chars), links: [{label, href}] (relative app paths), refresh: ["evals:<slug>", "agent:<slug>", "runs:<slug>", "triggers:<slug>", "run:<id>"]}` |
+| `confirm_request` | `{id: "cf_..", tool (or "multiple"), args (one call's args, or a list), summary, items: [{call_id, tool, args, summary}]}` |
+| `confirm_resolved` | `{id, approved, by: "user", "timeout" or "stopped"}` |
+| `error` | `{message}` |
+| `final` | `{status: "done", "stopped", "limit" or "error", message, steps, tokens_in, tokens_out, cost_usd}` |
+
+Storage: tables `copilot_sessions` and `copilot_messages` (`CREATE TABLE IF NOT EXISTS`, so existing databases
+gain them on connect). Ids `cs_` (session), `cm_` (message), `cf_` (confirmation).
+
+### Model and metering
+
+The model is `FORGE_GRADER_MODEL` through the provider adapters (Claude: adaptive thinking with progress
+updates, no temperature, `tool_choice` auto). Every model call is metered in `grader_calls` with kind
+`assist:copilot`: under the agent named by `context.agent_slug` (so it appears in that agent's metrics
+`cost.assist.kinds.copilot` and counts toward its monthly budget), else under the bucket `agent_id = "copilot"`,
+reported by `GET /metrics/overview` as `copilot: {calls, tokens_in, tokens_out, cost_usd, cost_complete}`. The
+system prompt is static (cacheable); the page context goes into each user message as a `<context>` block.
+
+### Tools
+
+Thin wrappers over the HTTP API above (no business logic of their own), each with a JSON schema, a one-line
+description and a risk. `read` tools run as soon as the model calls them; `write` tools change data or spend
+money and run only after the user approves. No tool reads or writes secrets, keys, share tokens or webhook
+secrets; the assistant refuses such requests, and every tool output and argument shown is passed through
+redaction of all stored secret values.
+
+| Tool | Risk | Wraps |
+|---|---|---|
+| `list_agents` | read | `GET /agents` |
+| `get_agent` | read | `GET /agents/{slug}`: config summary of prod, versions, budget (no share token) |
+| `list_runs` | read | `GET /agents/{slug}/runs` or `GET /runs` with status, version, source, q, limit (at most 25) |
+| `get_run` | read | `GET /runs/{id}` + `events.json`: status, error, cost, input, output, eval verdict, condensed trace |
+| `explain_failure` | read | as `get_run`, with a longer trace that keeps every error step |
+| `list_eval_cases` | read | `GET /agents/{slug}/evals` |
+| `get_eval_results` | read | `GET /agents/{slug}/evals/results` joined with case names (default prod) |
+| `get_improvements` | read | `GET /agents/{slug}/improvements` or `GET /improvements/{id}` |
+| `get_metrics` | read | `GET /agents/{slug}/metrics` or `GET /metrics/overview` |
+| `docs_lookup` | read | keyword search over README, CONTRACT, TESTING and `docs/*.md` sections (`FORGE_DOCS_DIR` overrides the root) |
+| `create_eval_case` | write | `POST /agents/{slug}/evals` (several calls in one turn share one confirmation) |
+| `delete_eval_case` | write | `DELETE /evals/{id}` |
+| `generate_eval_cases` | write | `POST /assist/<kind>` then `POST /agents/{slug}/evals` per case; assist kind `eval_cases` (`n` = count; `holdout` = count or 0 when a split is given) |
+| `start_run` | write | `POST /agents/{slug}/runs` (with `generate_task`, the input comes from `POST /agents/{slug}/sample-task`) |
+| `run_evaluation` | write | `POST /agents/{slug}/evals/run` |
+| `start_improvement` | write | `POST /agents/{slug}/improve` |
+| `promote_version` | write | `POST /agents/{slug}/promote` |
+| `create_version` | write | `POST /agents/{slug}/versions` with system_prompt, model, tools, network or lessons (not promoted) |
+| `set_approval_policy` | write | `POST /agents/{slug}/versions` with prod's rules plus the new ones (or `replace`), not promoted |
+| `set_budget` | write | `PATCH /agents/{slug}` (monthly budget) and/or `POST /agents/{slug}/versions` (per-run cap) |
+| `create_trigger` | write | `POST /agents/{slug}/triggers` with kind `schedule` only |
+| `save_run_as_eval` | write | `POST /runs/{id}/save-as-eval` |
+| `add_feedback` | write | `POST /runs/{id}/feedback` |
+
+Settings are not exposed: this base has no settings registry.
+
+### Confirmation flow
+
+1. In each model turn, read calls run in order; every write call is validated (schema, then the tool's own
+   check, e.g. the agent and version exist) and an invalid one returns an error result without asking.
+2. The valid write calls of that turn are announced together in ONE `confirm_request` whose `summary` and
+   per-item `summary` say exactly what changes and what it may cost (estimated from the agent's recent average
+   run cost, the number of missing eval runs and the grader price). The loop waits.
+3. `POST /confirm` with `approve: true` runs them in order (`tool_call`, `tool_result` each); `false` returns an
+   error result to the model for each ("the user denied this action, so nothing was changed"), and the model is
+   told not to retry. No answer within 10 minutes counts as denied (`by: "timeout"`). The engine's single
+   execution path refuses a write tool without an approval.
+
+### Limits
+
+Per user message: at most 15 tool calls (further calls get an error result and the turn ends with `final`
+status `limit`), 2 minutes of wall clock excluding time spent waiting on a confirmation and running the
+approved actions, 20 model calls; each
+tool output is capped at 6000 characters for the model, older history outputs at 1500; user text at 8000
+characters. One turn runs per session at a time; it keeps running when the stream disconnects.
+
+### Web
+
+`Assistant` nav button (sparkles icon) and Cmd+J or Ctrl+J toggle a right side panel, resizable from 360 to 520 px
+(a full screen sheet under 768 px); open state, width and current session are kept in `localStorage`. The header
+shows the context (`Repo maintainer · Evaluations`), recent sessions (10) and New session. Messages render as
+user bubbles, assistant Markdown (app links navigate in place), compact tool steps (`● tool(args) ⎿ summary`),
+confirm cards (Approve, Deny, Details) and result links. Each successful tool result's `refresh` keys are
+published as a `forge:refresh` window event; the Evaluations tab, Runs tab and agent header refetch. Enter
+sends, Shift+Enter adds a line, Esc or the Stop button stops. Starters depend on the page.
+
+### Test model
+
+`fake:copilot` (also `fake:grader` given the assistant's system prompt): see TESTING.md.

@@ -16,6 +16,7 @@ export default function RunPage() {
   return (
     <RunView
       runId={id}
+      agentSlug={(run) => agents?.find((a) => a.id === run.agent_id || a.slug === run.agent_slug)?.slug}
       header={(run) => {
         const agent = agents?.find((a) => a.id === run.agent_id || a.slug === run.agent_slug);
         return (

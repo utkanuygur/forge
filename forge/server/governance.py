@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from forge import db, governance
 from forge.budget import BudgetExceeded
-from forge.server.auth import authorize
+from forge.server.auth import authorize, share_can_see
 
 router = APIRouter(prefix="/v1")
 
@@ -32,8 +32,8 @@ def _run_agent(run_id: str) -> tuple[dict, dict]:
 @router.get("/runs/{run_id}/approvals")
 async def list_run_approvals(run_id: str, request: Request) -> list[dict]:
     r, agent = _run_agent(run_id)
-    if authorize(request, agent) == "share" and r["source"] != "share":
-        raise HTTPException(404, "run not found")  # share tokens see share runs only
+    if authorize(request, agent) == "share" and not share_can_see(request, r):
+        raise HTTPException(404, "run not found")  # share tokens see their visitor's share runs only
     return [governance.approval_view(a) for a in governance.list_approvals(run_id)]
 
 

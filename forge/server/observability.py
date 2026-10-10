@@ -15,7 +15,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from forge import db, metrics, pricing, settings
+from forge import buildinfo, db, metrics, pricing, settings
 from forge.server.auth import authorize, is_local, require_local
 
 api = APIRouter(prefix="/v1")
@@ -124,7 +124,7 @@ def search_runs(*, agent_id: str | None = None, status: str | None = None, versi
                 source: str | None = None, rating: str | None = None, has_tool_errors: bool | None = None,
                 q: str | None = None, since: float | None = None, until: float | None = None,
                 sort: SortKey = "created_at", order: str = "desc", limit: int = 50,
-                offset: int = 0) -> tuple[list[dict], int]:
+                offset: int = 0, visitor_id: str | None = None) -> tuple[list[dict], int]:
     """Filtered run rows (full `runs` columns plus agent_slug, version_n and model) and the total match count."""
     where, args = [DRAFT_FREE], []  # runs of draft Playground sessions never show up in run lists or metrics
 
@@ -144,6 +144,12 @@ def search_runs(*, agent_id: str | None = None, status: str | None = None, versi
     any_of("r.status", status)
     any_of("v.n", version, int)
     any_of("r.source", source)
+    if visitor_id is not None:  # a share page visitor lists only its own runs; "" means runs without a visitor
+        if visitor_id:
+            where.append("r.visitor_id = ?")
+            args.append(visitor_id)
+        else:
+            where.append("r.visitor_id IS NULL")
     if rating == "up":
         where.append("EXISTS (SELECT 1 FROM feedback f WHERE f.run_id = r.id AND f.rating > 0)")
     elif rating == "down":
@@ -495,7 +501,19 @@ def overview(days: float, include_eval: bool = False, tz_offset_min: int = 0, no
         "top_failure_reasons": reasons[:10],
         "top_failing_agents": [{"slug": x["slug"], "name": x["name"], "flagged_runs": x["flagged_runs"],
                                 "failing_runs": x["failing_runs"]} for x in failing[:5]],
+        "copilot": _copilot_costs(since),
     }
+
+
+def _copilot_costs(since: float) -> dict:
+    """Assistant calls made with no agent in context (grader_calls bucket "copilot"); calls made on an agent's
+    page are in that agent's `cost.assist` (kind "copilot") instead."""
+    rows = _rows("SELECT model, tokens_in, tokens_out FROM grader_calls WHERE agent_id = 'copilot' "
+                 "AND created_at >= ?", (since,))
+    costs = [pricing.cost(g["model"], g["tokens_in"], g["tokens_out"]) for g in rows]
+    return {"calls": len(rows), "tokens_in": sum(g["tokens_in"] for g in rows),
+            "tokens_out": sum(g["tokens_out"] for g in rows), "cost_usd": sum(c or 0.0 for c in costs),
+            "cost_complete": all(c is not None for c in costs)}
 
 
 @api.get("/metrics/overview", dependencies=[Depends(require_local)])
@@ -551,7 +569,13 @@ def health_report() -> tuple[int, dict]:
         components["docker"] = {"status": "skipped", "detail": f"FORGE_EXECUTOR={executor}"}
     ok = all(c["status"] != "error" for c in components.values())
     return (200 if ok else 503), {"status": "ok" if ok else "error", "executor": executor, "components": components,
-                                  "time": time.time()}
+                                  "build": buildinfo.build_info(), "time": time.time()}
+
+
+@api.get("/version")
+async def version() -> dict:
+    """Which build is running: {version, commit, built_at, channel}. No auth; it holds no secrets."""
+    return await asyncio.to_thread(buildinfo.build_info)
 
 
 @ops.get("/healthz", include_in_schema=False)

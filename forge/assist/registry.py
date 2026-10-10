@@ -50,6 +50,10 @@ class AssistKind:
     fake: Callable[[str], dict[str, Any]] | None = None  # fake:grader reply {result, rationale} given the request
     # The text a result contributes to later `avoid` lists (the server remembers recent results per agent and kind).
     result_text: Callable[[dict[str, Any]], str] | None = None
+    # Applied to a valid result before it is returned, (result, prepared.data) -> result: converts model friendly
+    # fields (a JSON string, a list of pairs) to their final shape or adds computed fields. `schema` describes the
+    # model's reply; the documented result is what `finalize` returns.
+    finalize: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None
 
 
 _KINDS: dict[str, AssistKind] = {}
@@ -59,7 +63,8 @@ def register(kind: str, build_context: Callable[[AssistRequest], Prepared], syst
              schema: dict[str, Any], validate: Callable[[dict[str, Any], dict[str, Any]], list[str]], *,
              share_allowed: bool = False, needs_agent: bool = True,
              fake: Callable[[str], dict[str, Any]] | None = None,
-             result_text: Callable[[dict[str, Any]], str] | None = None) -> AssistKind:
+             result_text: Callable[[dict[str, Any]], str] | None = None,
+             finalize: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None) -> AssistKind:
     import re
 
     if not re.match(_KIND_RE, kind):
@@ -71,7 +76,7 @@ def register(kind: str, build_context: Callable[[AssistRequest], Prepared], syst
     if any(k.system_prompt == system_prompt for k in _KINDS.values()):
         raise ValueError("each assist kind needs its own system prompt")
     spec = AssistKind(kind, build_context, system_prompt, schema, validate, share_allowed, needs_agent, fake,
-                      result_text)
+                      result_text, finalize)
     _KINDS[kind] = spec
     return spec
 

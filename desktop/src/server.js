@@ -4,6 +4,7 @@ const net = require('net');
 const path = require('path');
 const { spawn } = require('child_process');
 const paths = require('./paths');
+const buildinfo = require('./buildinfo');
 const { toolPath, findExecutable, stopProcess } = require('./proc');
 const { secretEnv } = require('./keys');
 
@@ -93,10 +94,12 @@ function start(port, settings) {
     FORGE_DESKTOP: '1', // the web Settings page offers Restart and Manage keys through the desktop bridge
     PYTHONUNBUFFERED: '1',
   };
-  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'FORGE_DEFAULT_MODEL', 'FORGE_GRADER_MODEL']) {
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'FORGE_DEFAULT_MODEL', 'FORGE_GRADER_MODEL',
+    ...Object.values(buildinfo.ENV_KEYS)]) {
     if (!paths.isDev) delete env[k];
   }
   Object.assign(env, secretEnv(settings.apiKey, settings.secrets));
+  Object.assign(env, buildinfo.serverEnv()); // FORGE_VERSION, FORGE_CHANNEL, FORGE_COMMIT, FORGE_BUILT_AT
 
   note(`starting ${path.basename(cmd)} ${args.join(' ')} (api key ${settings.apiKey ? 'set' : 'not set'}, ` +
     `${Object.keys(settings.secrets || {}).length} other keys)`);

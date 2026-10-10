@@ -20,10 +20,17 @@ const Composer = forwardRef<
     busy?: boolean;
     lastPrompt?: string;
     placeholder?: string;
+    /** Placeholder while a turn runs (default "The agent is working…"). */
+    runningPlaceholder?: string;
     /** Extra controls for the action row (e.g. Generate); gets the textarea ref for focus and shortcuts. */
     actions?: (inputRef: RefObject<HTMLTextAreaElement>) => ReactNode;
+    /** Share page mode: no prompt caret, plain font and shorter hints. */
+    simple?: boolean;
   }
->(function Composer({ value, onChange, onSend, onStop, running, busy, lastPrompt, placeholder, actions }, ref) {
+>(function Composer(
+  { value, onChange, onSend, onStop, running, busy, lastPrompt, placeholder, runningPlaceholder, actions, simple },
+  ref,
+) {
   const area = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), []);
   const locked = running || Boolean(busy);
@@ -48,11 +55,13 @@ const Composer = forwardRef<
   }
 
   return (
-    <div className="pg-composer" data-testid="composer">
+    <div className={`pg-composer ${simple ? "pg-composer-simple" : ""}`} data-testid="composer">
       <div className="flex items-end gap-2">
-        <span className="select-none pb-[7px] font-mono text-sm font-semibold text-neutral-400" aria-hidden="true">
-          &gt;
-        </span>
+        {!simple && (
+          <span className="select-none pb-[7px] font-mono text-sm font-semibold text-neutral-400" aria-hidden="true">
+            &gt;
+          </span>
+        )}
         <textarea
           ref={area}
           aria-label="Message"
@@ -60,7 +69,9 @@ const Composer = forwardRef<
           rows={rows}
           value={value}
           disabled={locked}
-          placeholder={running ? "The agent is working…" : placeholder ?? "Ask the agent to do something"}
+          placeholder={
+            running ? runningPlaceholder ?? "The agent is working…" : placeholder ?? "Ask the agent to do something"
+          }
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
         />
@@ -79,7 +90,9 @@ const Composer = forwardRef<
         {running ? (
           <span data-testid="esc-hint">Esc to stop</span>
         ) : (
-          <span>Enter to send · Shift+Enter for a new line · ↑ recalls the last prompt</span>
+          <span>
+            {simple ? "Enter to send · Shift+Enter for a new line" : "Enter to send · Shift+Enter for a new line · ↑ recalls the last prompt"}
+          </span>
         )}
       </div>
     </div>

@@ -7,6 +7,7 @@ const paths = require('./paths');
 
 paths.setup();
 
+const buildinfo = require('./buildinfo');
 const docker = require('./docker');
 const server = require('./server');
 const settings = require('./settings');
@@ -274,11 +275,13 @@ function createMainWindow(page = '') {
     minWidth: 1024,
     minHeight: 700,
     ...state,
-    title: 'Forge',
+    title: buildinfo.windowTitle(),
     show: false,
     backgroundColor: '#f6f5f2',
     webPreferences: secureWebPreferences('preload-main.js'),
   });
+  // Keep "Forge 0.1.3" in the title bar instead of the page's <title>.
+  mainWin.on('page-title-updated', (e) => e.preventDefault());
   let saveTimer = null;
   const queueSave = () => {
     clearTimeout(saveTimer);
@@ -521,13 +524,25 @@ function showLogs() {
   else shell.openPath(paths.logDir());
 }
 
+async function showAbout() {
+  const detail = buildinfo.aboutDetail();
+  const r = await message({
+    type: 'info',
+    message: buildinfo.windowTitle(),
+    detail: `${detail}\n\n${WEBSITE}`,
+    buttons: ['OK', 'Copy'],
+    defaultId: 0,
+  });
+  if (r.response === 1) clipboard.writeText(detail);
+}
+
 function buildMenu() {
   const running = tunnel.running() && Boolean(tunnel.url());
   const template = [
     {
       label: 'Forge',
       submenu: [
-        { role: 'about', label: 'About Forge' },
+        { label: 'About Forge', click: showAbout },
         { type: 'separator' },
         { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: openSettings },
         { type: 'separator' },
@@ -611,7 +626,6 @@ app.whenReady().then(() => {
     app.setActivationPolicy('accessory');
     if (app.dock) app.dock.hide();
   }
-  app.setAboutPanelOptions({ applicationName: 'Forge', applicationVersion: app.getVersion(), website: WEBSITE });
   if (paths.isDev && app.dock) app.dock.setIcon(path.join(__dirname, '..', 'assets', 'icon.png'));
   const allow = new Set(['clipboard-sanitized-write']);
   session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(allow.has(perm)));

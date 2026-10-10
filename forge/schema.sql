@@ -238,3 +238,34 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at       REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_agent ON sessions(agent_id, updated_at DESC);
+
+-- Share conversations (additive): a share page visitor, issued on the first session create with a share token.
+-- Visitor ids scope share sessions and their runs (sessions.visitor_id, runs.visitor_id, added in forge/db.py).
+CREATE TABLE IF NOT EXISTS share_visitors (
+  id          TEXT PRIMARY KEY,
+  agent_id    TEXT NOT NULL REFERENCES agents(id),
+  created_at  REAL NOT NULL
+);
+
+-- Forge assistant (additive): the in-app copilot chat. One session holds an ordered list of messages; each
+-- message is one item of the conversation (user text, assistant text with its tool calls, a tool result, a
+-- confirmation request and its decision, a final status). See CONTRACT.md "Assistant".
+CREATE TABLE IF NOT EXISTS copilot_sessions (
+  id          TEXT PRIMARY KEY,
+  owner       TEXT NOT NULL DEFAULT 'local',  -- local | key:<agent id>; a caller only sees its own sessions
+  title       TEXT NOT NULL DEFAULT '',
+  context     TEXT NOT NULL DEFAULT '{}',     -- JSON, the page context of the latest message
+  created_at  REAL NOT NULL,
+  updated_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS copilot_sessions_owner ON copilot_sessions(owner, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS copilot_messages (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL REFERENCES copilot_sessions(id),
+  seq         INTEGER NOT NULL,
+  type        TEXT NOT NULL,                  -- user | assistant | tool_call | tool_result | confirm_request | confirm_resolved | error | final
+  payload     TEXT NOT NULL DEFAULT '{}',     -- JSON
+  created_at  REAL NOT NULL,
+  UNIQUE (session_id, seq)
+);

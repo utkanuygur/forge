@@ -87,3 +87,15 @@ async def deliver_thread(t: dict, run: dict, ctx: dict) -> tuple[bool, str]:
     return await post_json(f"{base}/chat.postMessage", body,
                            {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"},
                            check_ok_field=True)
+
+
+async def post_thread_text(t: dict, ctx: dict, message: str) -> tuple[bool, str]:
+    """A plain note in the thread (a busy or full conversation), best effort."""
+    token = (t["tokens"] or {}).get("bot_token")
+    base = (t["config"].get("api_base") or "https://slack.com/api").rstrip("/")
+    if not token or not api_base_allowed("slack", base):
+        return False, "skipped"
+    body = {"channel": ctx["channel"], "thread_ts": ctx["thread_ts"], "text": message}
+    return await post_json(f"{base}/chat.postMessage", body,
+                           {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"},
+                           check_ok_field=True)

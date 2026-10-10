@@ -13,8 +13,10 @@ saw, with zero regressions.
 - **Govern:** approval policies (ask or deny rules on bash commands, file paths and HTTP, MCP or agent tools; a person approves or denies paused calls in the run view), per-run spending caps, and monthly budgets per agent with an 80% warning and 402 once reached.
 - **Try:** a live, Claude Code style run transcript and a Playground for multi-turn sessions on a version or an unsaved draft, with Stop, a workspace file browser and Generate for sample tasks.
 - **Improve:** feedback from every surface, evaluation suites with train and held-out splits, each case run k times (3 by default) and judged by majority, an optimizer that proposes evidence-linked lessons, and a no-regression promotion rule. Lesson pruning retires lessons that never helped (leave-one-out ablation, kept only at equal quality), and every lesson records where it came from.
+- **Generate buttons for every field:** evaluation cases (one, several for review, or from a run and its feedback), judge rubrics, improved instructions shown as a diff, seed files, version notes, approval rules, budgets from measured costs, HTTP tools from a curl command, cron from plain English and trigger templates. Each one fills the field and saves nothing until you do; Undo and Option+G work everywhere.
 - **Observe:** a dashboard and per-agent monitoring (version health next to eval pass rates, cost per run, version and improvement cycle, failure breakdown, tool statistics), run search, step timelines, `/healthz`, Prometheus `/metrics` and JSON run logs, all from Forge's own database.
 - **Models:** Claude (agents default to `anthropic:claude-sonnet-5-5`; `.env.example` sets the grader, which judges evals, runs the optimizer and drafts agents, to `anthropic:claude-opus-5-5`), an open-source model served on GPUs with vLLM (`gpu/vllm_modal.py`), or a local model through any OpenAI-compatible server such as Ollama.
+- **Assistant:** a chat side panel on every page (Cmd+J or Ctrl+J) that explains Forge and operates it for you: it looks up agents, runs, evals and costs at once, and asks before anything that changes data or spends money ("add three eval cases about refunds", "why did this run fail?", "ask before rm -rf").
 - **Examples:** four example agents (log triage, data analyst, docs writer, repo maintainer) with suggested prompts shown as one-click chips and verified eval cases.
 
 ## Quick start
@@ -38,6 +40,16 @@ make rehearse
 Or load all four example agents (log triage, data analyst, docs writer, repo maintainer) with starter
 prompts and verified eval cases: click **Examples** on the Agents page (or **Add all** on the empty Agents
 page, also in the desktop app), or run `make examples`, then see [docs/test-cases.md](docs/test-cases.md).
+
+Share links are conversations: a colleague who opens `/s/<slug>?share=<token>` chats with the production version,
+follow up messages keep the earlier answers and files, and each visitor only ever sees their own conversations.
+Every link is limited per conversation (20 messages), per visitor (3 open conversations), per day (200
+messages) and in concurrency (2 at once); change them per agent in the Deploy tab or globally with
+`FORGE_SHARE_SESSION_TURNS`, `FORGE_SHARE_SESSIONS_PER_VISITOR`, `FORGE_SHARE_DAILY_TURNS` and
+`FORGE_SHARE_CONCURRENT_TURNS` (conversations go read only after `FORGE_SESSION_IDLE_HOURS`, default 24). API
+callers hold conversations with the same endpoints (`POST /v1/agents/<slug>/sessions`, then
+`POST /v1/sessions/<id>/messages`), and a Slack thread that mentions the bot continues one conversation. See
+CONTRACT.md "Share and API conversations".
 
 Expose it to others: `cloudflared tunnel --url http://localhost:8000`. Requests through a tunnel count as
 remote: share links, the API with an agent key and trigger hooks (`/v1/hooks/github|slack/{id}`, checked by

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useRefresh } from "../../lib/refresh";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { api, errMsg, fmtTime, isTerminal, type Agent, type Run } from "../../api";
@@ -82,6 +83,9 @@ export default function RunsTab({ agent }: { agent: Agent }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
 
+  const [tick, setTick] = useState(0);
+  useRefresh([`runs:${agent.slug}`], () => setTick((t) => t + 1)); // a run started from the assistant
+
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -105,7 +109,7 @@ export default function RunsTab({ agent }: { agent: Agent }) {
       alive = false;
       clearInterval(t);
     };
-  }, [agent.slug, query]);
+  }, [agent.slug, query, tick]);
 
   const set = (patch: Partial<RunFilters>) => setFilters((f) => ({ ...f, ...patch }));
   const active = hasActiveFilters(filters);

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ChevronLeft } from "lucide-react";
 import { api, errMsg, type Agent } from "../api";
+import { useRefresh } from "../lib/refresh";
 import Tabs from "../components/Tabs";
 import { Badge, ErrorBox, Loading } from "../components/ui";
 import ConfigureTab from "./agent/ConfigureTab";
@@ -43,6 +44,8 @@ export default function AgentPage() {
     setAgent(null);
     reload();
   }, [reload]);
+
+  useRefresh([`agent:${slug}`], reload); // e.g. the assistant promoted a version
 
   if (error && !agent) return <ErrorBox error={error} />;
   if (!agent) return <Loading label="Loading agent" />;

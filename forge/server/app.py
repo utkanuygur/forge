@@ -19,14 +19,15 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from forge import budget, db, settings
+from forge import budget, db, settings, share_limits
 from forge.models_available import model_warning
 from forge.policy import http_tool_names, parse_policy
 from forge.provenance import lesson_provenance
 from forge.server import assist, authoring, evals, files, observability, obslog, runs, sessions_api, settings_api
+from forge.server import copilot_api
 from forge.server import examples as examples_api
 from forge.server import governance as governance_routes
-from forge.server.auth import authorize, require_local
+from forge.server.auth import authorize, require_local, share_can_see, visitor
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
                                 version_view)
@@ -79,14 +80,15 @@ def version_or_404(agent: dict, n: int | str) -> dict:
 
 def run_and_agent(run_id: str, request: Request, *, allow_share: bool = True) -> tuple[dict, dict, str]:
     """The run, its agent and the caller source. A share token reaches only runs started through the share
-    page (source "share"); any other run of the agent is a 404, so its id is not even confirmed."""
+    page (source "share") by the same visitor (see auth.share_can_see); any other run of the agent is a 404, so
+    its id is not even confirmed."""
     r = db.get_run(run_id)
     if r is None:
         raise HTTPException(404, "run not found")
     agent = db.get_agent(r["agent_id"])
     assert agent is not None
     source = authorize(request, agent, allow_share=allow_share)
-    if source == "share" and r["source"] != "share":
+    if source == "share" and not share_can_see(request, r):  # other visitors' runs are a 404 too
         raise HTTPException(404, "run not found")
     return r, agent, source
 
@@ -132,6 +134,14 @@ class AgentCreate(BaseModel):
     suggested_prompts: list[SuggestedPrompt] | None = Field(default=None, max_length=MAX_SUGGESTED_PROMPTS)
 
 
+class ShareLimitsIn(BaseModel):
+    """Per agent share link limits; a key set to null falls back to the global default."""
+    session_turns: int | None = Field(None, ge=1, le=share_limits.MAX_LIMIT)
+    sessions_per_visitor: int | None = Field(None, ge=1, le=share_limits.MAX_LIMIT)
+    daily_turns: int | None = Field(None, ge=1, le=share_limits.MAX_LIMIT)
+    concurrent_turns: int | None = Field(None, ge=1, le=share_limits.MAX_LIMIT)
+
+
 class AgentPatch(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -139,6 +149,7 @@ class AgentPatch(BaseModel):
     eval_repeats: int | None = Field(None, ge=1, le=evals.MAX_EVAL_REPEATS)
     monthly_budget_usd: float | None = Field(None, ge=0)  # governance; explicit null removes the budget
     suggested_prompts: list[SuggestedPrompt] | None = Field(default=None, max_length=MAX_SUGGESTED_PROMPTS)
+    share_limits: ShareLimitsIn | None = None  # share conversations: keys present replace, null clears one
 
 
 def checked_policy(raw: dict[str, Any] | None, http_tools: list | None = None) -> dict[str, Any] | None:
@@ -236,7 +247,11 @@ async def get_agent(slug: str, request: Request) -> dict:
 async def patch_agent(slug: str, body: AgentPatch, request: Request) -> dict:
     agent = agent_or_404(slug)
     authorize(request, agent, allow_share=False)
-    fields = body.model_dump(exclude_none=True)
+    fields = body.model_dump(exclude_none=True, exclude={"share_limits"})
+    if body.share_limits is not None:
+        merged = share_limits.overrides(agent)
+        merged.update({k: getattr(body.share_limits, k) for k in body.share_limits.model_fields_set})
+        fields["share_limits"] = {k: v for k, v in merged.items() if v is not None}
     if "monthly_budget_usd" in body.model_fields_set:
         fields["monthly_budget_usd"] = body.monthly_budget_usd
     agent = db.update_agent(agent["id"], **fields)
@@ -478,7 +493,14 @@ async def create_run(slug: str, request: Request) -> dict:
     version = version_or_404(agent, fields.get("version") or "prod")
     callback_url = await checked_callback_url(fields.get("callback_url") or None)
     mgr = runs.get_manager()
-    run_id = await mgr.start_run(agent, version, text, source, seed_overrides=seeds, callback_url=callback_url)
+    vid = None
+    if source == "share":
+        version = version_or_404(agent, "prod")  # share links always run production
+        vid = visitor(request) if share_limits.known_visitor(agent["id"], visitor(request)) else None
+        share_limits.check_turn(agent, None)  # daily and concurrency limits; no await before the run row exists
+    with sessions_api.share_budget_message(source):
+        run_id = await mgr.start_run(agent, version, text, source, seed_overrides=seeds, callback_url=callback_url,
+                                     visitor_id=vid)
     texts = {}
     for p, c in seeds.items():
         try:
@@ -499,7 +521,10 @@ async def list_runs(slug: str, request: Request, response: Response,
                     filters: dict = Depends(observability.run_filters)) -> list[dict]:
     agent = agent_or_404(slug)
     if authorize(request, agent) == "share":
-        filters["source"] = "share"  # share-link callers only ever see share runs
+        # Share-link callers only ever see share runs: their own visitor's, or without a visitor id only the one
+        # shot runs that no visitor owns (readable by id by anyone with the link, as before visitors existed).
+        filters["source"] = "share"
+        filters["visitor_id"] = visitor(request) or ""
     rows, total = await asyncio.to_thread(lambda: observability.search_runs(agent_id=agent["id"], **filters))
     response.headers["X-Total-Count"] = str(total)
     return observability.run_list_view(rows)
@@ -771,11 +796,13 @@ app.include_router(observability.api)
 app.include_router(observability.ops)
 app.include_router(authoring.router)  # /v1/agent-drafts and /v1/agents/{slug}/prune (before the SPA catch-all)
 governance_routes.install(app)  # approvals, /v1/agents/{slug}/governance and the 402 handler
+sessions_api.install(app)  # the 429 handler for share link limits
 app.include_router(triggers_api.router)  # trigger CRUD and /v1/hooks/github|slack/{id}
-app.include_router(sessions_api.router)  # playground sessions
+app.include_router(sessions_api.router)  # playground, API and share sessions
 app.include_router(assist.router)  # /v1/assist/{kind} and /v1/agents/{slug}/sample-task
 app.include_router(examples_api.router)  # /v1/examples (one click example agents)
 app.include_router(settings_api.router)  # /v1/settings and /v1/models/available
+app.include_router(copilot_api.router)  # /v1/copilot (the Forge assistant side panel)
 
 # ---------------------------------------------------------------- SPA
 

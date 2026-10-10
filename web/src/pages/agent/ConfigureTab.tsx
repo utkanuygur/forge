@@ -1,8 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FileText, FlaskConical, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useOpenPlayground } from "../../components/playground/Playground";
-import { api, errMsg, fmtTime, type Agent, type ApprovalPolicy, type HttpTool, type LessonMeta, type McpServer, type Version } from "../../api";
+import {
+  api,
+  errMsg,
+  fmtTime,
+  type Agent,
+  type ApprovalPolicy,
+  type HttpTool,
+  type LessonMeta,
+  type McpServer,
+  type SeedFileSuggestion,
+  type Version,
+  type VersionNoteSuggestion,
+} from "../../api";
+import AssistButton from "../../components/AssistButton";
+import InstructionsAssist from "../../components/InstructionsAssist";
 import PolicyEditor, { MonthlyBudgetSetting, RunCapField, normalizePolicy, parseUsd } from "../../components/PolicyEditor";
 import { ModelField, NetworkField, ToolsField } from "../../components/ConfigFields";
 import ToolsConfig from "../../components/ToolsConfig";
@@ -10,29 +24,87 @@ import ModelWarning from "../../components/settings/ModelWarning";
 import { useToast } from "../../components/Toast";
 import { Badge, CreatedByBadge, Empty, ErrorBox, Modal, Section, Toggle } from "../../components/ui";
 
-function SeedFileModal({
+export function SeedFileModal({
   initialPath,
   initialContent,
   onSave,
   onClose,
+  slug,
+  existing = [],
 }: {
   initialPath: string;
   initialContent: string;
   onSave: (path: string, content: string) => void;
   onClose: () => void;
+  /** Enables Generate (assist kind "seed_file"): the result fills path and content as a preview. */
+  slug?: string;
+  existing?: string[];
 }) {
   const [path, setPath] = useState(initialPath);
   const [content, setContent] = useState(initialContent);
+  const [description, setDescription] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const contentRef = useRef<HTMLTextAreaElement>(null);
+  const prevPath = useRef(initialPath);
   return (
     <Modal title={initialPath ? "Edit seed file" : "Add seed file"} onClose={onClose} wide>
       <div className="space-y-4">
+        {slug && (
+          <div className="space-y-2 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+            <label className="label" htmlFor="seed-describe">
+              Describe a sample file (optional)
+            </label>
+            <div className="flex flex-wrap items-start gap-2">
+              <input
+                id="seed-describe"
+                className="input min-w-[200px] flex-1"
+                placeholder="a CSV of last month's orders with a few refunds"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+              <AssistButton<SeedFileSuggestion>
+                kind="seed_file"
+                slug={slug}
+                input={{
+                  ...(description.trim() ? { description: description.trim() } : {}),
+                  ...(path.trim() ? { path: path.trim() } : {}),
+                  existing,
+                }}
+                resultText={(r) => r.content}
+                onResult={(r) => {
+                  prevPath.current = path;
+                  setPath(r.path);
+                  setContent(r.content);
+                  setNote(r.description);
+                }}
+                undoValue={content}
+                onUndo={(previous) => {
+                  setContent(previous);
+                  setPath(prevPath.current);
+                  setNote(null);
+                }}
+                inputRef={contentRef}
+                ariaLabel="Generate a sample file"
+              />
+            </div>
+            <p className="text-xs text-neutral-500">
+              {note ? `Preview: ${note} Review it below; it is only added when you save the file.` : "The draft fills the fields below for you to review."}
+            </p>
+          </div>
+        )}
         <div>
-          <label className="label">Path</label>
-          <input className="input font-mono" placeholder="src/config.yaml" value={path} onChange={(e) => setPath(e.target.value)} />
+          <label className="label" htmlFor="seed-path">Path</label>
+          <input id="seed-path" className="input font-mono" placeholder="src/config.yaml" value={path} onChange={(e) => setPath(e.target.value)} />
         </div>
         <div>
-          <label className="label">Content</label>
-          <textarea className="input min-h-[280px] font-mono text-xs" value={content} onChange={(e) => setContent(e.target.value)} />
+          <label className="label" htmlFor="seed-content">Content</label>
+          <textarea
+            id="seed-content"
+            ref={contentRef}
+            className="input min-h-[280px] font-mono text-xs"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+          />
         </div>
         <div className="flex justify-end gap-2">
           <button className="btn-secondary" onClick={onClose}>
@@ -110,6 +182,8 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
   const [editing, setEditing] = useState<{ path: string; content: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const rationaleRef = useRef<HTMLInputElement>(null);
 
   function reset(v: Version | undefined) {
     if (!v) return;
@@ -209,8 +283,12 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
               <label className="label" htmlFor="instructions">
                 Instructions
               </label>
+              <div className="mb-2">
+                <InstructionsAssist slug={agent.slug} value={prompt} onChange={setPrompt} inputRef={promptRef} />
+              </div>
               <textarea
                 id="instructions"
+                ref={promptRef}
                 className="input min-h-[300px] font-mono text-xs leading-relaxed"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -256,8 +334,15 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
                 onCallableAgents={setCallable}
               />
             </section>
-            <PolicyEditor value={policy} onChange={setPolicy} network={network} />
-            <RunCapField value={runCap} onChange={setRunCap} />
+            <PolicyEditor
+              value={policy}
+              onChange={setPolicy}
+              network={network}
+              slug={agent.slug}
+              tools={tools}
+              httpTools={httpTools.map((t) => t.name)}
+            />
+            <RunCapField value={runCap} onChange={setRunCap} slug={agent.slug} />
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="label mb-0">Seed files</span>
@@ -293,11 +378,39 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
               )}
             </div>
             <div className="border-t border-neutral-200 pt-5 dark:border-neutral-800">
-              <label className="label" htmlFor="rationale">
-                What changed?
-              </label>
+              <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                <label className="label mb-0" htmlFor="rationale">
+                  What changed?
+                </label>
+                <AssistButton<VersionNoteSuggestion>
+                  kind="version_note"
+                  slug={agent.slug}
+                  input={{
+                    config: {
+                      system_prompt: prompt,
+                      model,
+                      tools,
+                      network,
+                      seed_files: seeds,
+                      http_tools: httpTools,
+                      mcp_servers: mcpServers,
+                      callable_agents: callable,
+                      approval_policy: normalizePolicy(policy),
+                      max_run_cost_usd: parseUsd(runCap) ?? null,
+                    },
+                  }}
+                  resultText={(r) => r.note}
+                  onResult={(r) => setRationale(r.note)}
+                  undoValue={rationale}
+                  onUndo={setRationale}
+                  inputRef={rationaleRef}
+                  disabled={!dirty}
+                  ariaLabel="Generate a version note"
+                />
+              </div>
               <input
                 id="rationale"
+                ref={rationaleRef}
                 className="input"
                 placeholder="Short note for the version history"
                 value={rationale}
@@ -388,6 +501,8 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
 
       {editing && (
         <SeedFileModal
+          slug={agent.slug}
+          existing={Object.keys(seeds)}
           initialPath={editing.path}
           initialContent={editing.content}
           onClose={() => setEditing(null)}

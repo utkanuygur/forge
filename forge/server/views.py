@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forge import db, governance, pricing
+from forge import db, governance, pricing, share_limits
 
 VERSION_KEYS = ("id", "agent_id", "n", "system_prompt", "lessons", "model", "tools", "http_tools", "network",
                 "seed_files", "parent_id", "created_by", "rationale", "created_at",
@@ -26,6 +26,7 @@ def agent_view(a: dict, *, versions: bool = False) -> dict:
         "share_token": a["share_token"], "created_at": a["created_at"],
         **governance.agent_extras(a),
         "suggested_prompts": a.get("suggested_prompts") or [],
+        **share_limits.limits_view(a),  # share conversations
     }
     from forge.server.evals import eval_repeats  # lazy: evals -> runs -> views
 
