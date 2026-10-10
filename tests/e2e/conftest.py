@@ -33,7 +33,11 @@ def _free_port() -> int:
     (first free port wins; servers bind before the next one is picked); otherwise the OS picks one."""
     if rng := os.environ.get("FORGE_PYTEST_E2E_PORTS"):
         lo, _, hi = rng.partition("-")
-        for port in range(int(lo), int(hi or lo) + 1):
+        ports = list(range(int(lo), int(hi or lo) + 1))
+        # xdist workers start at different offsets so they do not race for the same first free port.
+        worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+        start = int(worker[2:]) % len(ports) if worker[2:].isdigit() else 0
+        for port in ports[start:] + ports[:start]:
             with socket.socket() as s:
                 try:
                     s.bind(("127.0.0.1", port))
