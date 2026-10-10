@@ -1,6 +1,7 @@
 export interface TabDef {
   key: string;
   label: string;
+  badge?: number;
 }
 
 export default function Tabs({ tabs, active, onChange }: { tabs: TabDef[]; active: string; onChange: (k: string) => void }) {
@@ -20,6 +21,15 @@ export default function Tabs({ tabs, active, onChange }: { tabs: TabDef[]; activ
             }`}
           >
             {t.label}
+            {t.badge ? (
+              <span
+                data-testid={`tab-badge-${t.key}`}
+                className="ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full bg-violet-600 px-1.5 text-xs font-semibold text-white"
+                aria-label={`${t.badge} awaiting approval`}
+              >
+                {t.badge}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>

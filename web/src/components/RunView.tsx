@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download } from "lucide-react";
-import { api, errMsg, fmtDuration, fmtTime, isTerminal, type Run } from "../api";
+import { api, errMsg, fmtDuration, fmtTime, fmtUsd, isTerminal, type Run } from "../api";
 import { useRunEvents } from "./useRunEvents";
 import TraceTimeline from "./TraceTimeline";
 import DiffView from "./DiffView";
@@ -60,6 +60,12 @@ export default function RunView({
     if (done) load();
   }, [done, load]);
 
+  // Approval and budget events change the run's status: refresh it when one arrives.
+  const lastType = events.length ? events[events.length - 1].type : undefined;
+  useEffect(() => {
+    if (lastType === "approval_requested" || lastType === "approval_resolved" || lastType === "error") load();
+  }, [events.length, lastType, load]);
+
   // Poll lightly while running in case the stream misses the end.
   useEffect(() => {
     if (!run || isTerminal(run.status)) return;
@@ -96,6 +102,7 @@ export default function RunView({
             {run.tokens_in.toLocaleString()} in / {run.tokens_out.toLocaleString()} out tokens
           </span>
           <span>{run.turns} turns</span>
+          {!!run.cost_usd && <span title="Estimated cost">{fmtUsd(run.cost_usd)}</span>}
           <span className="text-neutral-400">{fmtTime(run.created_at)}</span>
         </div>
       )}
@@ -110,7 +117,7 @@ export default function RunView({
       </Panel>
 
       <Panel title="Trace">
-        <TraceTimeline events={events} live={live} simple={simple} />
+        <TraceTimeline events={events} live={live} simple={simple} runId={run.id} canApprove={!share} />
         {streamError && <p className="mt-3 text-xs text-amber-600">Live stream interrupted: {streamError}</p>}
       </Panel>
 
