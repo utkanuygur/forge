@@ -66,6 +66,28 @@ def near(value, expected, tolerance, what):
 
 def norm(s):
     return re.sub(r"\s+", " ", str(s)).strip().lower()
+
+def md_section(text, title_pattern):
+    """The body of the first Markdown heading matching title_pattern, up to the next heading of the same
+    or a higher level. Lines inside fenced code blocks are never treated as headings. None if absent."""
+    lines, fence, start, level = text.splitlines(), False, None, 0
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        m = None if fence else re.match(r"^(#{1,6})\s+(.*)$", line)
+        if not m:
+            continue
+        if start is None and re.search(title_pattern, m.group(2), re.I):
+            start, level = i + 1, len(m.group(1))
+        elif start is not None and len(m.group(1)) <= level:
+            return "\n".join(lines[start:i])
+    return None if start is None else "\n".join(lines[start:])
+
+def python_blocks(text):
+    return re.findall(r"^\s*```(?:python|py|python3)[^\n]*\n(.*?)^\s*```", text, re.S | re.M)
+
+GIT = ["git", "-c", "safe.directory=*"]
 '''
 
 
