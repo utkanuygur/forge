@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Paperclip, Play, X } from "lucide-react";
-import { api, errMsg, type Run, type Version } from "../api";
+import { api, errMsg, type Run, type SuggestedPrompt, type Version } from "../api";
+import SuggestedPrompts from "./SuggestedPrompts";
 import { ErrorBox } from "./ui";
 
 export default function RunForm({
@@ -10,6 +11,7 @@ export default function RunForm({
   prodVersion,
   onCreated,
   placeholder = "Describe the task for the agent...",
+  suggestions,
 }: {
   slug: string;
   share?: string;
@@ -17,6 +19,8 @@ export default function RunForm({
   prodVersion?: number;
   onCreated: (run: Run) => void;
   placeholder?: string;
+  /** Starter prompts shown as chips; clicking one fills the input. */
+  suggestions?: SuggestedPrompt[];
 }) {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -24,6 +28,7 @@ export default function RunForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,7 +50,16 @@ export default function RunForm({
 
   return (
     <form onSubmit={submit} className="space-y-3">
+      <SuggestedPrompts
+        prompts={suggestions}
+        selected={input}
+        onPick={(p) => {
+          setInput(p.prompt);
+          textRef.current?.focus();
+        }}
+      />
       <textarea
+        ref={textRef}
         aria-label="Task"
         className="input min-h-[110px]"
         placeholder={placeholder}
