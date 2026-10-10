@@ -296,6 +296,16 @@ export interface ForgeEvent {
   payload: Record<string, unknown>;
 }
 
+/** One file in a run's exported workspace (GET /runs/{id}/files). */
+export interface WorkspaceFile {
+  path: string;
+  size: number;
+  is_text: boolean;
+  // Only with ?changed=1.
+  changed?: boolean;
+  change?: "added" | "modified" | "renamed";
+}
+
 export interface EvalCase {
   id: string;
   agent_id: string;
@@ -511,6 +521,10 @@ export const api = {
   getRun: (id: string, share?: string) => request<Run>("GET", `/runs/${enc(id)}`, undefined, share),
   getEvents: (id: string, share?: string) => request<ForgeEvent[]>("GET", `/runs/${enc(id)}/events.json`, undefined, share),
   getDiff: (id: string, share?: string) => request<string>("GET", `/runs/${enc(id)}/diff`, undefined, share),
+  listFiles: (id: string, changed = true, share?: string) =>
+    request<WorkspaceFile[]>("GET", `/runs/${enc(id)}/files${changed ? "?changed=1" : ""}`, undefined, share),
+  readFile: (id: string, path: string, share?: string) =>
+    request<string>("GET", `/runs/${enc(id)}/files/${path.split("/").map(enc).join("/")}`, undefined, share),
   artifactsUrl: (id: string, share?: string) => withShare(`/v1/runs/${enc(id)}/artifacts`, share),
   eventsUrl: (id: string, after?: number, share?: string) => {
     let url = `/v1/runs/${enc(id)}/events`;

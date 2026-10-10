@@ -4,6 +4,7 @@ import { api, errMsg, fmtDuration, fmtTime, isTerminal, type Run } from "../api"
 import { useRunEvents } from "./useRunEvents";
 import TraceTimeline from "./TraceTimeline";
 import DiffView from "./DiffView";
+import FilesPanel from "./FilesPanel";
 import FeedbackWidget from "./FeedbackWidget";
 import StatusPill from "./StatusPill";
 import SaveAsEval from "./SaveAsEval";
@@ -37,6 +38,7 @@ export default function RunView({
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
+  const [showFiles, setShowFiles] = useState(false);
   const { events, done, streamError } = useRunEvents(runId, share);
 
   const load = useCallback(async () => {
@@ -54,6 +56,7 @@ export default function RunView({
   useEffect(() => {
     setRun(null);
     setDiff(null);
+    setShowFiles(false);
     load();
   }, [load]);
 
@@ -153,13 +156,39 @@ export default function RunView({
           title="Changes"
           right={
             run.has_artifacts && (
-              <a href={api.artifactsUrl(run.id, share)} className="btn-secondary btn-sm" download>
-                <Download className="h-3.5 w-3.5" /> Workspace .tar.gz
-              </a>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <div role="group" aria-label="Changes view" className="flex overflow-hidden rounded-lg border border-neutral-200 text-xs dark:border-neutral-700">
+                  <button
+                    type="button"
+                    aria-pressed={!showFiles}
+                    onClick={() => setShowFiles(false)}
+                    className={`px-2.5 py-1.5 ${!showFiles ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "text-neutral-500"}`}
+                  >
+                    Diff
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={showFiles}
+                    onClick={() => setShowFiles(true)}
+                    className={`border-l border-neutral-200 px-2.5 py-1.5 dark:border-neutral-700 ${showFiles ? "bg-neutral-100 font-medium dark:bg-neutral-800" : "text-neutral-500"}`}
+                  >
+                    Files
+                  </button>
+                </div>
+                <a href={api.artifactsUrl(run.id, share)} className="btn-secondary btn-sm" download>
+                  <Download className="h-3.5 w-3.5" /> Workspace .tar.gz
+                </a>
+              </div>
             )
           }
         >
-          {diff ? <DiffView diff={diff} /> : <p className="text-sm text-neutral-500">No file changes.</p>}
+          {showFiles && run.has_artifacts ? (
+            <FilesPanel runId={run.id} share={share} onClose={() => setShowFiles(false)} />
+          ) : diff ? (
+            <DiffView diff={diff} />
+          ) : (
+            <p className="text-sm text-neutral-500">No file changes.</p>
+          )}
         </Panel>
       )}
 
