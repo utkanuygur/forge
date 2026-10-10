@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -62,7 +63,10 @@ def prepare(case: dict, variant: str, root: Path) -> Path:
 
 def run_checker(ws: Path, checker: str, runner: str) -> tuple[bool, str, float]:
     if runner == "docker":
+        # Run as the owner of the mounted workspace: on Linux the bind mount keeps host ownership, so the
+        # image's default `agent` user could not write caches (Docker Desktop on macOS hides this).
         cmd = ["docker", "run", "--rm", "--network", "none", "-v", f"{ws}:/workspace",
+               "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
                "-w", "/workspace", IMAGE, "bash", "-lc", checker]
     else:
         cmd = ["uv", "run", "-q", "--no-project", "--python", "3.12"]
