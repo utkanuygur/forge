@@ -51,3 +51,18 @@ def require_local(request: Request) -> None:
     """Builder routes that are not scoped to one agent."""
     if not is_local(request):
         raise HTTPException(401, "builder endpoints are only available from localhost")
+
+
+def visitor(request: Request) -> str | None:
+    """The share page visitor id (`X-Forge-Visitor`, or `?visitor=` for EventSource and download links)."""
+    v = request.headers.get("x-forge-visitor") or request.query_params.get("visitor")
+    return v.strip() or None if v else None
+
+
+def share_can_see(request: Request, run: dict) -> bool:
+    """Whether a share token caller may read `run`: only share runs, and a run started by a visitor only by that
+    same visitor. One shot share runs from before visitors (no visitor id) stay readable by id, as before."""
+    if run["source"] != "share":
+        return False
+    owner = run.get("visitor_id")
+    return owner is None or (visitor(request) is not None and hmac.compare_digest(owner, visitor(request) or ""))

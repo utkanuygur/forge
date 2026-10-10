@@ -265,11 +265,19 @@ async def slack_hook(trigger_id: str, request: Request) -> Response:
         fields = slack.mention_fields(ev, data.get("team_id") or "")
         if not fields["text"]:
             return JSONResponse({"ok": True})
-        ctx = {"deliver": "slack_thread", "channel": ev.get("channel"), "thread_ts": ev.get("thread_ts") or ev.get("ts"),
+        thread_ts = ev.get("thread_ts") or ev.get("ts")
+        ctx = {"deliver": "slack_thread", "channel": ev.get("channel"), "thread_ts": thread_ts,
                "base_url": base} if (t["tokens"] or {}).get("bot_token") else None
-        r = await core.fire(t, slack.build_input(t["config"], fields), context=ctx)
+        # One conversation per Slack thread: replies that mention the bot continue it (CONTRACT.md "Share and API
+        # conversations", Slack threads).
+        key = core.thread_key(t["id"], str(ev.get("channel") or ""), str(thread_ts)) if thread_ts else None
+        r = await core.fire(t, slack.build_input(t["config"], fields), context=ctx, session_key=key)
         if r.status == "started":
             return JSONResponse({"ok": True, "run_id": r.run_id})
+        if r.status == "skipped":  # 200 so Slack does not retry; the reason goes to the thread
+            if ctx:
+                core.spawn(slack.post_thread_text(t, ctx, r.detail))
+            return JSONResponse({"ok": True, "skipped": r.detail})
         return _fired_response(r, request)
 
     form = {k: v[0] for k, v in parse_qs(body.decode(errors="replace")).items()}

@@ -10,13 +10,13 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
 JSON_COLUMNS = {"lessons", "lesson_meta", "tools", "http_tools", "seed_files", "payload", "summary", "approval_policy",
-                "args", "rule", "mcp_servers", "callable_agents", "suggested_prompts", "draft_config"}
+                "args", "rule", "mcp_servers", "callable_agents", "suggested_prompts", "draft_config", "share_limits"}
 
 # Runs that belong to a draft playground session: excluded from run lists, metrics and improvement.
 NOT_DRAFT = "(session_id IS NULL OR session_id NOT IN (SELECT id FROM sessions WHERE version_id IS NULL))"
@@ -74,7 +74,9 @@ ADDED_COLUMNS = {
     "agents": {"eval_repeats": "INTEGER",
                "monthly_budget_usd": "REAL",  # governance: null = no monthly budget
                "suggested_prompts": "TEXT NOT NULL DEFAULT '[]'",  # examples: JSON list[{title, prompt}]
-               "webhook_secret": "TEXT"},  # signs callback_url deliveries; created on demand for older agents
+               "webhook_secret": "TEXT",
+               # share conversations: per agent overrides of the share link limits, JSON {key: int|null}
+               "share_limits": "TEXT NOT NULL DEFAULT '{}'"},  # signs callback_url deliveries; created on demand for older agents
     "runs": {"cache_read_tokens": "INTEGER NOT NULL DEFAULT 0", "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
              # The one stored run cost in USD (NULL = unknown price); written after each model turn by
              # forge.governance.RunGovernor and re-priced whenever token counts are written (update_run).
@@ -86,7 +88,12 @@ ADDED_COLUMNS = {
              "parent_run_id": "TEXT", "child_tokens_in": "INTEGER NOT NULL DEFAULT 0",
              "child_tokens_out": "INTEGER NOT NULL DEFAULT 0", "child_cost_usd": "REAL NOT NULL DEFAULT 0",
              # playground: a session turn's run belongs to sessions.id at position turn_index
-             "session_id": "TEXT", "turn_index": "INTEGER"},
+             "session_id": "TEXT", "turn_index": "INTEGER",
+             # share conversations: the share page visitor that started this share run (null: no visitor)
+             "visitor_id": "TEXT"},
+    # share conversations: channel playground|api|share|slack (turns run with that source, playground for the
+    # builder), the share visitor that owns a share session, and the Slack thread key of a slack session
+    "sessions": {"channel": "TEXT NOT NULL DEFAULT 'playground'", "visitor_id": "TEXT", "external_key": "TEXT"},
     "eval_results": {"passes": "INTEGER", "runs": "INTEGER"},
     "improvements": {"kind": "TEXT NOT NULL DEFAULT 'improve'"},
     "agent_versions": {"lesson_meta": "TEXT NOT NULL DEFAULT '{}'",
@@ -113,6 +120,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _backfill_run_costs(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS runs_parent ON runs(parent_run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS runs_session ON runs(session_id, turn_index)")
+    conn.execute("CREATE INDEX IF NOT EXISTS runs_share ON runs(agent_id, source, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS sessions_visitor ON sessions(agent_id, visitor_id, updated_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS sessions_external ON sessions(external_key)")
     # Single-run verdicts from before repeated evals become run 0 of their case.
     conn.execute("INSERT OR IGNORE INTO eval_run_results (version_id, case_id, idx, run_id, passed, reason, created_at) "
                  "SELECT version_id, case_id, 0, run_id, passed, reason, created_at FROM eval_results "
@@ -309,7 +319,7 @@ def get_secrets(agent_id: str) -> dict[str, str]:
 def create_run(agent_id: str, version_id: str, source: str, input: str, *, status: str = "queued",
                eval_case_id: str | None = None, callback_url: str | None = None,
                parent_run_id: str | None = None, session_id: str | None = None,
-               turn_index: int | None = None) -> dict:
+               turn_index: int | None = None, visitor_id: str | None = None) -> dict:
     from forge import pricing
 
     t = now()
@@ -325,6 +335,8 @@ def create_run(agent_id: str, version_id: str, source: str, input: str, *, statu
         row["parent_run_id"] = parent_run_id
     if session_id:
         row.update(session_id=session_id, turn_index=turn_index)
+    if visitor_id:
+        row["visitor_id"] = visitor_id
     _insert("runs", row)
     return get_run(row["id"])  # type: ignore[return-value]
 
@@ -444,10 +456,12 @@ def negative_feedback_since(agent_id: str, since: float) -> list[dict]:
 
 
 def create_session(agent_id: str, base_version_id: str, *, version_id: str | None,
-                   draft_config: dict | None = None, title: str = "") -> dict:
+                   draft_config: dict | None = None, title: str = "", channel: str = "playground",
+                   visitor_id: str | None = None, external_key: str | None = None) -> dict:
     t = now()
     row = {"id": new_id("s"), "agent_id": agent_id, "version_id": version_id, "base_version_id": base_version_id,
-           "draft_config": draft_config, "title": title, "created_at": t, "updated_at": t}
+           "draft_config": draft_config, "title": title, "created_at": t, "updated_at": t, "channel": channel,
+           "visitor_id": visitor_id, "external_key": external_key}
     _insert("sessions", row)
     return get_session(row["id"])  # type: ignore[return-value]
 
@@ -456,9 +470,55 @@ def get_session(session_id: str) -> dict | None:
     return _one("SELECT * FROM sessions WHERE id = ?", session_id)
 
 
-def list_sessions(agent_id: str, limit: int = 50) -> list[dict]:
+def list_sessions(agent_id: str, limit: int = 50, *, channel: str | None = None,
+                  visitor_id: str | None = None) -> list[dict]:
+    """Newest first. `channel` None lists every channel; `visitor_id` limits to one share visitor."""
+    where, args = ["s.agent_id = ?"], [agent_id]
+    if channel:
+        where.append("s.channel = ?")
+        args.append(channel)
+    if visitor_id is not None:
+        where.append("s.visitor_id = ?")
+        args.append(visitor_id)
     return _all("SELECT s.*, (SELECT COUNT(*) FROM runs r WHERE r.session_id = s.id) AS turn_count "
-                "FROM sessions s WHERE s.agent_id = ? ORDER BY s.updated_at DESC LIMIT ?", agent_id, limit)
+                f"FROM sessions s WHERE {' AND '.join(where)} ORDER BY s.updated_at DESC LIMIT ?", *args, limit)
+
+
+def visitor_sessions(agent_id: str, visitor_id: str) -> list[dict]:
+    return _all("SELECT * FROM sessions WHERE agent_id = ? AND channel = 'share' AND visitor_id = ?",
+                agent_id, visitor_id)
+
+
+def session_by_key(external_key: str) -> dict | None:
+    """The newest session for a Slack thread key."""
+    return _one("SELECT * FROM sessions WHERE external_key = ? ORDER BY created_at DESC LIMIT 1", external_key)
+
+
+def session_turn_count(session_id: str) -> int:
+    row = _one("SELECT COUNT(*) AS n FROM runs WHERE session_id = ?", session_id)
+    return int(row["n"]) if row else 0
+
+
+def count_share_runs(agent_id: str, *, since: float | None = None, statuses: Iterable[str] | None = None) -> int:
+    """Share sourced runs of an agent (share page turns and one shot share runs)."""
+    sql, args = "SELECT COUNT(*) AS n FROM runs WHERE agent_id = ? AND source = 'share'", [agent_id]
+    if since is not None:
+        sql += " AND created_at >= ?"
+        args.append(since)
+    if statuses is not None:
+        st = sorted(statuses)
+        sql += f" AND status IN ({', '.join('?' for _ in st)})"
+        args.extend(st)
+    row = _one(sql, *args)
+    return int(row["n"]) if row else 0
+
+
+def create_visitor(visitor_id: str, agent_id: str) -> None:
+    _insert("share_visitors", {"id": visitor_id, "agent_id": agent_id, "created_at": now()})
+
+
+def get_visitor(visitor_id: str, agent_id: str) -> dict | None:
+    return _one("SELECT * FROM share_visitors WHERE id = ? AND agent_id = ?", visitor_id, agent_id)
 
 
 def update_session(session_id: str, **fields: Any) -> dict | None:

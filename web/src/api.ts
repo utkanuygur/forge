@@ -165,6 +165,18 @@ export interface Agent {
   pending_approvals?: number;
   /** Starter tasks shown as chips above the run input (CONTRACT.md "Suggested prompts"). */
   suggested_prompts?: SuggestedPrompt[];
+  /** Share link limits (CONTRACT.md "Share and API conversations"): overrides (null = default) and effective values. */
+  share_limits?: ShareLimits<number | null>;
+  share_limits_effective?: ShareLimits<number>;
+  share_limit_defaults?: ShareLimits<number>;
+  session_idle_hours?: number;
+}
+
+export interface ShareLimits<T> {
+  session_turns: T;
+  sessions_per_visitor: T;
+  daily_turns: T;
+  concurrent_turns: T;
 }
 
 export interface SuggestedPrompt {
@@ -195,6 +207,12 @@ export interface Session {
   is_draft?: boolean;
   turn_count?: number | null;
   running?: boolean;
+  // Share and API conversations.
+  channel?: "playground" | "api" | "share" | "slack";
+  expires_at?: number;
+  expired?: boolean;
+  max_turns?: number;
+  visitor_id?: string;
 }
 
 export interface AgentCreated extends Agent {
@@ -743,32 +761,59 @@ export class ApiError extends Error {
   status: number;
   /** The JSON `detail` of the error response, when it was not a plain string (e.g. per key settings errors). */
   detail?: unknown;
-  constructor(status: number, message: string, detail?: unknown) {
+  /** Which share link limit answered 429 (`session_turns`, `sessions_per_visitor`, `daily_turns`, `concurrent_turns`). */
+  limit?: string;
+  constructor(status: number, message: string, detail?: unknown, limit?: string) {
     super(message);
     this.status = status;
     this.detail = detail;
+    this.limit = limit;
   }
+}
+
+// Share page visitors: the server issues a visitor id on the first conversation; every request made with that
+// share token then carries it (header, or `visitor=` on EventSource and download URLs) so the visitor reaches
+// its own conversations and runs.
+const shareVisitors = new Map<string, string>();
+
+export function setShareVisitor(share: string, visitor: string | null) {
+  if (visitor) shareVisitors.set(share, visitor);
+  else shareVisitors.delete(share);
+}
+
+export function shareVisitor(share?: string): string | undefined {
+  return share ? shareVisitors.get(share) : undefined;
 }
 
 function withShare(path: string, share?: string): string {
   if (!share) return path;
   const sep = path.includes("?") ? "&" : "?";
-  return `${path}${sep}share=${encodeURIComponent(share)}`;
+  const visitor = shareVisitors.get(share);
+  return `${path}${sep}share=${encodeURIComponent(share)}${visitor ? `&visitor=${encodeURIComponent(visitor)}` : ""}`;
+}
+
+function shareHeaders(headers: Record<string, string>, share?: string) {
+  if (!share) return;
+  headers["X-Share-Token"] = share;
+  const visitor = shareVisitors.get(share);
+  if (visitor) headers["X-Forge-Visitor"] = visitor;
 }
 
 async function parseError(res: Response): Promise<ApiError> {
   let msg = `${res.status} ${res.statusText}`;
   let detail: unknown;
+  let limit: string | undefined;
   try {
     const body = await res.json();
     detail = body?.detail;
     if (body && typeof body.detail === "string") msg = body.detail;
     else if (body?.detail && typeof body.detail.message === "string") msg = body.detail.message;
     else if (body && body.detail) msg = JSON.stringify(body.detail);
+    if (body && typeof body.limit === "string") limit = body.limit;
   } catch {
     /* non JSON error */
   }
-  return new ApiError(res.status, msg, detail);
+  return new ApiError(res.status, msg, detail, limit);
 }
 
 export async function request<T>(method: string, path: string, body?: unknown, share?: string): Promise<T> {
@@ -780,7 +825,7 @@ export async function request<T>(method: string, path: string, body?: unknown, s
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
-  if (share) headers["X-Share-Token"] = share;
+  shareHeaders(headers, share);
   let res: Response;
   try {
     res = await fetch(withShare(`/v1${path}`, share), { method, headers, body: payload });
@@ -796,7 +841,7 @@ export async function request<T>(method: string, path: string, body?: unknown, s
 /** GET returning the JSON list and the X-Total-Count header. */
 async function requestWithTotal<T>(path: string, share?: string): Promise<{ items: T[]; total: number }> {
   const headers: Record<string, string> = {};
-  if (share) headers["X-Share-Token"] = share;
+  shareHeaders(headers, share);
   let res: Response;
   try {
     res = await fetch(withShare(`/v1${path}`, share), { method: "GET", headers });
@@ -826,6 +871,7 @@ export const api = {
       auto_promote?: boolean;
       eval_repeats?: number;
       monthly_budget_usd?: number | null;
+      share_limits?: Partial<ShareLimits<number | null>>;
     },
   ) =>
     request<Agent>("PATCH", `/agents/${enc(slug)}`, body),
@@ -923,15 +969,17 @@ export const api = {
   getImprovement: (id: string) => request<Improvement>("GET", `/improvements/${enc(id)}`),
   listImprovements: (slug: string) => request<Improvement[]>("GET", `/agents/${enc(slug)}/improvements`),
 
-  // playground sessions
-  createSession: (slug: string, body: { version?: number; draft?: DraftConfig }) =>
-    request<Session>("POST", `/agents/${enc(slug)}/sessions`, body),
-  listSessions: (slug: string, limit = 20) => request<Session[]>("GET", `/agents/${enc(slug)}/sessions?limit=${limit}`),
-  getSession: (id: string) => request<Session>("GET", `/sessions/${enc(id)}`),
-  sendMessage: (id: string, input: string) => request<Run>("POST", `/sessions/${enc(id)}/messages`, { input }),
+  // sessions: Playground (builder) and share page conversations (`share` token; the visitor rides along)
+  createSession: (slug: string, body: { version?: number; draft?: DraftConfig }, share?: string) =>
+    request<Session>("POST", `/agents/${enc(slug)}/sessions`, body, share),
+  listSessions: (slug: string, limit = 20, share?: string) =>
+    request<Session[]>("GET", `/agents/${enc(slug)}/sessions?limit=${limit}`, undefined, share),
+  getSession: (id: string, share?: string) => request<Session>("GET", `/sessions/${enc(id)}`, undefined, share),
+  sendMessage: (id: string, input: string, share?: string) =>
+    request<Run>("POST", `/sessions/${enc(id)}/messages`, { input }, share),
   saveSessionVersion: (id: string, rationale = "") =>
     request<Version>("POST", `/sessions/${enc(id)}/save-version`, { rationale }),
-  cancelRun: (id: string) => request<Run>("POST", `/runs/${enc(id)}/cancel`),
+  cancelRun: (id: string, share?: string) => request<Run>("POST", `/runs/${enc(id)}/cancel`, undefined, share),
 };
 
 // ---------------------------------------------------------------- helpers

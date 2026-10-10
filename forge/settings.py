@@ -44,7 +44,7 @@ GROUPS = ["Models", "Sandbox", "Evaluations", "Server", "Observability", "Pricin
 # Modules that register their own settings at import time (see the module docstring). load_all() imports them so
 # the registry is complete wherever it is listed (.env.example, the Settings page), whatever was imported first.
 SETTING_MODULES = ("forge.triggers.security", "forge.triggers.core", "forge.triggers.slack", "forge.server.assist",
-                   "forge.tools.mcp")
+                   "forge.tools.mcp", "forge.share_limits")
 
 TYPES = {"string", "int", "float", "bool", "enum", "model", "url", "json", "secret"}
 TRUE = {"1", "true", "yes", "on"}
