@@ -26,6 +26,8 @@ async def test_claude_agent_creates_and_runs_hello_py_in_sandbox():
     result, evs, diff = await run_hello_task(AGENT_MODEL)
     assert_hello_done(result, evs, diff)
     assert result.tokens_in > 0 and result.tokens_out > 0
+    if result.turns > 1:  # FR12: later turns read the cached tools + system + conversation prefix
+        assert result.cache_read_tokens > 0, result
 
 
 async def test_claude_judge_passes_good_work_and_fails_bad_work():

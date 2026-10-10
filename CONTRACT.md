@@ -39,7 +39,7 @@ Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<mes
 ```jsonc
 // Agent
 {"id": "ag_..", "slug": "repo-maintainer", "name": "Repo maintainer", "description": "",
- "prod_version": 1, "auto_promote": false, "share_token": "..", "created_at": 0.0,
+ "prod_version": 1, "auto_promote": false, "eval_repeats": 3, "share_token": "..", "created_at": 0.0,
  "versions": [Version, ...]}            // versions only on GET /agents/{slug}
 
 // Version  (AgentVersion fields, JSON)
@@ -51,7 +51,8 @@ Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<mes
 // Run
 {"id": "r_..", "agent_id": "ag_..", "version_id": "v_..", "version_n": 1, "source": "api",
  "input": "..", "status": "succeeded", "output": "..", "error": null,
- "turns": 7, "tokens_in": 0, "tokens_out": 0, "has_artifacts": true,
+ "turns": 7, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "cache_write_tokens": 0,
+ "has_artifacts": true,
  "created_at": 0.0, "started_at": 0.0, "ended_at": 0.0,
  "feedback": [Feedback, ...]}
 
@@ -72,8 +73,8 @@ Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<mes
  "base":      {"train": {"passed": 1, "total": 4}, "holdout": {"passed": 1, "total": 3}},
  "candidate": {"train": {"passed": 4, "total": 4}, "holdout": {"passed": 3, "total": 3}},
  "cases": [{"case_id": "ec_..", "name": "..", "split": "train",
-            "base": {"passed": false, "reason": "..", "run_id": "r_.."},
-            "candidate": {"passed": true, "reason": "..", "run_id": "r_.."}}],
+            "base": {"passed": false, "reason": "..", "run_id": "r_..", "passes": 1, "runs": 3},
+            "candidate": {"passed": true, "reason": "..", "run_id": "r_..", "passes": 3, "runs": 3}}],
  "newly_passing": ["ec_.."], "regressions": [],
  "lessons_diff": [{"op": "add", "text": "..", "evidence_run_ids": ["r_.."], "rationale": ".."}],
  "error": null, "created_at": 0.0, "ended_at": 0.0}
@@ -86,7 +87,7 @@ Builder endpoints are unauthenticated (local builder). Errors: `{"detail": "<mes
 | POST | `/agents` | `{slug, name, description?, system_prompt, model?, tools?, network?, seed_files?, auto_promote?}` | `Agent` + `"api_key"` (shown once) |
 | GET | `/agents` | | `[Agent]` |
 | GET | `/agents/{slug}` | | `Agent` with `versions` |
-| PATCH | `/agents/{slug}` | `{name?, description?, auto_promote?}` | `Agent` |
+| PATCH | `/agents/{slug}` | `{name?, description?, auto_promote?, eval_repeats?: 1..9}` | `Agent` |
 | POST | `/agents/{slug}/versions` | `{system_prompt?, lessons?, model?, tools?, network?, seed_files?, rationale?}` (unset fields copied from prod) | `Version` |
 | GET | `/agents/{slug}/versions/{n or "prod"}` | | `Version` |
 | POST | `/agents/{slug}/promote` | `{version: n}` | `Agent` |
@@ -124,7 +125,7 @@ Auth amendments (server implementation):
 | DELETE | `/evals/{id}` | | `{"ok": true}` |
 | POST | `/runs/{id}/save-as-eval` | `{name?, checker_type?, checker?, split?}` (default judge rubric from feedback comment) | `EvalCase` |
 | POST | `/agents/{slug}/evals/run` | `{version?: n}` | `{"version": n, "results": [...]}` runs (cached) eval of one version, async; poll via GET below |
-| GET | `/agents/{slug}/evals/results?version=n` | | `{"version": n, "train": {...}, "holdout": {...}, "results": [{case_id, passed, reason, run_id}]}` |
+| GET | `/agents/{slug}/evals/results?version=n` | | `{"version": n, "train": {...}, "holdout": {...}, "repeats": k, "results": [{case_id, passed, reason, run_id, passes, runs}]}` |
 | POST | `/agents/{slug}/improve` | `{}` | `Improvement` (status `running`; poll) |
 | GET | `/improvements/{id}` | | `Improvement` |
 | GET | `/agents/{slug}/improvements` | | `[Improvement]` newest first |
@@ -136,8 +137,34 @@ Auth amendments (server implementation):
 | POST | `/runs` | `{agent_slug, version_n, input, source: "local"}` | `Run` (status `running`) |
 | POST | `/runs/{id}/events` | `[Event]` | `{"ok": true}` (a `run_finished` event finalizes the run) |
 
+## Repeated evals (amendment)
+
+Each eval case runs `k` times per version, `k` = the agent's `eval_repeats` (PATCH, 1..9); unset agents use
+`$FORGE_EVAL_REPEATS`, else 3. A case **passes for a version iff a strict majority of its k runs pass**
+(`2 * passes > k`; for even k a tie fails). Per-run verdicts are stored in `eval_run_results`; `eval_results`
+is the per-case summary with `passes`, `runs` (= k) and a representative `run_id`/`reason`: the first failing
+run when the case failed, else the first passing run. Summaries are cached per version: a case whose summary
+already covers k runs is not re-run, and changing k reuses stored runs and only adds missing ones. A run whose
+checker never ran (infrastructure error) is not stored and is retried on the next evaluation. At most 4 eval
+sandbox runs execute at once across all cases and repeats. Eval result and Improvement case objects gain
+`passes` and `runs` (additive); `passed` is the majority verdict.
+
+## Stop reasons and prompt caching (amendment)
+
+`ModelResponse` gains `stop_reason` (`end_turn`, `tool_use`, `max_tokens`, `refusal`, ...; OpenAI-compatible
+`finish_reason` is mapped: `length` -> `max_tokens`, `content_filter` -> `refusal`, `stop` -> `end_turn`,
+`tool_calls` -> `tool_use`), `stop_detail` (refusal category, else its explanation), `cache_read_tokens` and
+`cache_write_tokens`. In `run_agent`: a `refusal` turn fails the run with an `error` event
+`Model declined: <detail>` and none of its tool calls run; a `max_tokens` turn without tool calls fails the run
+(the truncated text is never the final answer); a `max_tokens` turn with tool calls runs all but the last call,
+which gets an error result because its arguments may be cut off. `AnthropicProvider` sets `cache_control`
+(ephemeral) on the system block, which caches tools + system, and in tool-using calls on the last message block,
+which caches the growing conversation (2 of 4 breakpoints). `run_finished` payloads and Run objects carry
+`cache_read_tokens` and `cache_write_tokens`; `tokens_in` stays the uncached input count.
+
 ## Promotion rule
 
-Candidate eligible iff `candidate_passed_total > base_passed_total` and no case passed by base fails for candidate.
+Candidate eligible iff `candidate_passed_total > base_passed_total` and no case passed by base fails for candidate,
+where "passed" is the per-case majority verdict above.
 `auto_promote` agents: eligible candidates are promoted automatically; an improvement cycle also starts when 3 new
 negative feedback items arrive since the last improvement.
