@@ -113,9 +113,11 @@ test.describe("Observability", () => {
     await expect(tl).toBeVisible();
     await expect(tl).toHaveAttribute("data-estimated", "false");
     await expect(tl.getByTestId("timeline-step")).toHaveCount(5);
-    await expect(tl.locator('[data-testid="timeline-step"][data-kind="tool"][data-label="bash"]')).toContainText("ms");
+    // A measured duration ("12 ms", "2.4 s"): `python hello.py` takes seconds when the machine is loaded.
+    const duration = /\d+(\.\d+)? m?s\b/;
+    await expect(tl.locator('[data-testid="timeline-step"][data-kind="tool"][data-label="bash"]')).toContainText(duration);
     await expect(tl.locator('[data-testid="timeline-step"][data-kind="model"]').first()).toContainText("10/5 tok");
-    await expect(tl.getByTestId("tool-time")).toContainText("ms");
+    await expect(tl.getByTestId("tool-time")).toContainText(duration);
     await expect(tl.getByTestId("run-cost")).toContainText("$0.06");
     await expect(page.getByTestId("run-header-cost")).toContainText("$0.06");
   });

@@ -225,7 +225,8 @@ def test_improvement_cycle_cost_and_promotion_marker(api, make_agent):
 
 def test_healthz_reports_database_and_docker(api):
     """OBS7: /healthz needs no auth and reports database and Docker as ok with status 200."""
-    r = httpx.get(api.base_url.join("/healthz"), headers=REMOTE)
+    # The server allows its Docker probe 5 s per command; under load that exceeds httpx's 5 s default.
+    r = httpx.get(api.base_url.join("/healthz"), headers=REMOTE, timeout=30)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "ok" and body["components"]["database"]["status"] == "ok"
