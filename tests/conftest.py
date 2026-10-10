@@ -6,6 +6,11 @@ Markers (registered in pyproject.toml):
   live    calls real model APIs; never runs unless `-m live` is given or FORGE_LIVE=1
 
 A plain `pytest` runs unit tests plus docker and e2e tests when Docker is available.
+
+Parallel runs (pytest-xdist, `make test`): every test is xdist-safe. Each worker gets its own tmp dirs and
+e2e server (session fixtures are per worker), and labels the sandbox containers it starts with
+FORGE_SANDBOX_LABEL so the e2e leak check only counts its own. Modules whose tests share a module- or
+class-scoped fixture are kept on one worker (`--dist loadgroup`); run serially with `-n 0` to debug.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import functools
 import os
 import shutil
 import subprocess
+import uuid
 
 import pytest
 
@@ -46,9 +52,26 @@ def live_enabled(config: pytest.Config) -> bool:
     return "live" in expr and "not live" not in expr
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    # One label per pytest process (each xdist worker is one), set before any test starts a container.
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    os.environ["FORGE_SANDBOX_LABEL"] = f"forge.test.session={worker}-{uuid.uuid4().hex[:8]}"
+
+
+def _shares_fixture_state(item: pytest.Item) -> bool:
+    """True when the test uses a module-, class- or package-scoped fixture (state shared with its siblings)."""
+    info = getattr(item, "_fixtureinfo", None)
+    return any(defs and defs[-1].scope in ("module", "class", "package")
+               for defs in (info.name2fixturedefs.values() if info else ()))
+
+
+# tryfirst: the xdist_group markers must exist before xdist's own hook reads them under --dist loadgroup.
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     live = live_enabled(config)
     for item in items:
+        if item.module and not item.get_closest_marker("xdist_group") and _shares_fixture_state(item):
+            item.add_marker(pytest.mark.xdist_group(item.module.__name__))
         if item.name.split("[")[0] in _DOCKER_TESTS and item.module and item.module.__name__.endswith("test_runtime"):
             item.add_marker(pytest.mark.docker)
         if item.get_closest_marker("e2e") and not item.get_closest_marker("docker"):

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,12 +7,19 @@ import { defineConfig, devices } from "@playwright/test";
 // One fresh data dir per `playwright test` invocation. Workers re-evaluate this file, so the dir is
 // chosen once in the main process and inherited through the environment.
 process.env.FORGE_E2E_DATA_DIR ??= mkdtempSync(join(tmpdir(), "forge-e2e-"));
-const PORT = Number(process.env.FORGE_E2E_PORT || 8011);
+// The server port: FORGE_E2E_PORT if set, else a free port picked once (same inheritance trick), so several
+// suites (other checkouts, `make test-fast`) can run side by side.
+process.env.FORGE_E2E_PORT ||= execFileSync(process.execPath, ["-e",
+  "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{process.stdout.write(String(s.address().port));s.close()})",
+]).toString().trim();
+const PORT = Number(process.env.FORGE_E2E_PORT);
+// Tests are independent (unique slugs per test), so workers only trade speed for load. PW_WORKERS overrides.
+const WORKERS = Number(process.env.PW_WORKERS) || (process.env.CI ? 2 : 4);
 
 export default defineConfig({
   testDir: "tests/e2e",
   fullyParallel: true,
-  workers: process.env.CI ? 2 : 4,
+  workers: WORKERS,
   retries: process.env.CI ? 1 : 0,
   timeout: 120_000,
   expect: { timeout: 10_000 },

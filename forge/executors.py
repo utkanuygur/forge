@@ -129,6 +129,8 @@ class DockerExecutor:
     async def start(self, seed_files: dict[str, bytes], env: dict[str, str]) -> None:
         argv = ["docker", "run", "-d", "--network", "bridge" if self.network else "none"]
         argv += ["--cpus", "1", "--memory", "1g", "--pids-limit", "256", "--user", "agent", "-w", "/workspace"]
+        if label := os.environ.get("FORGE_SANDBOX_LABEL"):  # optional `key=value` tag, e.g. per test worker
+            argv += ["--label", label]
         for k, v in env.items():
             argv += ["-e", f"{k}={v}"]
         argv += [self.image, "sleep", "infinity"]

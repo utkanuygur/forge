@@ -20,7 +20,7 @@ dependencies = [
 forge = "forge.cli:app"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist>=3.6"]
 
 [build-system]
 requires = ["hatchling"]
