@@ -1,0 +1,73 @@
+{
+  "name": "forge-desktop",
+  "productName": "Forge",
+  "version": "0.1.0",
+  "description": "Forge for macOS: create, deploy and improve agents on your own machine",
+  "author": "Forge",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "FORGE_DESKTOP_DEV=1 electron .",
+    "icon": "bash scripts/make-icon.sh",
+    "build:server": "bash scripts/build-server.sh",
+    "build": "npm run build:server && bash scripts/package.sh dir",
+    "dist": "npm run build:server && bash scripts/package.sh dmg",
+    "verify": "node scripts/verify.mjs",
+    "package": "bash scripts/package.sh dmg"
+  },
+  "devDependencies": {
+    "electron": "44.4.4",
+    "electron-builder": "26.16.1",
+    "playwright-core": "1.62.1"
+  },
+  "build": {
+    "appId": "dev.forge.desktop",
+    "productName": "Forge",
+    "copyright": "Forge",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/server/forge-server",
+        "to": "forge-server"
+      },
+      {
+        "from": "build/sandbox",
+        "to": "sandbox"
+      }
+    ],
+    "asar": true,
+    "afterPack": "scripts/after-pack.js",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "darkModeSupport": true,
+      "minimumSystemVersion": "12.0"
+    },
+    "dmg": {
+      "artifactName": "Forge-${version}-${arch}.dmg",
+      "title": "Forge ${version}"
+    }
+  },
+  "allowScripts": {
+    "electron-winstaller": false
+  }
+}

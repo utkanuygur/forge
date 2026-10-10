@@ -1,0 +1,81 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f5f2;
+  --panel: #ffffff;
+  --ink: #16150f;
+  --muted: #6b6a63;
+  --line: #e2e0da;
+  --accent: #e2570b;
+  --accent-ink: #ffffff;
+  --ok: #1f8a52;
+  --err: #c0362c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1a16;
+    --panel: #24231e;
+    --ink: #f1efe8;
+    --muted: #a3a197;
+    --line: #3a3932;
+    --accent: #ff7a33;
+    --accent-ink: #16150f;
+    --ok: #5fcf93;
+    --err: #ff7b6e;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.drag { -webkit-app-region: drag; height: 28px; }
+main { padding: 4px 28px 24px; }
+h1 { font-size: 17px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
+p { margin: 0 0 12px; color: var(--muted); }
+.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.mark { width: 26px; height: 26px; border-radius: 7px; background: #16150f; position: relative; flex: none; }
+.mark::after { content: ""; position: absolute; inset: 7px; border-radius: 2px; background: #e2570b; }
+@media (prefers-color-scheme: dark) { .mark { box-shadow: inset 0 0 0 1px #3a3932; } }
+button {
+  font: inherit; font-weight: 500; padding: 5px 14px; border-radius: 6px; cursor: default;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button:disabled { opacity: 0.5; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.row .spacer { flex: 1; }
+
+/* startup */
+ol.steps { list-style: none; padding: 0; margin: 0; }
+ol.steps li { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; color: var(--muted); }
+ol.steps li .dot { width: 16px; height: 16px; flex: none; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--line); position: relative; }
+ol.steps li.active { color: var(--ink); }
+ol.steps li.active .dot { border-color: var(--accent); border-right-color: transparent; animation: spin 0.9s linear infinite; }
+ol.steps li.done { color: var(--ink); }
+ol.steps li.done .dot { border-color: var(--ok); background: var(--ok); }
+ol.steps li.done .dot::after { content: ""; position: absolute; left: 4.5px; top: 1.5px; width: 4px; height: 7px; border: solid var(--panel); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+ol.steps li.error { color: var(--err); }
+ol.steps li.error .dot { border-color: var(--err); background: var(--err); }
+.detail { font: 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; max-height: 3em; overflow: hidden; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.problem { display: none; }
+.problem.show { display: block; }
+.problem pre { font: 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; max-height: 90px; overflow: auto; user-select: text; -webkit-user-select: text; margin: 0 0 4px; }
+
+/* settings */
+label { display: block; font-weight: 500; margin: 14px 0 5px; }
+input[type=text], input[type=password] {
+  width: 100%; font: inherit; padding: 6px 9px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  -webkit-user-select: text; user-select: text;
+}
+.hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+.notice { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 10px 12px; margin: 0 0 6px; color: var(--ink); }
+.status { min-height: 18px; font-size: 12px; margin-top: 10px; user-select: text; -webkit-user-select: text; }
+.status.ok { color: var(--ok); }
+.status.err { color: var(--err); }

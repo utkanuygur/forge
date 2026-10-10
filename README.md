@@ -46,3 +46,16 @@ Expose it to others: `cloudflared tunnel --url http://localhost:8000`.
 `make test-all` runs every deterministic layer (no API keys needed: models are replaced by scripted
 `fake:` scenarios while the server, database, sandboxes, CLI and browser are real). `make test-live`
 runs against real models.
+
+## Desktop app
+
+`desktop/` packages Forge as a macOS app for Apple Silicon: it checks Docker, builds the sandbox image on
+first run, starts a bundled server on 127.0.0.1 and opens the UI in a native window, with the Claude API
+key kept encrypted in the Keychain and an optional public link through cloudflared.
+
+```bash
+cd desktop && npm install && npm run dist    # desktop/dist/Forge-<version>-arm64.dmg
+```
+
+The app is not notarized, so the first launch needs right click > Open, or
+`xattr -dr com.apple.quarantine /Applications/Forge.app`. See [desktop/README.md](desktop/README.md).

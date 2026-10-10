@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+  <title>Settings</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="drag"></div>
+  <main>
+    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>Settings</h1></div>
+    <div class="notice" id="first-run" hidden>
+      Add your Claude API key to run agents with Claude. Without a key, Forge still works for agents that use local models, such as one served by Ollama.
+    </div>
+    <form id="form">
+      <label for="key">Claude API key</label>
+      <input type="password" id="key" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
+      <div class="hint" id="key-hint">Stored encrypted in your macOS Keychain. Get a key at console.anthropic.com.</div>
+
+      <label for="default-model">Default agent model</label>
+      <input type="text" id="default-model" spellcheck="false" placeholder="anthropic:claude-sonnet-5-5">
+      <div class="hint">Used for new agents. Leave empty for the built in default.</div>
+
+      <label for="grader-model">Grader model</label>
+      <input type="text" id="grader-model" spellcheck="false" placeholder="Same as the default agent model">
+      <div class="hint">Judges evaluation runs and proposes improvements.</div>
+
+      <div class="status" id="status" role="status"></div>
+      <div class="row">
+        <button type="button" id="clear" hidden>Remove key</button>
+        <span class="spacer"></span>
+        <button type="button" id="test">Test key</button>
+        <button type="button" id="cancel">Close</button>
+        <button type="submit" class="primary" id="save">Save</button>
+      </div>
+    </form>
+  </main>
+  <script src="settings.js"></script>
+</body>
+</html>
