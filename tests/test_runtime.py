@@ -327,3 +327,13 @@ async def test_wall_clock_timeout(local):
 
     result = await run_agent(version(), "x", run_id="r", provider=Slow([]), executor=local, emit=emit, max_seconds=1)
     assert result.status == "timeout" and events[-1].type == "run_finished"
+
+
+def test_temperature_only_sent_to_models_that_accept_it():
+    """Opus 4.7+ / Sonnet 5+ reject sampling parameters with a 400 (FR12)."""
+    from forge.providers import accepts_temperature
+
+    for m in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-4-8", "claude-opus-4-7", "claude-fable-5-1"]:
+        assert not accepts_temperature(m), m
+    for m in ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-sonnet-4-5-20250929", "claude-3-7-sonnet-latest"]:
+        assert accepts_temperature(m), m

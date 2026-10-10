@@ -29,3 +29,8 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "docker: needs a Docker daemon and the forge-sandbox image (auto-skipped when missing)",
+  "e2e: starts a real Forge server subprocess (implies docker)",
+  "live: calls real model APIs; runs only with `-m live` or FORGE_LIVE=1",
+]

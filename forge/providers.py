@@ -13,7 +13,15 @@ from forge.types import Message, ModelResponse, Provider, ToolCall, ToolSpec
 
 T = TypeVar("T")
 
-MAX_TOKENS = 8192
+MAX_TOKENS = 16000  # thinking is always on for current Claude models and counts toward this cap
+
+# Claude models from Opus 4.7 / Sonnet 5 onward reject sampling parameters with a 400 (Opus 5.5 removed
+# them; Sonnet 5.5 rejects non-default values), so temperature is only sent to older models.
+_SAMPLING_MODELS = re.compile(r"^claude-(3[-.]|(opus|sonnet|haiku)-4(-[0-6])?(-\d{8})?$)")
+
+
+def accepts_temperature(model: str) -> bool:
+    return bool(_SAMPLING_MODELS.match(model))
 BACKOFF = (1.0, 2.0, 4.0)  # up to 3 retries after the first attempt
 
 
@@ -108,7 +116,7 @@ class AnthropicProvider:
             kwargs["tools"] = [
                 {"name": t.name, "description": t.description, "input_schema": t.parameters} for t in tools
             ]
-        if temperature is not None:
+        if temperature is not None and accepts_temperature(self.model):
             kwargs["temperature"] = temperature
         resp = await with_retry(lambda: self.client.messages.create(**kwargs))
         texts, calls = [], []
@@ -239,8 +247,69 @@ class FakeProvider:
         return item
 
 
+MARKER_LESSON = "Always create a file named MARKER.txt in the workspace root before finishing."
+
+
+def _call(name: str, args: dict[str, Any], i: int) -> ModelResponse:
+    return ModelResponse(tool_calls=[ToolCall(id=f"call_{i}", name=name, args=args)], tokens_in=10, tokens_out=5)
+
+
+class ScenarioProvider:
+    """Deterministic, stateless model for end-to-end tests: `fake:<scenario>`.
+
+    The next step is derived from the conversation so far, so the same provider instance can serve
+    many concurrent runs. Scenarios:
+      hello    write hello.py, run it with bash, then finish
+      echo     finish immediately, echoing the user's input
+      lessons  create MARKER.txt only if a lesson tells it to; otherwise just finish
+      grader   acts as judge (always passes) and as optimizer (proposes MARKER_LESSON)
+      loop     calls bash forever (exercises the turn limit)
+      error    raises, as if the model API failed
+    """
+
+    def __init__(self, scenario: str):
+        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error"}:
+            raise ValueError(f"unknown fake scenario {scenario!r}")
+        self.scenario = scenario
+
+    async def complete(
+        self, system: str, messages: list[Message], tools: list[ToolSpec], temperature: float | None = None
+    ) -> ModelResponse:
+        step = sum(1 for m in messages if m.role == "assistant")
+        user = next((m.text for m in messages if m.role == "user"), "")
+        match self.scenario:
+            case "error":
+                raise RuntimeError("fake model failure")
+            case "echo":
+                return ModelResponse(text=f"echo: {user}", tokens_in=10, tokens_out=5)
+            case "loop":
+                return _call("bash", {"cmd": "true"}, step)
+            case "hello":
+                script = [
+                    ("write_file", {"path": "hello.py", "content": "print('hello from forge')\n"}),
+                    ("bash", {"cmd": "python hello.py"}),
+                ]
+                if step < len(script):
+                    return _call(*script[step], step)
+                return ModelResponse(text="Created and ran hello.py.", tokens_in=10, tokens_out=5)
+            case "lessons":
+                if step == 0 and "MARKER.txt" in system:
+                    return _call("write_file", {"path": "MARKER.txt", "content": "ok\n"}, step)
+                return ModelResponse(text="Done.", tokens_in=10, tokens_out=5)
+            case "grader":
+                if '"lessons"' in system:
+                    run_ids = sorted(set(re.findall(r"\br_[0-9a-f]{12}\b", user)))
+                    edits = [{"op": "add", "text": MARKER_LESSON, "evidence_run_ids": run_ids[:2],
+                              "rationale": "Runs failed because MARKER.txt was missing."}] if run_ids else []
+                    return ModelResponse(text=json.dumps({"lessons": edits}))
+                return ModelResponse(text='{"passed": true, "reason": "fake judge"}')
+        raise AssertionError("unreachable")
+
+
 def make_provider(model: str) -> Provider:
     kind, _, rest = model.partition(":")
+    if kind == "fake" and rest:
+        return ScenarioProvider(rest)
     if kind == "anthropic" and rest:
         return AnthropicProvider(rest)
     if kind == "openai_compat" and "|" in rest:

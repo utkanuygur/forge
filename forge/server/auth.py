@@ -12,9 +12,16 @@ from forge import db
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
+# Headers added by tunnels and reverse proxies. Traffic through cloudflared arrives from 127.0.0.1,
+# so a request carrying any of these came from the internet and must not get the builder bypass.
+PROXY_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "forwarded")
+
+
 def is_local(request: Request) -> bool:
     if os.environ.get("FORGE_TRUST_ALL") == "1":
         return True
+    if any(h in request.headers for h in PROXY_HEADERS):
+        return False
     return bool(request.client and request.client.host in LOCAL_HOSTS)
 
 
