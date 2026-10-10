@@ -10,7 +10,7 @@ within CONFIRM_TIMEOUT) returns an error result to the model for each and nothin
 refuses a write tool without an approval, so no other path can run one.
 
 Limits per user message: MAX_STEPS tool calls, MAX_SECONDS of wall clock (time spent waiting on the user's
-confirmation is not counted), MAX_MODEL_TURNS model calls, tool outputs capped at tools.MAX_TOOL_OUTPUT chars.
+confirmation and running the actions they approved is not counted), MAX_MODEL_TURNS model calls, tool outputs capped at tools.MAX_TOOL_OUTPUT chars.
 """
 
 from __future__ import annotations
@@ -286,7 +286,6 @@ async def _calls(turn: Turn, calls: list[ToolCall], ctx: tools.ToolContext, secr
             approved, by = False, "timeout"
         finally:
             turn.pending.pop(confirm_id, None)
-        waited = time.monotonic() - t0
         await turn.emit("confirm_resolved", {"id": confirm_id, "approved": approved, "by": by})
         for call, t, _ in writes:
             await turn.emit("tool_call", call_payload(call, t, secrets))
@@ -298,6 +297,9 @@ async def _calls(turn: Turn, calls: list[ToolCall], ctx: tools.ToolContext, secr
                                            "what they want instead.", "denied" if by != "timeout" else "expired"), False
             await turn.emit("tool_result", result_payload(call, t, res, ok))
             out[call.id] = Message(role="tool", tool_call_id=call.id, text=res.text, is_error=not ok)
+        # Waiting for the user and running what they approved (a grader call can take a minute) are both off
+        # the clock, so an approved action always gets its follow-up answer.
+        waited = time.monotonic() - t0
     return [out[c.id] for c in calls], waited, steps
 
 

@@ -982,7 +982,8 @@ Settings are not exposed: this base has no settings registry.
 ### Limits
 
 Per user message: at most 15 tool calls (further calls get an error result and the turn ends with `final`
-status `limit`), 2 minutes of wall clock excluding time spent waiting on a confirmation, 20 model calls; each
+status `limit`), 2 minutes of wall clock excluding time spent waiting on a confirmation and running the
+approved actions, 20 model calls; each
 tool output is capped at 6000 characters for the model, older history outputs at 1500; user text at 8000
 characters. One turn runs per session at a time; it keeps running when the stream disconnects.
 

@@ -221,6 +221,41 @@ def test_wall_clock_limit(client, monkeypatch):
     assert "2 minute" in of_type(ev, "final")[0]["message"]
 
 
+def test_confirmation_wait_and_approved_actions_are_off_the_clock(client, monkeypatch):
+    monkeypatch.setattr(engine, "MAX_SECONDS", 0.5)
+    slow = tools.TOOLS["add_feedback"]
+
+    async def run(ctx, args):
+        await asyncio.sleep(0.4)
+        return tools.ToolResult("Saved.", "feedback saved")
+
+    monkeypatch.setitem(tools.TOOLS, "add_feedback", tools.CopilotTool(
+        slow.name, slow.description, slow.parameters, "write", run, slow.describe))
+    agent = db.get_agent_by_slug("s")
+    run_row = db.create_run(agent["id"], agent["prod_version_id"], "api", "x")
+
+    class Model:
+        async def complete(self, system, messages, tools_, temperature=None):
+            if messages[-1].role == "user":
+                return ModelResponse(tool_calls=[ToolCall(id="f1", name="add_feedback",
+                                                          args={"run_id": run_row["id"], "rating": 1})])
+            return ModelResponse(text="Saved your thumbs up.")
+
+    s = db.create_copilot_session("local")
+
+    async def go() -> list[dict]:
+        turn = engine.start(s, "thumbs up", {}, ForgeApi(local=True, app=client.app), model=Model())
+        while not turn.pending:
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.4)  # the user takes a while to decide
+        engine.resolve(s["id"], next(iter(turn.pending)), True)
+        return [e async for e in turn.stream()]
+
+    ev = client.portal.call(go)
+    assert of_type(ev, "final")[0]["status"] == "done"
+    assert of_type(ev, "assistant")[-1]["text"] == "Saved your thumbs up."
+
+
 def test_one_turn_at_a_time_and_cancel(client):
     class Wait:
         async def complete(self, system, messages, tools_, temperature=None):

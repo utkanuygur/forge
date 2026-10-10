@@ -142,11 +142,14 @@ def cost_phrase(agent: dict, runs: int) -> str:
     return f"about {usd(avg * runs)} at the recent average of {usd(avg)} per run"
 
 
-def grader_cost(tokens_in: int = 6000, tokens_out: int = 1500) -> str:
+def grader_cost(tokens_in: int = 12000, tokens_out: int = 6000) -> str:
+    """Price range of one or two grader calls (a reply that fails validation is retried once). The defaults
+    match a measured eval case generation on the demo agent: about 7k input and 6k output tokens per call,
+    thinking included."""
     from forge.server.evals import grader_model
 
     c = pricing.cost(grader_model(), tokens_in, tokens_out)
-    return f"about {usd(c)}" if c is not None else "cost unknown"
+    return f"about {usd(c)} to {usd(2 * c)}" if c is not None else "cost unknown"
 
 
 def eval_runs_needed(agent: dict, version_n: int | None) -> tuple[int, int, int]:
