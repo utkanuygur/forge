@@ -88,6 +88,11 @@ share_limiter = RateLimiter(_share_limit(), SHARE_WINDOW_S)  # one budget per sh
 
 # ---------------------------------------------------------------- core
 
+RECENT_RESULTS = 10
+# The last results per (agent id, kind), in memory, shown to the model as earlier suggestions so consecutive
+# calls differ even when the caller sends no avoid list (API callers) and before anything was run.
+_recent_results: dict[tuple[str, str], deque[str]] = defaultdict(lambda: deque(maxlen=RECENT_RESULTS))
+
 
 def _generation_count(agent_id: str, kind: str) -> int:
     with db.connect() as c:
@@ -131,6 +136,7 @@ async def run_kind(kind: str, request: Request, *, slug: str | None, version: in
         req.agent, req.version, req.secret_names = agent, ver, list(secrets)
         req.recent_inputs = [r["input"] for r in db.list_runs(agent["id"], limit=60)]
         req.generation = _generation_count(agent["id"], kind)
+        req.recent_results = list(reversed(_recent_results[(agent["id"], kind)]))
     try:
         prepared = spec.build_context(req)
     except ValueError as exc:
@@ -146,6 +152,8 @@ async def run_kind(kind: str, request: Request, *, slug: str | None, version: in
         log.exception("assist %s failed for %s", kind, slug)
         raise HTTPException(502, f"The assist model call failed: {type(exc).__name__}: {exc}") from exc
     reply = engine.redact(reply, list(secrets.values()))
+    if agent is not None and spec.result_text is not None and (text := spec.result_text(reply["result"])):
+        _recent_results[(agent["id"], kind)].append(text)
     return reply, source, ver, prepared
 
 

@@ -25,6 +25,7 @@ class AssistRequest:
     recent_inputs: list[str] = field(default_factory=list)  # newest first, all sources
     secret_names: list[str] = field(default_factory=list)  # names only, never values
     generation: int = 0  # earlier calls of this kind for this agent (for variety)
+    recent_results: list[str] = field(default_factory=list)  # this kind's last results for the agent, newest first
     source: str = "ui"  # ui | api | share
 
 
@@ -47,6 +48,8 @@ class AssistKind:
     share_allowed: bool = False
     needs_agent: bool = True
     fake: Callable[[str], dict[str, Any]] | None = None  # fake:grader reply {result, rationale} given the request
+    # The text a result contributes to later `avoid` lists (the server remembers recent results per agent and kind).
+    result_text: Callable[[dict[str, Any]], str] | None = None
 
 
 _KINDS: dict[str, AssistKind] = {}
@@ -55,7 +58,8 @@ _KINDS: dict[str, AssistKind] = {}
 def register(kind: str, build_context: Callable[[AssistRequest], Prepared], system_prompt: str,
              schema: dict[str, Any], validate: Callable[[dict[str, Any], dict[str, Any]], list[str]], *,
              share_allowed: bool = False, needs_agent: bool = True,
-             fake: Callable[[str], dict[str, Any]] | None = None) -> AssistKind:
+             fake: Callable[[str], dict[str, Any]] | None = None,
+             result_text: Callable[[dict[str, Any]], str] | None = None) -> AssistKind:
     import re
 
     if not re.match(_KIND_RE, kind):
@@ -66,7 +70,8 @@ def register(kind: str, build_context: Callable[[AssistRequest], Prepared], syst
         raise ValueError("an assist schema must be an object with additionalProperties false")
     if any(k.system_prompt == system_prompt for k in _KINDS.values()):
         raise ValueError("each assist kind needs its own system prompt")
-    spec = AssistKind(kind, build_context, system_prompt, schema, validate, share_allowed, needs_agent, fake)
+    spec = AssistKind(kind, build_context, system_prompt, schema, validate, share_allowed, needs_agent, fake,
+                      result_text)
     _KINDS[kind] = spec
     return spec
 

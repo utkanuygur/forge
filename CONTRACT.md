@@ -293,7 +293,9 @@ Alias: `POST /v1/agents/{slug}/sample-task` body `{version?, hint?, avoid?}` is 
 
 ### Kind `task`
 
-`input`: `{hint?: str, current?: str}` (`current`, the text already in the box, is avoided like `avoid`).
+`input`: `{hint?: str, current?: str}` (`current`, the text already in the box, is avoided like `avoid`). The
+server also remembers the agent's last 10 task results in memory (registry `result_text`) and shows them as
+earlier suggestions, so plain API calls differ too; unlike `avoid` they guide the model but are not validated.
 `result`: `{title, prompt}`. The prompt asks for ONE concrete, self-contained task a real user would send,
 solvable in the sandbox with the given files and tools (offline when network is off, no unconfigured
 credentials), naming real files, endpoints or columns, 1 to 4 sentences phrased as a teammate's request, with a

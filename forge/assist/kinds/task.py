@@ -38,7 +38,8 @@ task must not need the internet, package downloads or external APIs. Never requi
 configured secret names listed in the request, and never include secret values.
 - Fits the agent's purpose as described by its name, description and system prompt.
 - Phrased as a request from a teammate, in 1 to 4 sentences, in plain language, without preamble like "Task:".
-- Different from every recent input and every text in the avoid list, in substance and not just wording.
+- Different from every recent input, every text in the avoid list and every earlier suggestion, in substance \
+(a different problem, file or capability) and not just wording.
 - Match the requested variety (type and difficulty) when it fits this agent; otherwise pick the nearest fit.
 
 Put a short title (2 to 8 words, no trailing period) and the task text in result. Give a one sentence rationale \
@@ -86,6 +87,9 @@ def build_context(req: AssistRequest) -> Prepared:
     parts = [C.render_agent_context(ctx)]
     if avoid:
         parts.append(C.bullets("avoid", avoid))
+    earlier = [t for t in C.dedupe(req.recent_results, C.MAX_RECENT) if t not in avoid]
+    if earlier:
+        parts.append(C.bullets("earlier_suggestions", earlier))
     parts.append(f"<variety>\n{variety}\n</variety>")
     if hint:
         parts.append(f"<hint>\n{hint}\n</hint>")
@@ -97,7 +101,7 @@ def build_context(req: AssistRequest) -> Prepared:
                      "excerpts": [p for p, _ in ctx["excerpts"]],
                      "excerpt_chars": sum(len(e) for _, e in ctx["excerpts"]),
                      "system_prompt_chars": ctx["system_prompt_chars"], "recent_inputs": len(ctx["recent_inputs"]),
-                     "avoid": len(avoid)})
+                     "avoid": len(avoid), "earlier_suggestions": len(earlier)})
 
 
 def validate(result: dict[str, Any], data: dict[str, Any]) -> list[str]:
@@ -118,4 +122,5 @@ def validate(result: dict[str, Any], data: dict[str, Any]) -> list[str]:
     return errs
 
 
-SPEC = register(KIND, build_context, SYSTEM, SCHEMA, validate, share_allowed=True, needs_agent=True, fake=fake)
+SPEC = register(KIND, build_context, SYSTEM, SCHEMA, validate, share_allowed=True, needs_agent=True, fake=fake,
+                result_text=lambda r: str(r.get("prompt") or ""))

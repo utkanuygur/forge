@@ -324,6 +324,15 @@ def test_secret_values_never_reach_context_or_results(client, monkeypatch):
     assert "sk-very-secret" not in p.calls[0]["user"] and "configured secrets: API_TOKEN" in p.calls[0]["user"]
 
 
+def test_server_remembers_earlier_results_as_soft_avoid(client):
+    """Without any avoid list, consecutive calls differ because earlier results are shown to the model; once every
+    fake task was suggested, a repeat is still accepted (earlier suggestions are guidance, not validation)."""
+    prompts = [client.post("/v1/assist/task", json={"slug": "s"}).json()["result"]["prompt"] for _ in range(4)]
+    assert prompts[:3] == [t["prompt"] for t in FAKE] and prompts[3] == FAKE[0]["prompt"]
+    d = client.post("/v1/assist/task", json={"slug": "s"}).json()
+    assert d["diagnostics"]["earlier_suggestions"] == 3
+
+
 def test_502_when_model_fails_twice(client, monkeypatch):
     from forge.server import evals
 
