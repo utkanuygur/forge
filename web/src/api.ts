@@ -1,10 +1,66 @@
 // Typed client for the Forge HTTP API. Shapes mirror CONTRACT.md.
 
-export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "timeout";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "timeout"
+  // governance
+  | "awaiting_approval"
+  | "budget_exceeded";
 export type Split = "train" | "holdout";
 export type CreatedBy = "human" | "optimizer";
 export type ImprovementStatus = "running" | "promoted" | "eligible" | "rejected" | "failed";
-export type EventType = "run_started" | "assistant" | "tool_call" | "tool_result" | "run_finished" | "error";
+export type EventType =
+  | "run_started"
+  | "assistant"
+  | "tool_call"
+  | "tool_result"
+  | "run_finished"
+  | "error"
+  // governance
+  | "approval_requested"
+  | "approval_resolved"
+  | "budget_warning";
+
+export type ApprovalMode = "ask" | "deny";
+
+export interface PolicyRule {
+  tool: string;
+  pattern?: string | null;
+  mode: ApprovalMode;
+  label?: string | null;
+}
+
+export interface ApprovalPolicy {
+  rules?: PolicyRule[];
+  timeout_seconds?: number;
+}
+
+export interface Approval {
+  id: string;
+  run_id: string;
+  tool_call_id: string;
+  name: string;
+  args: Record<string, unknown>;
+  rule: PolicyRule & { index: number; description: string };
+  status: "pending" | "approved" | "denied" | "expired";
+  note: string;
+  resolved_by: string | null;
+  created_at: number;
+  expires_at: number;
+  resolved_at: number | null;
+}
+
+export interface Governance {
+  monthly_budget_usd: number | null;
+  month_to_date_usd: number;
+  fraction: number | null;
+  state: "none" | "ok" | "warning" | "exceeded";
+  pending_approvals: number;
+  awaiting_runs: string[];
+}
 
 export interface Version {
   id: string;
@@ -23,6 +79,8 @@ export interface Version {
   created_at: number;
   // Per-lesson provenance keyed by lesson text (see CONTRACT.md "Lesson provenance").
   lesson_meta?: Record<string, LessonMeta>;
+  approval_policy?: ApprovalPolicy;
+  max_run_cost_usd?: number | null;
 }
 
 export interface PruneNote {
@@ -54,6 +112,10 @@ export interface Agent {
   share_token: string;
   created_at: number;
   versions?: Version[];
+  monthly_budget_usd?: number | null;
+  month_to_date_usd?: number;
+  budget_state?: Governance["state"];
+  pending_approvals?: number;
 }
 
 export interface AgentCreated extends Agent {
@@ -93,7 +155,7 @@ export interface Run {
   eval_case_id?: string | null;
   // Not in CONTRACT.md; used if the backend includes it.
   agent_slug?: string;
-  // Observability (additive): null cost means the model's price is unknown.
+  // Observability and governance (additive): the stored run cost; null means the model's price is unknown.
   duration_ms?: number | null;
   cost_usd?: number | null;
   cost_note?: string;
@@ -114,7 +176,9 @@ export interface Health {
   succeeded: number;
   failed: number;
   timeout: number;
+  budget_exceeded?: number;
   in_progress: number;
+  awaiting_approval?: number;
   success_rate: number | null;
   p50_ms: number | null;
   p95_ms: number | null;
@@ -140,6 +204,7 @@ export interface SeriesPoint {
   succeeded: number;
   failed: number;
   timeout: number;
+  budget_exceeded?: number;
   in_progress: number;
   cost_usd: number;
   success_rate: number | null;
@@ -294,6 +359,7 @@ export interface Timeline {
   total_ms: number;
   model_ms: number;
   tool_ms: number;
+  approval_ms?: number; // governance: approval waits, excluded from tool_ms
   other_ms: number;
   queue_ms: number | null;
   turns: number;
@@ -448,6 +514,8 @@ export interface NewVersionBody {
   network?: boolean;
   seed_files?: Record<string, string>;
   rationale?: string;
+  approval_policy?: ApprovalPolicy;
+  max_run_cost_usd?: number | null;
 }
 
 export interface NewEvalBody {
@@ -534,7 +602,16 @@ export const api = {
   listAgents: () => request<Agent[]>("GET", "/agents"),
   getAgent: (slug: string, share?: string) => request<Agent>("GET", `/agents/${enc(slug)}`, undefined, share),
   createAgent: (body: CreateAgentBody) => request<AgentCreated>("POST", "/agents", body),
-  patchAgent: (slug: string, body: { name?: string; description?: string; auto_promote?: boolean; eval_repeats?: number }) =>
+  patchAgent: (
+    slug: string,
+    body: {
+      name?: string;
+      description?: string;
+      auto_promote?: boolean;
+      eval_repeats?: number;
+      monthly_budget_usd?: number | null;
+    },
+  ) =>
     request<Agent>("PATCH", `/agents/${enc(slug)}`, body),
   createVersion: (slug: string, body: NewVersionBody) =>
     request<Version>("POST", `/agents/${enc(slug)}/versions`, body),
@@ -577,6 +654,13 @@ export const api = {
   },
   feedback: (id: string, rating: 1 | -1, comment: string, share?: string) =>
     request<Feedback>("POST", `/runs/${enc(id)}/feedback`, { rating, comment }, share),
+
+  // governance
+  listApprovals: (runId: string, share?: string) =>
+    request<Approval[]>("GET", `/runs/${enc(runId)}/approvals`, undefined, share),
+  resolveApproval: (runId: string, approvalId: string, decision: "approve" | "deny", note = "") =>
+    request<Approval>("POST", `/runs/${enc(runId)}/approvals/${enc(approvalId)}`, { decision, note }),
+  governance: (slug: string) => request<Governance>("GET", `/agents/${enc(slug)}/governance`),
 
   // improvement
   listEvals: (slug: string) => request<EvalCase[]>("GET", `/agents/${enc(slug)}/evals`),
@@ -653,5 +737,10 @@ export function fmtDuration(run: Pick<Run, "started_at" | "ended_at" | "status">
 }
 
 export function isTerminal(status: RunStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "timeout";
+  return status === "succeeded" || status === "failed" || status === "timeout" || status === "budget_exceeded";
+}
+
+export function fmtUsd(x: number | null | undefined): string {
+  const v = Number(x || 0);
+  return v === 0 || v >= 0.01 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
 }

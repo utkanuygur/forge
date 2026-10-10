@@ -25,6 +25,7 @@ export const STATUS_KEYS: SeriesKey[] = [
   { key: "succeeded", label: "Succeeded", fill: "fill-emerald-500 dark:fill-emerald-600" },
   { key: "failed", label: "Failed", fill: "fill-red-500 dark:fill-red-600" },
   { key: "timeout", label: "Timeout", fill: "fill-amber-500" },
+  { key: "budget_exceeded", label: "Over budget", fill: "fill-orange-700 dark:fill-orange-600" },
   { key: "in_progress", label: "In progress", fill: "fill-blue-500" },
 ];
 
@@ -32,6 +33,7 @@ export const SWATCH_BG: Record<string, string> = {
   succeeded: "bg-emerald-500 dark:bg-emerald-600",
   failed: "bg-red-500 dark:bg-red-600",
   timeout: "bg-amber-500",
+  budget_exceeded: "bg-orange-700 dark:bg-orange-600",
   in_progress: "bg-blue-500",
   spend: "bg-accent-500",
   model: "bg-accent-500",

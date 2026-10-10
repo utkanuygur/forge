@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { FileText, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { api, errMsg, fmtTime, type Agent, type LessonMeta, type Version } from "../../api";
+import { api, errMsg, fmtTime, type Agent, type ApprovalPolicy, type LessonMeta, type Version } from "../../api";
+import PolicyEditor, { MonthlyBudgetSetting, RunCapField, normalizePolicy, parseUsd } from "../../components/PolicyEditor";
 import { ModelField, NetworkField, ToolsField } from "../../components/ConfigFields";
 import { useToast } from "../../components/Toast";
 import { Badge, CreatedByBadge, Empty, ErrorBox, Modal, Section, Toggle } from "../../components/ui";
@@ -96,6 +97,8 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
   const [network, setNetwork] = useState(false);
   const [seeds, setSeeds] = useState<Record<string, string>>({});
   const [rationale, setRationale] = useState("");
+  const [policy, setPolicy] = useState<ApprovalPolicy>({});
+  const [runCap, setRunCap] = useState("");
   const [editing, setEditing] = useState<{ path: string; content: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +111,8 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
     setNetwork(v.network);
     setSeeds(v.seed_files || {});
     setRationale("");
+    setPolicy(v.approval_policy || {});
+    setRunCap(v.max_run_cost_usd == null ? "" : String(v.max_run_cost_usd));
   }
   useEffect(() => reset(prod), [prod?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -117,7 +122,10 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
       model !== prod.model ||
       network !== prod.network ||
       JSON.stringify([...tools].sort()) !== JSON.stringify([...prod.tools].sort()) ||
-      JSON.stringify(seeds) !== JSON.stringify(prod.seed_files || {}));
+      JSON.stringify(seeds) !== JSON.stringify(prod.seed_files || {}) ||
+      JSON.stringify(normalizePolicy(policy)) !== JSON.stringify(normalizePolicy(prod.approval_policy)) ||
+      parseUsd(runCap) !== (prod.max_run_cost_usd ?? null));
+  const capInvalid = parseUsd(runCap) === undefined;
 
   async function save() {
     setBusy(true);
@@ -130,6 +138,8 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
         network,
         seed_files: seeds,
         rationale,
+        approval_policy: normalizePolicy(policy),
+        max_run_cost_usd: parseUsd(runCap) ?? null,
       });
       toast(`Saved v${v.n}. Promote it to put it in production.`);
       onChanged();
@@ -210,6 +220,8 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
             <ModelField value={model} onChange={setModel} />
             <ToolsField value={tools} onChange={setTools} />
             <NetworkField value={network} onChange={setNetwork} />
+            <PolicyEditor value={policy} onChange={setPolicy} network={network} />
+            <RunCapField value={runCap} onChange={setRunCap} />
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="label mb-0">Seed files</span>
@@ -261,7 +273,7 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
               <button className="btn-secondary" disabled={!dirty || busy} onClick={() => reset(prod)}>
                 Discard
               </button>
-              <button className="btn-primary" disabled={!dirty || busy} onClick={save}>
+              <button className="btn-primary" disabled={!dirty || busy || capInvalid} onClick={save}>
                 {busy ? "Saving..." : "Save as new version"}
               </button>
             </div>
@@ -295,6 +307,9 @@ export default function ConfigureTab({ agent, onChanged }: { agent: Agent; onCha
                 ))}
               </select>
               <p className="mt-1 text-xs text-neutral-500">Each eval case runs this many times per version and passes on a strict majority.</p>
+            </div>
+            <div className="mt-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <MonthlyBudgetSetting agent={agent} onChanged={onChanged} />
             </div>
           </div>
         </Section>

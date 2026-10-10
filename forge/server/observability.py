@@ -43,10 +43,9 @@ def price_view(model: str | None) -> dict:
     return {"model": model, **pricing.price_for(model).to_dict()}
 
 
-def cost_fields(model: str | None, tokens_in: int, tokens_out: int) -> dict:
-    """Additive Run fields: `cost_usd` (null for unknown prices) and `cost_note`."""
-    return {"cost_usd": pricing.cost(model, tokens_in or 0, tokens_out or 0),
-            "cost_note": pricing.price_for(model).note}
+def cost_fields(run: dict, model: str | None) -> dict:
+    """Additive Run fields: the stored `cost_usd` (null for unknown prices) and `cost_note`."""
+    return {"cost_usd": run.get("cost_usd"), "cost_note": pricing.price_for(model).note}
 
 
 def _versions(agent_id: str) -> dict[str, dict]:
@@ -55,16 +54,15 @@ def _versions(agent_id: str) -> dict[str, dict]:
 
 
 def _annotate(runs: list[dict], versions: dict[str, dict]) -> list[dict]:
-    """Adds version_n, model and cost_usd (None for unknown prices) to run rows."""
+    """Adds version_n and model to run rows (cost_usd is the stored runs.cost_usd, None for unknown prices)."""
     for r in runs:
         v = versions.get(r["version_id"]) or {}
         r["version_n"], r["model"] = v.get("n"), v.get("model")
-        r["cost_usd"] = pricing.cost(r["model"], r["tokens_in"], r["tokens_out"])
     return runs
 
 
 RUN_COLS = ("r.id, r.agent_id, r.version_id, r.source, r.status, r.error, r.turns, r.tokens_in, r.tokens_out, "
-            "r.cache_read_tokens, r.cache_write_tokens, "
+            "r.cache_read_tokens, r.cache_write_tokens, r.cost_usd, "
             "r.created_at, r.started_at, r.ended_at, r.eval_case_id, substr(r.input, 1, 160) AS input")
 
 
@@ -174,15 +172,7 @@ def search_runs(*, agent_id: str | None = None, status: str | None = None, versi
     if sort == "duration":
         key = "(r.ended_at - r.started_at)"
     elif sort == "cost":
-        models = [m["model"] for m in _rows("SELECT DISTINCT model FROM agent_versions")]
-        cin, cout = [], []
-        for m in models:
-            p = pricing.price_for(m)
-            cin += [m, p.input or 0.0]
-            cout += [m, p.output or 0.0]
-        case = lambda: "CASE v.model " + " ".join("WHEN ? THEN ?" for _ in models) + " ELSE 0 END"  # noqa: E731
-        key = f"(r.tokens_in * {case()} + r.tokens_out * {case()})" if models else "0"
-        sort_args = cin + cout if models else []
+        key = "r.cost_usd"
     else:
         key = "r.created_at"
     with db.connect() as c:
@@ -246,7 +236,7 @@ async def run_timeline(run_id: str, request: Request) -> dict:
     tl = metrics.build_timeline(r, db.list_events(run_id))
     tl.update(tokens_in=r["tokens_in"], tokens_out=r["tokens_out"], cache_read_tokens=r.get("cache_read_tokens") or 0,
               cache_write_tokens=r.get("cache_write_tokens") or 0, price=price_view(v.get("model")),
-              **cost_fields(v.get("model"), r["tokens_in"], r["tokens_out"]))
+              **cost_fields(r, v.get("model")))
     return tl
 
 
@@ -287,7 +277,7 @@ def _improvement_costs(agent_id: str, since: float, versions: dict[str, dict]) -
     for g in grader_rows:
         grader[g["improvement_id"]].append(g)
     runs: dict[str, list[dict]] = defaultdict(list)
-    for r in _rows("SELECT ir.improvement_id, r.version_id, r.tokens_in, r.tokens_out FROM improvement_runs ir "
+    for r in _rows("SELECT ir.improvement_id, r.version_id, r.tokens_in, r.tokens_out, r.cost_usd FROM improvement_runs ir "
                    "JOIN runs r ON r.id = ir.run_id WHERE r.agent_id = ?", (agent_id,)):
         runs[r["improvement_id"]].append(r)
     out = []
@@ -295,7 +285,7 @@ def _improvement_costs(agent_id: str, since: float, versions: dict[str, dict]) -
                     "WHERE agent_id = ? AND created_at >= ? ORDER BY created_at DESC", (agent_id, since)):
         eval_cost, unknown, tin, tout = 0.0, False, 0, 0
         for r in runs.get(im["id"], []):
-            c = pricing.cost((versions.get(r["version_id"]) or {}).get("model"), r["tokens_in"], r["tokens_out"])
+            c = r["cost_usd"]
             unknown |= c is None
             eval_cost += c or 0.0
             tin, tout = tin + r["tokens_in"], tout + r["tokens_out"]
@@ -473,7 +463,7 @@ def overview(days: float, include_eval: bool = False, tz_offset_min: int = 0, no
             reasons.append({**reason, "agent": a["slug"], "agent_name": a["name"]})
         agent_rows.append({
             "slug": a["slug"], "name": a["name"], "prod_version": (versions.get(a["prod_version_id"]) or {}).get("n"),
-            "health": h, "failing_runs": h["failed"] + h["timeout"], "flagged_runs": br["runs"],
+            "health": h, "failing_runs": h["failed"] + h["timeout"] + h["budget_exceeded"], "flagged_runs": br["runs"],
             "last_run_at": last_run.get(aid),
             "spark": [b["runs"] for b in metrics.series(rs, since, until, size, tz)],
         })
@@ -554,17 +544,16 @@ async def healthz() -> JSONResponse:
 
 def prometheus_families() -> list[dict]:
     slug = {a["id"]: a["slug"] for a in _rows("SELECT id, slug FROM agents")}
-    models = {v["id"]: v["model"] for v in _rows("SELECT id, model FROM agent_versions")}
     runs_total, tokens, cost, durations = [], defaultdict(int), defaultdict(float), defaultdict(list)
     for row in _rows("SELECT agent_id, status, source, COUNT(*) AS n FROM runs GROUP BY agent_id, status, source"):
         runs_total.append(("forge_runs_total", {"agent": slug.get(row["agent_id"], row["agent_id"]),
                                                 "status": row["status"], "source": row["source"]}, row["n"]))
-    for row in _rows("SELECT agent_id, version_id, SUM(tokens_in) AS tin, SUM(tokens_out) AS tout FROM runs "
-                     "GROUP BY agent_id, version_id"):
+    for row in _rows("SELECT agent_id, SUM(tokens_in) AS tin, SUM(tokens_out) AS tout, "
+                     "COALESCE(SUM(cost_usd), 0) AS cost FROM runs GROUP BY agent_id"):
         a = slug.get(row["agent_id"], row["agent_id"])
         tokens[(a, "input")] += row["tin"] or 0
         tokens[(a, "output")] += row["tout"] or 0
-        cost[a] += pricing.cost(models.get(row["version_id"]), row["tin"] or 0, row["tout"] or 0) or 0.0
+        cost[a] += row["cost"] or 0.0
     for row in _rows("SELECT agent_id, ended_at - started_at AS d FROM runs WHERE ended_at IS NOT NULL "
                      "AND started_at IS NOT NULL"):
         durations[slug.get(row["agent_id"], row["agent_id"])].append(max(0.0, row["d"]))
@@ -572,7 +561,8 @@ def prometheus_families() -> list[dict]:
         "forge_run_duration_seconds", {"agent": a}, vals)]
     tools = _rows("SELECT json_extract(payload, '$.name') AS tool, coalesce(json_extract(payload, '$.is_error'), 0) "
                   "AS err, COUNT(*) AS n FROM events WHERE type = 'tool_result' GROUP BY 1, 2")
-    active = _rows("SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued', 'running')")[0]["n"]
+    active = _rows("SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued', 'running', 'awaiting_approval')")[0]["n"]
+    awaiting = _rows("SELECT COUNT(*) AS n FROM runs WHERE status = 'awaiting_approval'")[0]["n"]
     ims = _rows("SELECT status, COUNT(*) AS n FROM improvements GROUP BY status")
     return [
         {"name": "forge_runs_total", "type": "counter", "help": "Runs by agent, status and source.",
@@ -587,8 +577,12 @@ def prometheus_families() -> list[dict]:
         {"name": "forge_tool_calls_total", "type": "counter", "help": "Tool calls by tool name and error flag.",
          "samples": [("forge_tool_calls_total", {"tool": t["tool"] or "unknown", "error": "true" if t["err"] else "false"},
                       t["n"]) for t in tools]},
-        {"name": "forge_active_runs", "type": "gauge", "help": "Runs currently queued or running.",
+        {"name": "forge_active_runs", "type": "gauge",
+         "help": "Runs currently queued, running or awaiting approval.",
          "samples": [("forge_active_runs", {}, active)]},
+        {"name": "forge_runs_awaiting_approval", "type": "gauge",
+         "help": "Runs paused on a pending tool call approval.",
+         "samples": [("forge_runs_awaiting_approval", {}, awaiting)]},
         {"name": "forge_improvements_total", "type": "counter", "help": "Improvement cycles by status.",
          "samples": [("forge_improvements_total", {"status": i["status"]}, i["n"]) for i in ims]},
     ]

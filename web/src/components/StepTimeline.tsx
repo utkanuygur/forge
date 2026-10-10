@@ -6,6 +6,7 @@ import { layoutTimeline, timeShares } from "../lib/timeline";
 import { SWATCH_BG, useWidth } from "./charts/Charts";
 
 const MAX_ROWS = 40;
+const APPROVAL_BG = "bg-amber-400 dark:bg-amber-500"; // governance: waiting on a reviewer, not tool time
 
 /** Waterfall of a run's model turns and tool calls on one time axis, with a model vs tool summary. */
 export default function StepTimeline({ runId, refreshKey }: { runId: string; refreshKey?: unknown }) {
@@ -39,7 +40,8 @@ export default function StepTimeline({ runId, refreshKey }: { runId: string; ref
 
   const { rows, ticks, axisMs } = layoutTimeline(tl.spans, tl.total_ms, width < 480 ? 3 : 5);
   const shown = all ? rows : rows.slice(0, MAX_ROWS);
-  const share = timeShares(tl.model_ms, tl.tool_ms, tl.total_ms);
+  const approvalMs = tl.approval_ms ?? 0;
+  const share = timeShares(tl.model_ms, tl.tool_ms, tl.total_ms, approvalMs);
   const narrow = width < 560;
 
   return (
@@ -54,6 +56,12 @@ export default function StepTimeline({ runId, refreshKey }: { runId: string; ref
             <span className={`inline-block h-2.5 w-2.5 rounded-sm ${SWATCH_BG.tool}`} aria-hidden /> Tools{" "}
             <span className="font-medium tabular-nums" data-testid="tool-time">{fmtMs(tl.tool_ms)}</span>
           </span>
+          {approvalMs > 0 && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className={`inline-block h-2.5 w-2.5 rounded-sm ${APPROVAL_BG}`} aria-hidden /> Approval wait{" "}
+              <span className="font-medium tabular-nums" data-testid="approval-time">{fmtMs(approvalMs)}</span>
+            </span>
+          )}
           <span className="inline-flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
             <span className="inline-block h-2.5 w-2.5 rounded-sm bg-neutral-300 dark:bg-neutral-600" aria-hidden /> Other{" "}
             <span className="tabular-nums">{fmtMs(tl.other_ms)}</span>
@@ -66,6 +74,7 @@ export default function StepTimeline({ runId, refreshKey }: { runId: string; ref
         <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full" aria-label="Model time versus tool time" role="img">
           {share.model > 0 && <div className={SWATCH_BG.model} style={{ width: `${share.model * 100}%` }} />}
           {share.tool > 0 && <div className={SWATCH_BG.tool} style={{ width: `${share.tool * 100}%` }} />}
+          {share.approval > 0 && <div className={APPROVAL_BG} style={{ width: `${share.approval * 100}%` }} />}
           {share.other > 0 && <div className="bg-neutral-200 dark:bg-neutral-700" style={{ width: `${share.other * 100}%` }} />}
         </div>
         {tl.estimated && (
@@ -110,7 +119,7 @@ export default function StepTimeline({ runId, refreshKey }: { runId: string; ref
               </div>
               <div className="relative h-4 rounded bg-neutral-100 dark:bg-neutral-800/70" title={`${s.label}: ${fmtMs(s.duration_ms)} starting at ${fmtMs(s.start_ms)}`}>
                 <div
-                  className={`absolute inset-y-0.5 rounded-sm ${s.kind === "model" ? SWATCH_BG.model : SWATCH_BG.tool} ${s.is_error ? "ring-2 ring-red-500 ring-offset-1 ring-offset-white dark:ring-offset-neutral-900" : ""}`}
+                  className={`absolute inset-y-0.5 rounded-sm ${s.kind === "model" ? SWATCH_BG.model : s.kind === "approval" ? APPROVAL_BG : SWATCH_BG.tool} ${s.is_error ? "ring-2 ring-red-500 ring-offset-1 ring-offset-white dark:ring-offset-neutral-900" : ""}`}
                   style={{ left: `${s.left}%`, width: `${s.width}%` }}
                 />
               </div>

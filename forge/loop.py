@@ -209,13 +209,21 @@ async def run_agent(
     temperature: float | None = None,
     max_turns: int = 30,
     max_seconds: int = 600,
+    hooks: Any = None,
 ) -> RunResult:
+    """`hooks` (optional, see forge.governance.RunGovernor) may stop the run after a model turn
+    (`after_turn`) and replace a tool call's result (`before_tool`); time spent in `before_tool`, such as
+    waiting for a human approval, does not count toward `max_seconds` and is reported on the tool_result
+    as `approval_wait_ms`, apart from the tool's own `duration_ms`."""
     # Longest first so a secret containing another secret is fully redacted.
     secret_values = sorted({v for v in (secrets or {}).values() if v}, key=len, reverse=True)
     seq = 0
+    approvals_asked = 0
 
     async def send(type_: EventType, payload: dict[str, Any]) -> None:
-        nonlocal seq
+        nonlocal seq, approvals_asked
+        if type_ == "approval_requested":
+            approvals_asked += 1
         event = Event(run_id=run_id, seq=seq, ts=time.time(), type=type_, payload=redact(payload, secret_values))
         seq += 1
         await emit(event)
@@ -284,6 +292,11 @@ async def run_agent(
                                          **turn_usage})
                 turn_usage = None
             messages.append(Message(role="assistant", text=resp.text, tool_calls=resp.tool_calls))
+            if hooks is not None and (stop := await hooks.after_turn(result, send)):
+                result.status, result.error = stop
+                # A tool-only turn has not reported its usage yet; it goes on this event.
+                await send("error", {"message": result.error, "turn": result.turns, **(turn_usage or {})})
+                break
             if not resp.tool_calls:
                 result.status, result.output = "succeeded", resp.text
                 break
@@ -294,13 +307,26 @@ async def run_agent(
                     call_payload.update(model_duration_ms=model_ms, **turn_usage)
                     turn_usage = None
                 await send("tool_call", call_payload)
-                t_tool = time.monotonic()
+                timing: dict[str, Any] = {}
                 if truncated and i == len(resp.tool_calls) - 1:  # its arguments may be cut off mid-way
                     output, is_error = TRUNCATED_CALL, True
+                    t_tool = time.monotonic()
                 else:
-                    output, is_error = await _run_tool(call, executor, set(allowed), deadline)
+                    gated = None
+                    if hooks is not None:
+                        asked_before, paused = approvals_asked, time.monotonic()
+                        gated = await hooks.before_tool(call, send)
+                        waited = time.monotonic() - paused
+                        deadline += waited  # an approval wait does not count toward max_seconds
+                        if approvals_asked > asked_before:  # reported apart from the tool's own time
+                            timing["approval_wait_ms"] = round(waited * 1000, 1)
+                    t_tool = time.monotonic()
+                    if gated is not None:
+                        output, is_error = gated
+                    else:
+                        output, is_error = await _run_tool(call, executor, set(allowed), deadline)
                 await send("tool_result", {"id": call.id, "name": call.name, "output": output, "is_error": is_error,
-                                           "duration_ms": _ms_since(t_tool)})
+                                           "duration_ms": _ms_since(t_tool), **timing})
                 messages.append(Message(role="tool", tool_call_id=call.id, text=output, is_error=is_error))
     except asyncio.CancelledError:
         raise

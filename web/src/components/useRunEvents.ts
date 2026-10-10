@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type ForgeEvent } from "../api";
 
-const TYPES = ["run_started", "assistant", "tool_call", "tool_result", "run_finished", "error"];
+const TYPES = [
+  "run_started",
+  "assistant",
+  "tool_call",
+  "tool_result",
+  "run_finished",
+  "error",
+  "approval_requested",
+  "approval_resolved",
+  "budget_warning",
+];
 
 /** Streams a run's events over SSE, reconnecting from the last seq. Falls back to events.json. */
 export function useRunEvents(runId: string | undefined, share?: string) {

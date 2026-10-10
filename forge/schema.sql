@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS agents (
   prod_version_id  TEXT,
   auto_promote     INTEGER NOT NULL DEFAULT 0,
   eval_repeats     INTEGER,           -- runs per eval case (k); NULL = $FORGE_EVAL_REPEATS or 3
+  monthly_budget_usd REAL,            -- governance: null = no monthly budget
   api_key_hash     TEXT NOT NULL,
   share_token      TEXT NOT NULL UNIQUE,
   created_at       REAL NOT NULL
@@ -31,6 +32,8 @@ CREATE TABLE IF NOT EXISTS agent_versions (
   rationale      TEXT NOT NULL DEFAULT '',
   created_at     REAL NOT NULL,
   lesson_meta    TEXT NOT NULL DEFAULT '{}',   -- JSON {lesson text: provenance}, see CONTRACT.md
+  approval_policy TEXT NOT NULL DEFAULT '{}', -- governance: JSON, see forge/policy.py
+  max_run_cost_usd REAL,                      -- governance: null = no per-run cap
   UNIQUE (agent_id, n)
 );
 
@@ -47,7 +50,7 @@ CREATE TABLE IF NOT EXISTS runs (
   version_id     TEXT NOT NULL REFERENCES agent_versions(id),
   source         TEXT NOT NULL,     -- ui | share | api | eval | local
   input          TEXT NOT NULL,
-  status         TEXT NOT NULL,     -- queued | running | succeeded | failed | timeout
+  status         TEXT NOT NULL,     -- queued | running | awaiting_approval | succeeded | failed | timeout | budget_exceeded
   output         TEXT NOT NULL DEFAULT '',
   error          TEXT,
   artifact_path  TEXT,
@@ -57,6 +60,7 @@ CREATE TABLE IF NOT EXISTS runs (
   tokens_out     INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens   INTEGER NOT NULL DEFAULT 0,  -- prompt-cache reads (not included in tokens_in)
   cache_write_tokens  INTEGER NOT NULL DEFAULT 0,  -- prompt-cache writes (not included in tokens_in)
+  cost_usd       REAL,              -- USD from forge.pricing.cost, updated after each model turn; NULL = unknown price
   eval_case_id   TEXT,
   callback_url   TEXT,
   created_at     REAL NOT NULL,
@@ -168,3 +172,21 @@ CREATE TABLE IF NOT EXISTS improvement_runs (
   run_id          TEXT NOT NULL,
   PRIMARY KEY (improvement_id, run_id)
 );
+
+
+-- Governance: one row per tool call that matched an `ask` rule (forge/governance.py).
+CREATE TABLE IF NOT EXISTS approvals (
+  id            TEXT PRIMARY KEY,
+  run_id        TEXT NOT NULL REFERENCES runs(id),
+  tool_call_id  TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  args          TEXT NOT NULL DEFAULT '{}',   -- JSON, secrets redacted
+  rule          TEXT NOT NULL DEFAULT '{}',   -- JSON, the matched rule
+  status        TEXT NOT NULL,                -- pending | approved | denied | expired
+  note          TEXT NOT NULL DEFAULT '',
+  resolved_by   TEXT,                         -- ui | api | timeout | interrupted
+  created_at    REAL NOT NULL,
+  expires_at    REAL NOT NULL,
+  resolved_at   REAL
+);
+CREATE INDEX IF NOT EXISTS approvals_run ON approvals(run_id, created_at);

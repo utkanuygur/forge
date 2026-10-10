@@ -15,7 +15,8 @@ from typing import Any, Iterator
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
-JSON_COLUMNS = {"lessons", "lesson_meta", "tools", "http_tools", "seed_files", "payload", "summary"}
+JSON_COLUMNS = {"lessons", "lesson_meta", "tools", "http_tools", "seed_files", "payload", "summary", "approval_policy",
+                "args", "rule"}
 BOOL_COLUMNS = {"auto_promote", "network", "passed"}
 
 # ---------------------------------------------------------------- basics
@@ -64,30 +65,51 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 
 # Columns added after the first schema; CREATE TABLE IF NOT EXISTS does not add them to existing databases.
+# Keep in sync with schema.sql.
 ADDED_COLUMNS = {
-    "agents": {"eval_repeats": "INTEGER"},
-    "runs": {"cache_read_tokens": "INTEGER NOT NULL DEFAULT 0", "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0"},
+    "agents": {"eval_repeats": "INTEGER",
+               "monthly_budget_usd": "REAL"},  # governance: null = no monthly budget
+    "runs": {"cache_read_tokens": "INTEGER NOT NULL DEFAULT 0", "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
+             # The one stored run cost in USD (NULL = unknown price); written after each model turn by
+             # forge.governance.RunGovernor and again when the run is finalized. Backfilled when added.
+             "cost_usd": "REAL"},
     "eval_results": {"passes": "INTEGER", "runs": "INTEGER"},
     "improvements": {"kind": "TEXT NOT NULL DEFAULT 'improve'"},
-    "agent_versions": {"lesson_meta": "TEXT NOT NULL DEFAULT '{}'"},
+    "agent_versions": {"lesson_meta": "TEXT NOT NULL DEFAULT '{}'",
+                       "approval_policy": "TEXT NOT NULL DEFAULT '{}'",  # governance, see forge/policy.py
+                       "max_run_cost_usd": "REAL"},  # governance: null = no per-run cap
 }
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
+    added: set[tuple[str, str]] = set()
     for table, cols in ADDED_COLUMNS.items():
         have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         for col, decl in cols.items():
             if col not in have:
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                    added.add((table, col))
                 except sqlite3.OperationalError as exc:  # another process added it first
                     if "duplicate column" not in str(exc):
                         raise
+    if ("runs", "cost_usd") in added:
+        _backfill_run_costs(conn)
     # Single-run verdicts from before repeated evals become run 0 of their case.
     conn.execute("INSERT OR IGNORE INTO eval_run_results (version_id, case_id, idx, run_id, passed, reason, created_at) "
                  "SELECT version_id, case_id, 0, run_id, passed, reason, created_at FROM eval_results "
                  "WHERE passes IS NULL")
     conn.execute("UPDATE eval_results SET passes = passed, runs = 1 WHERE passes IS NULL")
+
+
+def _backfill_run_costs(conn: sqlite3.Connection) -> None:
+    """Runs recorded before runs.cost_usd existed get their cost from the same price function."""
+    from forge import pricing
+
+    rows = conn.execute("SELECT r.id, r.tokens_in, r.tokens_out, v.model FROM runs r "
+                        "LEFT JOIN agent_versions v ON v.id = r.version_id").fetchall()
+    conn.executemany("UPDATE runs SET cost_usd = ? WHERE id = ?",
+                     [(pricing.cost(r["model"], r["tokens_in"] or 0, r["tokens_out"] or 0), r["id"]) for r in rows])
 
 
 def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -177,7 +199,7 @@ def rotate_api_key(agent_id: str) -> str:
 # ---------------------------------------------------------------- versions
 
 VERSION_FIELDS = ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files",
-                  "parent_id", "created_by", "rationale", "lesson_meta")
+                  "parent_id", "created_by", "rationale", "lesson_meta", "approval_policy", "max_run_cost_usd")
 
 
 def create_version(agent_id: str, **fields: Any) -> dict:
@@ -188,7 +210,7 @@ def create_version(agent_id: str, **fields: Any) -> dict:
         row = {
             "id": new_id("v"), "agent_id": agent_id, "n": n, "lessons": [], "lesson_meta": {}, "http_tools": [],
             "network": False,
-            "seed_files": {}, "parent_id": None, "created_by": "human", "rationale": "",
+            "seed_files": {}, "parent_id": None, "created_by": "human", "rationale": "", "approval_policy": {},
             "tools": ["bash", "read_file", "write_file", "edit_file"],
             **{k: v for k, v in fields.items() if k in VERSION_FIELDS and v is not None},
             "created_at": now(),
@@ -250,11 +272,16 @@ def get_secrets(agent_id: str) -> dict[str, str]:
 
 def create_run(agent_id: str, version_id: str, source: str, input: str, *, status: str = "queued",
                eval_case_id: str | None = None, callback_url: str | None = None) -> dict:
+    from forge import pricing
+
     t = now()
+    v = get_version(version_id)
     row = {
         "id": new_id("r"), "agent_id": agent_id, "version_id": version_id, "source": source, "input": input,
         "status": status, "eval_case_id": eval_case_id, "callback_url": callback_url, "created_at": t,
         "started_at": t if status == "running" else None,
+        # 0.0 for a priced model, NULL for an unknown price (see forge.pricing.cost)
+        "cost_usd": pricing.cost(v["model"] if v else None, 0, 0),
     }
     _insert("runs", row)
     return get_run(row["id"])  # type: ignore[return-value]
@@ -272,6 +299,16 @@ def list_runs(agent_id: str, limit: int = 50, source: str | None = None) -> list
 
 
 def update_run(run_id: str, **fields: Any) -> dict | None:
+    """Updates a run. Writing token counts without an explicit `cost_usd` re-prices the run with
+    forge.pricing.cost, so the stored runs.cost_usd always matches its tokens and version model."""
+    if ("tokens_in" in fields or "tokens_out" in fields) and "cost_usd" not in fields:
+        from forge import pricing
+
+        r = _one("SELECT r.tokens_in, r.tokens_out, v.model FROM runs r LEFT JOIN agent_versions v "
+                 "ON v.id = r.version_id WHERE r.id = ?", run_id)
+        if r is not None:
+            fields["cost_usd"] = pricing.cost(r["model"], fields.get("tokens_in", r["tokens_in"]) or 0,
+                                              fields.get("tokens_out", r["tokens_out"]) or 0)
     _update("runs", "id", run_id, fields)
     return get_run(run_id)
 
@@ -279,7 +316,9 @@ def update_run(run_id: str, **fields: Any) -> dict | None:
 def fail_interrupted_runs() -> int:
     with connect() as c:
         cur = c.execute("UPDATE runs SET status = 'failed', error = 'interrupted', ended_at = ? "
-                        "WHERE status IN ('queued', 'running')", (now(),))
+                        "WHERE status IN ('queued', 'running', 'awaiting_approval')", (now(),))
+        c.execute("UPDATE approvals SET status = 'expired', resolved_by = 'interrupted', resolved_at = ? "
+                  "WHERE status = 'pending'", (now(),))
         return cur.rowcount
 
 

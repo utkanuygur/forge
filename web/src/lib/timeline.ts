@@ -2,7 +2,7 @@
 import { niceTicks } from "./scale";
 
 export interface TimelineSpan {
-  kind: "model" | "tool";
+  kind: "model" | "tool" | "approval"; // approval: time paused on a human reviewer (governance)
   label: string;
   turn: number;
   seq: number;
@@ -37,10 +37,16 @@ export function layoutTimeline(spans: TimelineSpan[], totalMs: number, tickCount
   return { rows, ticks, axisMs };
 }
 
-/** Shares of total time for the summary bar: model, tool and other (sandbox and bookkeeping). */
-export function timeShares(modelMs: number, toolMs: number, totalMs: number): { model: number; tool: number; other: number } {
-  const total = Math.max(totalMs, modelMs + toolMs, 1);
+/** Shares of total time for the summary bar: model, tool, approval wait and other (sandbox and bookkeeping). */
+export function timeShares(
+  modelMs: number,
+  toolMs: number,
+  totalMs: number,
+  approvalMs = 0,
+): { model: number; tool: number; approval: number; other: number } {
+  const total = Math.max(totalMs, modelMs + toolMs + approvalMs, 1);
   const model = modelMs / total;
   const tool = toolMs / total;
-  return { model, tool, other: Math.max(0, 1 - model - tool) };
+  const approval = approvalMs / total;
+  return { model, tool, approval, other: Math.max(0, 1 - model - tool - approval) };
 }

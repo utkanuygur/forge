@@ -256,7 +256,10 @@ def test_migration_adds_columns_and_backfills_single_run_results(tmp_path, monke
     schema = db.SCHEMA[:db.SCHEMA.index("-- One row per repeated eval run")]
     schema = "\n".join(line for line in schema.splitlines()
                        if not any(c in line for c in ("eval_repeats", "cache_read_tokens", "cache_write_tokens",
-                                                      "passes      INTEGER", "runs        INTEGER")))
+                                                      "passes      INTEGER", "runs        INTEGER",
+                                                      # governance columns
+                                                      "monthly_budget_usd", "approval_policy", "max_run_cost_usd",
+                                                      "cost_usd       REAL")))
     schema += db.SCHEMA[db.SCHEMA.index("CREATE TABLE IF NOT EXISTS improvements"):]
     old = sqlite3.connect(data / "forge.db")
     old.executescript(schema + """
@@ -266,6 +269,10 @@ def test_migration_adds_columns_and_backfills_single_run_results(tmp_path, monke
         INSERT INTO eval_cases VALUES ('ec_1', 'ag_1', 'c', 'i', '{}', 'shell', 'true', 'train', 1.0);
         INSERT INTO runs (id, agent_id, version_id, source, input, status, created_at)
           VALUES ('r_1', 'ag_1', 'v_1', 'eval', 'i', 'succeeded', 1.0);
+        INSERT INTO agent_versions (id, agent_id, n, system_prompt, model, tools, created_at)
+          VALUES ('v_2', 'ag_1', 2, 'p', 'anthropic:claude-haiku-5-5', '[]', 1.0);
+        INSERT INTO runs (id, agent_id, version_id, source, input, status, tokens_in, tokens_out, created_at)
+          VALUES ('r_2', 'ag_1', 'v_2', 'api', 'i', 'succeeded', 1000000, 1000000, 1.0);
         INSERT INTO eval_results VALUES ('v_1', 'ec_1', 'r_1', 1, 'passed', 1.0);
     """)
     assert "passes" not in {r[1] for r in old.execute("PRAGMA table_info(eval_results)")}
@@ -279,6 +286,9 @@ def test_migration_adds_columns_and_backfills_single_run_results(tmp_path, monke
     agent, _ = db.create_agent("a", "A")
     assert agent["eval_repeats"] is None
     assert db.update_agent(agent["id"], eval_repeats=5)["eval_repeats"] == 5
+    # governance: runs.cost_usd is added and backfilled with forge.pricing.cost; the policy column defaults to {}
+    assert db.get_run("r_1")["cost_usd"] == 0.0 and db.get_run("r_2")["cost_usd"] == pytest.approx(0.6)
+    assert db.get_version("v_1")["approval_policy"] == {} and db.get_agent("ag_1")["monthly_budget_usd"] is None
     db._initialized.clear()
     db.list_eval_results("v_1")  # migrating again is a no-op
     assert len(db.list_eval_run_results("v_1")) == 1

@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from forge import db
+from forge import budget, db, governance
 from forge.server import obslog
 from forge.server.views import run_view
 from forge.types import AgentVersion, Event, Executor, RunResult
@@ -25,6 +25,8 @@ class RunManager:
         self.semaphore = asyncio.Semaphore(max_concurrency or int(os.environ.get("FORGE_MAX_CONCURRENCY") or 8))
         self.tasks: dict[str, asyncio.Task] = {}
         self.after_results: dict[str, Any] = {}
+        self.approvals = governance.ApprovalRegistry()
+        self.background: set[asyncio.Task] = set()
 
     async def start_run(
         self,
@@ -39,6 +41,7 @@ class RunManager:
         after: After | None = None,
         temperature: float | None = None,
     ) -> str:
+        budget.ensure_budget(db.get_agent(agent["id"]) or agent)  # raises BudgetExceeded (HTTP 402)
         run = db.create_run(agent["id"], version["id"], source, input,
                             eval_case_id=eval_case["id"] if eval_case else None, callback_url=callback_url)
         seed: dict[str, bytes] = {k: v.encode() for k, v in (version.get("seed_files") or {}).items()}
@@ -46,7 +49,7 @@ class RunManager:
             seed.update({k: v.encode() for k, v in (eval_case.get("seed_files") or {}).items()})
         seed.update(seed_overrides or {})
         obslog.lifecycle("queued", run, agent["slug"])
-        task = asyncio.create_task(self._execute(run["id"], agent, version, input, seed, after, temperature))
+        task = asyncio.create_task(self._execute(run["id"], agent, version, input, seed, after, temperature, source))
         self.tasks[run["id"]] = task
         task.add_done_callback(lambda _t, rid=run["id"]: self.tasks.pop(rid, None))
         return run["id"]
@@ -58,7 +61,7 @@ class RunManager:
         return db.get_run(run_id)
 
     async def _execute(self, run_id: str, agent: dict, version: dict, input: str, seed: dict[str, bytes],
-                       after: After | None, temperature: float | None) -> None:
+                       after: After | None, temperature: float | None, source: str | None = None) -> None:
         from forge.executors import make_executor
         from forge.loop import run_agent
         from forge.providers import make_provider
@@ -78,8 +81,12 @@ class RunManager:
                 async def emit(e: Event) -> None:
                     db.append_event(run_id, e.seq, e.ts, e.type, e.payload)
 
+                # An awaiting_approval run keeps its concurrency slot (and its sandbox) while it waits.
+                hooks = governance.RunGovernor(run_id, agent, version, self.approvals, secrets,
+                                               on_approval_requested=lambda ap: self._notify_approval(run_id, ap),
+                                               source=source)
                 result = await run_agent(v, input, run_id=run_id, provider=make_provider(v.model), executor=executor,
-                                         emit=emit, secrets=secrets or None, temperature=temperature)
+                                         emit=emit, secrets=secrets or None, temperature=temperature, hooks=hooks)
                 if after is not None:
                     try:
                         self.after_results[run_id] = await after(executor, result)
@@ -97,8 +104,10 @@ class RunManager:
                     log.exception("export failed for %s", run_id)
             except Exception as exc:  # noqa: BLE001
                 log.exception("run %s failed", run_id)
+                usage = result.model_dump(include={"turns", "tokens_in", "tokens_out", "cache_read_tokens",
+                                                   "cache_write_tokens"}) if result else {}
                 result = RunResult(status="failed", output=result.output if result else "",
-                                   turns=result.turns if result else 0, error=f"{type(exc).__name__}: {exc}")
+                                   error=f"{type(exc).__name__}: {exc}", **usage)
                 seq = db.next_seq(run_id)
                 db.append_event(run_id, seq, time.time(), "error", {"message": result.error})
             finally:
@@ -114,7 +123,17 @@ class RunManager:
         if run and run["callback_url"]:
             await post_webhook(run["callback_url"], run_view(run))
 
+    async def _notify_approval(self, run_id: str, approval: dict) -> None:
+        """Posts the Run (status awaiting_approval) plus the pending `approval` to the run's callback_url."""
+        run = db.get_run(run_id)
+        if run and run["callback_url"]:
+            t = asyncio.create_task(post_webhook(run["callback_url"], {**run_view(run), "approval": approval}))
+            self.background.add(t)
+            t.add_done_callback(self.background.discard)
+
     def _finalize(self, run_id: str, result: RunResult) -> None:
+        # Writing the final token counts also re-prices runs.cost_usd (db.update_run), with the same function
+        # the governor used after each turn; it matters for turns that ended the run before after_turn.
         db.update_run(run_id, status=result.status, output=result.output, error=result.error, turns=result.turns,
                       tokens_in=result.tokens_in, tokens_out=result.tokens_out,
                       cache_read_tokens=result.cache_read_tokens, cache_write_tokens=result.cache_write_tokens,

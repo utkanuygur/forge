@@ -19,9 +19,11 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from forge import db
+from forge import budget, db
+from forge.policy import parse_policy
 from forge.provenance import lesson_provenance
 from forge.server import authoring, evals, observability, obslog, runs
+from forge.server import governance as governance_routes
 from forge.server.auth import authorize, require_local
 from forge.server.templates import TEMPLATES
 from forge.server.views import (agent_view, eval_case_view, event_view, feedback_view, improvement_view, run_view,
@@ -33,7 +35,7 @@ load_dotenv()
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 MAX_SEED_FILE = 1_000_000
-TERMINAL = {"succeeded", "failed", "timeout"}
+TERMINAL = {"succeeded", "failed", "timeout", "budget_exceeded"}
 
 
 @asynccontextmanager
@@ -103,6 +105,9 @@ class AgentCreate(BaseModel):
     lessons: list[str] | None = None
     auto_promote: bool = False
     eval_cases: list[EvalCaseIn] | None = None  # created with the agent (e.g. starter cases from a draft)
+    approval_policy: dict[str, Any] | None = None  # governance
+    max_run_cost_usd: float | None = Field(None, ge=0)  # governance
+    monthly_budget_usd: float | None = Field(None, ge=0)  # governance
 
 
 class AgentPatch(BaseModel):
@@ -110,6 +115,17 @@ class AgentPatch(BaseModel):
     description: str | None = None
     auto_promote: bool | None = None
     eval_repeats: int | None = Field(None, ge=1, le=evals.MAX_EVAL_REPEATS)
+    monthly_budget_usd: float | None = Field(None, ge=0)  # governance; explicit null removes the budget
+
+
+def checked_policy(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Validates an approval policy (400 when invalid) and returns it normalized."""
+    if raw is None:
+        return None
+    try:
+        return parse_policy(raw).model_dump(exclude_none=True)
+    except ValueError as exc:
+        raise HTTPException(400, f"invalid approval_policy: {exc}") from exc
 
 
 class VersionCreate(BaseModel):
@@ -121,6 +137,8 @@ class VersionCreate(BaseModel):
     network: bool | None = None
     seed_files: dict[str, str] | None = None
     rationale: str | None = None
+    approval_policy: dict[str, Any] | None = None  # governance
+    max_run_cost_usd: float | None = Field(None, ge=0)  # governance; explicit null removes the cap
 
 
 class Promote(BaseModel):
@@ -133,16 +151,20 @@ async def create_agent(body: AgentCreate) -> dict:
         raise HTTPException(400, "slug must be lowercase letters, digits and dashes")
     if db.get_agent_by_slug(body.slug):
         raise HTTPException(409, f"agent {body.slug!r} already exists")
+    policy = checked_policy(body.approval_policy)
     agent, key = db.create_agent(body.slug, body.name, body.description, body.auto_promote)
     v = db.create_version(
         agent["id"], system_prompt=body.system_prompt, model=body.model or evals.default_model(), tools=body.tools,
         http_tools=[t.model_dump() for t in body.http_tools] if body.http_tools else None, network=body.network,
-        seed_files=body.seed_files, lessons=body.lessons)
+        seed_files=body.seed_files, lessons=body.lessons, approval_policy=policy,
+        max_run_cost_usd=body.max_run_cost_usd)
     if body.lessons:
         db.set_lesson_meta(v["id"], lesson_provenance([], {}, v["lessons"], [], v["n"], origin="human"))
     for c in body.eval_cases or []:
         db.create_eval_case(agent["id"], c.name, c.input, c.checker_type, c.checker, c.split, c.seed_files)
     agent = db.set_prod_version(agent["id"], v["id"], "create")
+    if body.monthly_budget_usd is not None:
+        agent = db.update_agent(agent["id"], monthly_budget_usd=body.monthly_budget_usd)
     return {**agent_view(agent), "api_key": key}  # type: ignore[arg-type]
 
 
@@ -164,7 +186,10 @@ async def get_agent(slug: str, request: Request) -> dict:
 async def patch_agent(slug: str, body: AgentPatch, request: Request) -> dict:
     agent = agent_or_404(slug)
     authorize(request, agent, allow_share=False)
-    agent = db.update_agent(agent["id"], **body.model_dump(exclude_none=True))
+    fields = body.model_dump(exclude_none=True)
+    if "monthly_budget_usd" in body.model_fields_set:
+        fields["monthly_budget_usd"] = body.monthly_budget_usd
+    agent = db.update_agent(agent["id"], **fields)
     return agent_view(agent)  # type: ignore[arg-type]
 
 
@@ -173,8 +198,12 @@ async def create_version(slug: str, body: VersionCreate, request: Request) -> di
     agent = agent_or_404(slug)
     authorize(request, agent, allow_share=False)
     prod = version_or_404(agent, "prod")
-    fields = {k: prod[k] for k in ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files")}
+    fields = {k: prod[k] for k in ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files",
+                                   "approval_policy", "max_run_cost_usd")}
     fields.update(body.model_dump(exclude_none=True, exclude={"rationale"}))
+    if "max_run_cost_usd" in body.model_fields_set and body.max_run_cost_usd is None:
+        fields["max_run_cost_usd"] = None
+    fields["approval_policy"] = checked_policy(fields.get("approval_policy")) or {}
     v = db.create_version(agent["id"], **fields, parent_id=prod["id"], created_by="human",
                           rationale=body.rationale or "")
     meta = lesson_provenance(prod["lessons"], prod.get("lesson_meta"), v["lessons"], [], v["n"], origin="human")
@@ -501,6 +530,7 @@ async def run_evals(slug: str, request: Request, body: EvalRunIn = Body(default_
     agent = agent_or_404(slug)
     authorize(request, agent, allow_share=False)
     v = version_or_404(agent, body.version if body.version is not None else "prod")
+    budget.ensure_budget(agent)  # 402 when the monthly budget is used up
     evals.start_eval(agent, v)
     await asyncio.sleep(0)
     return evals.eval_summary(agent, v)
@@ -519,6 +549,7 @@ async def improve(slug: str, request: Request) -> dict:
     authorize(request, agent, allow_share=False)
     if any(i["status"] == "running" for i in db.list_improvements(agent["id"])):
         raise HTTPException(409, "an improvement is already running for this agent")
+    budget.ensure_budget(agent)  # 402 when the monthly budget is used up
     try:
         im = evals.start_improve(agent)
     except ValueError as exc:
@@ -546,6 +577,7 @@ app.include_router(api)
 app.include_router(observability.api)
 app.include_router(observability.ops)
 app.include_router(authoring.router)  # /v1/agent-drafts and /v1/agents/{slug}/prune (before the SPA catch-all)
+governance_routes.install(app)  # approvals, /v1/agents/{slug}/governance and the 402 handler
 
 # ---------------------------------------------------------------- SPA
 

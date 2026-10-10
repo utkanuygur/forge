@@ -271,7 +271,7 @@ Optional; events recorded before they existed simply lack them (consumers must t
 |---|---|
 | `assistant` | `turn` (1 based), `duration_ms` (model call latency), `tokens_in`, `tokens_out` (this turn only) |
 | `tool_call` | `turn`; the first call of a turn that produced no text also carries `model_duration_ms`, `tokens_in`, `tokens_out` (a tool-only turn emits no `assistant` event) |
-| `tool_result` | `duration_ms` (tool execution time) |
+| `tool_result` | `duration_ms` (tool execution time, excluding any approval wait); `approval_wait_ms` when the call waited on a human approval (governance) |
 | `error` | `duration_ms` when the model call itself failed; for a refused turn (see "Stop reasons") also `turn`, `duration_ms`, `tokens_in`, `tokens_out` |
 
 The per-turn usage on `assistant`, `tool_call` and refusal `error` events also carries `cache_read_tokens` and
@@ -279,8 +279,8 @@ The per-turn usage on `assistant`, `tool_call` and refusal `error` events also c
 
 ### Additive Run fields
 
-`duration_ms` (end minus start, null until finished), `cost_usd` (null when the model's price is unknown) and
-`cost_note` (`""`, `"self-hosted, not metered"` or `"unknown price"`). List endpoints also include `agent_slug`.
+`duration_ms` (end minus start, null until finished), `cost_usd` (the stored `runs.cost_usd`, see "Run cost"; null
+when the model's price is unknown) and `cost_note` (`""`, `"self-hosted, not metered"` or `"unknown price"`). List endpoints also include `agent_slug`.
 
 ### Pricing
 
@@ -289,18 +289,19 @@ USD per million tokens (input / output): `claude-opus-5-5` 4 / 20, `claude-sonne
 `claude-haiku-4-5` 1 / 5. `openai_compat:` and `fake:` models cost 0 and are labeled self-hosted (GPU time is billed
 by the GPU provider). Unknown `anthropic:` models have a null cost. `FORGE_PRICES` (JSON) overrides or extends the
 table: keys are full model strings or bare Anthropic ids, values `[input, output]` or `{"input": x, "output": y}`.
-Run cost uses `runs.tokens_in/out` and the run's version model. Prompt-cache tokens (`cache_read_tokens`,
+Run cost uses `runs.tokens_in/out` and the run's version model and is stored (see "Run cost" under Governance). Prompt-cache tokens (`cache_read_tokens`,
 `cache_write_tokens`) are not priced yet: `tokens_in` is the uncached input count, and cache counts are reported
 separately (Run objects, timelines, Health, per-version cost rows) until cache multipliers are documented here.
 
 ### Metric definitions
 
 - Production metrics exclude `source = "eval"` runs unless `include_eval=true`.
-- Success rate = succeeded / finished (succeeded, failed, timeout). Duration = `ended_at - started_at`; p50 and p95
+- Success rate = succeeded / finished (succeeded, failed, timeout, budget_exceeded). `in_progress` counts queued,
+  running and awaiting_approval runs; Health also reports `budget_exceeded` and `awaiting_approval` counts. Duration = `ended_at - started_at`; p50 and p95
   use linear interpolation. Thumbs up rate = +1 feedback items / all rated items.
 - Periods: `days` back from now; "previous" is the equally long period before it. Buckets are hourly for 2 days
   or less, daily otherwise, aligned to the client's local midnight via `tz_offset_min` (minutes east of UTC).
-- Failure categories: `timeout`, `model_error`, `sandbox_error` (executor, runtime or interrupted), `tool_errors`
+- Failure categories: `timeout`, `budget_exceeded` (per-run spending cap, label "Spending cap reached"), `model_error`, `sandbox_error` (executor, runtime or interrupted), `tool_errors`
   (runs with `is_error` tool results; `count` is the number of failed calls), `eval_failed` (first line of the
   checker reason; always included because it is its own category). `eval_failed` uses each repeated run's own
   verdict (`eval_run_results`), since the breakdown counts runs: a run whose check failed counts even when its case
@@ -316,7 +317,7 @@ All `/v1` routes below are builder-only: localhost (or the agent's API key for a
 |---|---|---|
 | GET | `/metrics/overview?days=14&include_eval=false&tz_offset_min=0` | `{days, since, until, bucket, summary: Health, previous: Health, kpis: {runs, success_rate, p95_ms, cost_usd, thumbs_up_rate: Delta}, series: [Bucket], agents: [{slug, name, prod_version, health, failing_runs, flagged_runs, last_run_at, spark: [runs per bucket]}], top_failure_reasons: [Failure + agent, agent_name], top_failing_agents}` (localhost only) |
 | GET | `/agents/{slug}/metrics?days=14&include_eval=false&tz_offset_min=0` | `{summary, previous, kpis, series, promotions, versions, cost, failures, tools, slowest_runs, prod_version, previous_prod_version, bucket, ...}` (below) |
-| GET | `/runs/{id}/timeline` | `{run_id, status, estimated, total_ms, model_ms, tool_ms, other_ms, queue_ms, turns, tool_calls, spans: [Span], tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, cost_usd, cost_note, price}` |
+| GET | `/runs/{id}/timeline` | `{run_id, status, estimated, total_ms, model_ms, tool_ms, approval_ms, other_ms, queue_ms, turns, tool_calls, spans: [Span], tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, cost_usd, cost_note, price}` |
 | GET | `/agents/{slug}/runs` | Extended with filters (below); still `[Run]`; total match count in the `X-Total-Count` header. Share-token callers only ever get share runs. |
 | GET | `/runs` | Same filters plus `agent=<slug>`, across agents (localhost only) |
 
@@ -370,6 +371,8 @@ Run filters (all optional): `status`, `version`, `source` (comma separated lists
  "estimated": false, "summary": "python hello.py"}
 ```
 
+A tool_result with `approval_wait_ms` adds a span `{"kind": "approval", "label": "Approval for <tool>", ...}` right
+before its tool span; that time is summed in `approval_ms` and excluded from `tool_ms` and `other_ms`.
 Timelines for runs recorded before the timing fields existed are built from event timestamps (`estimated: true`):
 a model turn spans from the previous step to the event that reports it, a tool call from `tool_call` to `tool_result`.
 Improvement cycle cost = its eval runs (all k repeated runs of each case, linked when the cycle starts them;
@@ -381,7 +384,7 @@ judged run).
 | Method | Path | Auth | Returns |
 |---|---|---|---|
 | GET | `/healthz` | none | `{"status": "ok" or "error", "executor", "components": {"database": {...}, "docker": {...}}, "time"}`; 200 when every component is ok or skipped, else 503. Docker (daemon and `FORGE_SANDBOX_IMAGE`) is checked only when `FORGE_EXECUTOR=docker` (the default), cached 10 s. |
-| GET | `/metrics` | localhost unless `FORGE_METRICS_PUBLIC=1` | Prometheus text: `forge_runs_total{agent,status,source}`, `forge_run_duration_seconds` histogram `{agent}`, `forge_tokens_total{agent,direction}`, `forge_cost_usd_total{agent}`, `forge_tool_calls_total{tool,error}`, `forge_active_runs`, `forge_improvements_total{status}` |
+| GET | `/metrics` | localhost unless `FORGE_METRICS_PUBLIC=1` | Prometheus text: `forge_runs_total{agent,status,source}`, `forge_run_duration_seconds` histogram `{agent}`, `forge_tokens_total{agent,direction}`, `forge_cost_usd_total{agent}`, `forge_tool_calls_total{tool,error}`, `forge_active_runs` (queued, running and awaiting_approval), `forge_runs_awaiting_approval`, `forge_improvements_total{status}`. `forge_runs_total` status labels include `awaiting_approval` and `budget_exceeded`; `forge_cost_usd_total` sums the stored run costs. |
 
 Structured logs: logger `forge.lifecycle` writes one JSON line per run event (`run_queued`, `run_started`,
 `run_finished` with status, duration_ms, tokens and cost_usd) carrying `run_id` and `agent`. On when
@@ -394,3 +397,88 @@ with `improvement_id` and the judged `run_id`), `improvement_runs` (eval runs st
 `runs(created_at)`. All are `CREATE ... IF NOT EXISTS`, so existing databases upgrade in place (columns added after the first schema,
 such as `runs.cache_read_tokens`, go through `forge.db.ADDED_COLUMNS`, applied by `_migrate` on connect). Promotions before
 this change are not known; an agent without records shows one synthetic promotion at its creation time.
+
+## Governance: approvals and spending caps (additive, feat/governance)
+
+All changes are additive; an agent without a policy, cap or budget behaves exactly as before.
+Logic lives in `forge/policy.py` (rule matching), `forge/budget.py` (month-to-date spend and the budget check),
+`forge/governance.py` (the `RunGovernor` hooks and the approval Future registry) and
+`forge/server/governance.py` (routes).
+
+### New fields
+
+| Object | Field | Notes |
+|---|---|---|
+| Version | `approval_policy` | `{"rules": [Rule], "timeout_seconds": 900}`; `{}` means no rules. Copied from prod into new versions and optimizer candidates. Invalid policies are a 400. |
+| Version | `max_run_cost_usd` | float or null (no cap). Explicit `null` in `POST /versions` removes the cap. |
+| Agent | `monthly_budget_usd` | float or null (no budget). Set on `POST /agents` or `PATCH /agents/{slug}` (explicit `null` removes it). |
+| Agent | `month_to_date_usd`, `budget_state`, `pending_approvals` | read only; `budget_state` is `none`, `ok`, `warning` (at 80%) or `exceeded` |
+| Run | `cost_usd` | stored spend, updated after every model turn (see "Run cost") |
+
+Rule: `{"tool": "bash"|"read_file"|"write_file"|"edit_file"|"*", "pattern"?: str, "mode": "ask"|"deny", "label"?: str}`.
+For `bash` the pattern is a regular expression searched in `cmd`; for file tools it is a path glob (`*` within
+a directory, `**` across directories, a glob without `/` also matches the file name anywhere). No pattern
+matches every call to the tool; `*` cannot have a pattern. A matching `deny` wins, otherwise the first
+matching `ask`. Database: additive columns `agents.monthly_budget_usd`, `agent_versions.approval_policy`,
+`agent_versions.max_run_cost_usd`, `runs.cost_usd` (added to existing databases on startup by
+`db.ADDED_COLUMNS`) and a new `approvals` table.
+
+### New run statuses
+
+| Status | Terminal | Meaning |
+|---|---|---|
+| `awaiting_approval` | no | Paused before a tool call that matched an `ask` rule; the sandbox stays alive. Server restart marks it `failed` with error `interrupted` (pending approvals become `expired`). |
+| `budget_exceeded` | yes | Cumulative estimated cost went over the version's `max_run_cost_usd`. |
+
+### New events
+
+| Type | Payload |
+|---|---|
+| `approval_requested` | `{id, tool_call_id, name, args, rule: {index, tool, pattern, mode, label, description}, expires_at}` |
+| `approval_resolved` | `{id, tool_call_id, decision: "approve" or "deny", note, by: "ui", "api" or "timeout"}` |
+| `budget_warning` | `{scope: "run" or "month", limit_usd, spent_usd, fraction}`; once per scope per run, at 80% |
+
+Order for an `ask` call: `tool_call`, `approval_requested`, `approval_resolved`, `tool_result`. Approve executes
+the call. Deny, or no decision before `timeout_seconds` (default 15 minutes), returns an `is_error` tool result
+`Denied by reviewer: <note>` and the run continues. A `deny` rule returns `Denied by policy: <rule>` at once with
+no approval events. Time spent waiting does not count toward the run's wall-clock limit, but a paused run
+keeps its slot in the run concurrency limit. Exceeding the run cap emits `error`
+`Run stopped: per-run spending cap of $X exceeded ($Y spent).` and ends `budget_exceeded`. Policies apply to
+every hosted run, eval runs included, with one difference: eval runs (source `eval`) never pause, so an `ask`
+rule there is an immediate deny with the tool result `Denied by policy during evaluation: <rule>` (no approval
+row or events). The tool_result of a call that waited carries `approval_wait_ms`; its `duration_ms` is the tool's
+own execution time only.
+
+### New endpoints
+
+| Method | Path | Auth | Body | Returns |
+|---|---|---|---|---|
+| GET | `/runs/{id}/approvals` | runtime (share allowed) | | `[Approval]` |
+| POST | `/runs/{id}/approvals/{approval_id}` | localhost builder or API key; share token gets 403 | `{decision: "approve" or "deny", note?}` | `Approval`; 404 unknown, 409 no longer pending |
+| GET | `/agents/{slug}/governance` | builder | | `{monthly_budget_usd, month_to_date_usd, fraction, state, pending_approvals, awaiting_runs: [run_id]}` |
+
+`Approval`: `{id: "ap_..", run_id, tool_call_id, name, args, rule, status: "pending"|"approved"|"denied"|"expired",
+note, resolved_by, created_at, expires_at, resolved_at}`.
+
+Spending: month-to-date spend is the sum of `cost_usd` of the agent's runs created since the first of the
+calendar month (UTC), eval runs included, plus the agent's judge and optimizer calls (`grader_calls`). When it is at or over `monthly_budget_usd`, `POST /agents/{slug}/runs`,
+`POST /agents/{slug}/evals/run` and `POST /agents/{slug}/improve` return **402** `{"detail": "Monthly budget of $X
+reached ..."}`; an improvement already running stops starting eval runs and ends `failed` with that reason.
+Prices come from `forge.pricing` only (see Observability "Pricing", including `FORGE_PRICES`). Unknown models
+are not priced: their `cost_usd` is null and caps cannot apply.
+
+### Run cost
+
+`runs.cost_usd` is the single source of truth for what a run cost. It is `forge.pricing.cost(model, tokens_in,
+tokens_out)` over the run's cumulative uncached usage: 0 (or null for an unknown price) at creation, rewritten by
+the `RunGovernor` after every model turn, and once more when the run is finalized. Run views, timelines, agent
+metrics, the overview, improvement cycle cost, Prometheus `forge_cost_usd_total`, lifecycle logs, per-run caps and
+monthly budgets all read this column, so they always agree. Prompt-cache tokens are counted, not priced. Databases
+from before the column existed are backfilled on startup with the same function.
+
+Webhook: when a run with a `callback_url` pauses, the URL also receives the Run JSON (status
+`awaiting_approval`) with an extra `approval` field. The final Run JSON is posted as before.
+
+Runtime: `run_agent(..., hooks=None)` accepts an optional hooks object with `after_turn(result, send)` and
+`before_tool(call, send)`; the run manager always passes `forge.governance.RunGovernor`.
+Local CLI runs are not governed.

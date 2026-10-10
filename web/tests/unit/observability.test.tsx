@@ -145,8 +145,10 @@ describe("OBS3 step timeline layout", () => {
   });
 
   it("splits total time into model, tool and other", () => {
-    expect(timeShares(500, 250, 1000)).toEqual({ model: 0.5, tool: 0.25, other: 0.25 });
-    expect(timeShares(0, 0, 0)).toEqual({ model: 0, tool: 0, other: 1 });
+    expect(timeShares(500, 250, 1000)).toEqual({ model: 0.5, tool: 0.25, approval: 0, other: 0.25 });
+    expect(timeShares(0, 0, 0)).toEqual({ model: 0, tool: 0, approval: 0, other: 1 });
+    // approval waits (governance) are their own share, never tool time
+    expect(timeShares(250, 250, 1000, 250)).toEqual({ model: 0.25, tool: 0.25, approval: 0.25, other: 0.25 });
   });
 });
 

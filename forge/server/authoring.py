@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from forge import db, drafting, pruning
+from forge import budget, db, drafting, pruning
 from forge.server import evals
 from forge.server.auth import authorize, require_local
 from forge.server.views import improvement_view
@@ -22,7 +22,8 @@ from forge.server.views import improvement_view
 log = logging.getLogger("forge.authoring")
 router = APIRouter(prefix="/v1")
 
-CONFIG_KEYS = ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files")
+CONFIG_KEYS = ("system_prompt", "lessons", "model", "tools", "http_tools", "network", "seed_files",
+               "approval_policy", "max_run_cost_usd")  # governance settings carry into ablations and candidates
 PRUNE_RULE = ("Pruning rule: a candidate is eligible when no case regresses and it passes at least as many cases "
               "as base. The goal is a smaller prompt at equal quality.")
 
@@ -137,6 +138,7 @@ async def prune(slug: str, request: Request, body: PruneIn = Body(default_factor
                                  f"(v{base['n']} has {len(base['lessons'])})")
     if not any(c["split"] == "train" for c in db.list_eval_cases(agent["id"])):
         raise HTTPException(400, "pruning needs at least one train evaluation case")
+    budget.ensure_budget(agent)  # 402 when the monthly budget is used up
     im = db.create_improvement(agent["id"], base["id"], kind="prune")
     ctx = contextvars.copy_context()  # eval runs and judge calls are attributed to this prune job (observability)
     ctx.run(evals.current_improvement.set, im["id"])

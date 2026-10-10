@@ -12,8 +12,6 @@ import sys
 import time
 from typing import Any
 
-from forge import pricing
-
 log = logging.getLogger("forge.lifecycle")
 
 
@@ -61,10 +59,11 @@ def lifecycle(event: str, run: dict, agent_slug: str, **fields: Any) -> None:
         pass
 
 
-def finished(run: dict, agent_slug: str, model: str | None) -> None:
+def finished(run: dict, agent_slug: str, model: str | None = None) -> None:
+    """`model` is unused: the cost logged is the stored runs.cost_usd."""
     started, ended = run.get("started_at"), run.get("ended_at") or time.time()
     lifecycle("finished", run, agent_slug, status=run.get("status"),
               duration_ms=round((ended - started) * 1000, 1) if started else None,
               tokens_in=run.get("tokens_in"), tokens_out=run.get("tokens_out"),
-              cost_usd=pricing.cost(model, run.get("tokens_in") or 0, run.get("tokens_out") or 0),
+              cost_usd=run.get("cost_usd"),
               error=run.get("error"))

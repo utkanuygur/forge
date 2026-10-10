@@ -11,11 +11,13 @@ import re
 from collections import defaultdict
 from typing import Any, Iterable
 
-TERMINAL = ("succeeded", "failed", "timeout")
+TERMINAL = ("succeeded", "failed", "timeout", "budget_exceeded")
+ACTIVE = ("queued", "running", "awaiting_approval")  # awaiting_approval: paused on a reviewer, still holding a slot
 HOUR, DAY = 3600, 86400
 
 CATEGORY_LABELS = {
     "timeout": "Timeout",
+    "budget_exceeded": "Spending cap reached",
     "model_error": "Model error",
     "sandbox_error": "Sandbox or executor error",
     "tool_errors": "Tool errors",
@@ -98,7 +100,9 @@ def health(runs: list[dict], feedback: list[dict]) -> dict[str, Any]:
         "succeeded": by_status["succeeded"],
         "failed": by_status["failed"],
         "timeout": by_status["timeout"],
-        "in_progress": by_status["queued"] + by_status["running"],
+        "budget_exceeded": by_status["budget_exceeded"],
+        "in_progress": sum(by_status[s] for s in ACTIVE),
+        "awaiting_approval": by_status["awaiting_approval"],
         "success_rate": ratio(by_status["succeeded"], finished),
         "p50_ms": percentile(durations, 50),
         "p95_ms": percentile(durations, 95),
@@ -150,8 +154,8 @@ def series(runs: list[dict], since: float, until: float, size: int, tz_offset_s:
     out: dict[int, dict] = {}
     t = first
     while t <= last:
-        out[t] = {"t": t, "runs": 0, "succeeded": 0, "failed": 0, "timeout": 0, "in_progress": 0, "cost_usd": 0.0,
-                  "success_rate": None}
+        out[t] = {"t": t, "runs": 0, "succeeded": 0, "failed": 0, "timeout": 0, "budget_exceeded": 0,
+                  "in_progress": 0, "cost_usd": 0.0, "success_rate": None}
         t += size
     for r in runs:
         if not (since <= r["created_at"] <= until):
@@ -164,7 +168,7 @@ def series(runs: list[dict], since: float, until: float, size: int, tz_offset_s:
         b[key] += 1
         b["cost_usd"] += r.get("cost_usd") or 0.0
     for b in out.values():
-        b["success_rate"] = ratio(b["succeeded"], b["succeeded"] + b["failed"] + b["timeout"])
+        b["success_rate"] = ratio(b["succeeded"], sum(b[s] for s in TERMINAL))
     return list(out.values())
 
 
@@ -185,7 +189,8 @@ def classify_run(run: dict, *, tool_errors: list[dict] | None = None, feedback: 
                  eval_result: dict | None = None) -> list[dict]:
     """Failure categories for one run: [{category, reason, count}].
 
-    - non-succeeded runs: `timeout`, `model_error` or `sandbox_error` (executor, runtime, interrupted)
+    - non-succeeded runs: `timeout`, `budget_exceeded` (per-run spending cap), `model_error` or
+      `sandbox_error` (executor, runtime, interrupted)
     - any run with tool results flagged is_error: `tool_errors` (count = number of failed tool calls)
     - eval runs whose checker failed: `eval_failed` (reason = first line of the checker's reason)
     - runs with negative feedback: `negative_feedback` (reason = the comment)
@@ -194,6 +199,8 @@ def classify_run(run: dict, *, tool_errors: list[dict] | None = None, feedback: 
     status, error = run.get("status"), run.get("error") or ""
     if status == "timeout":
         out.append({"category": "timeout", "reason": first_line(error) or "time limit reached", "count": 1})
+    elif status == "budget_exceeded":
+        out.append({"category": "budget_exceeded", "reason": first_line(error) or "spending cap exceeded", "count": 1})
     elif status == "failed":
         if error.startswith("model error"):
             out.append({"category": "model_error", "reason": first_line(error.removeprefix("model error: ")),
@@ -315,7 +322,8 @@ def tool_stats(calls: list[dict], *, slowest: int = 10) -> dict:
 def build_timeline(run: dict, events: list[dict]) -> dict:
     """One span per model turn and tool call of a run on a shared time axis (ms from run start).
 
-    Uses the additive `duration_ms` / `model_duration_ms` payload fields when present. Older traces
+    Uses the additive `duration_ms` / `model_duration_ms` payload fields when present. A tool_result's
+    `approval_wait_ms` (governance) becomes its own `approval` span before the tool span. Older traces
     without them fall back to event timestamps: a model turn spans from the previous step's end to the
     event that reports it, a tool call from its tool_call to its tool_result event. Such spans are
     marked `estimated`.
@@ -361,6 +369,11 @@ def build_timeline(run: dict, events: list[dict]) -> dict:
             call = calls.pop(str(p.get("id")), None)
             dur = p.get("duration_ms")
             start = t - dur / 1000 if dur is not None else (call["ts"] if call else cursor)
+            wait = p.get("approval_wait_ms")
+            if wait:  # governance: the human approval wait sits right before the tool's own execution
+                spans.append({"kind": "approval", "label": f"Approval for {p.get('name') or 'tool'}", "turn": turn,
+                              "seq": e["seq"], "start_ms": ms(start - wait / 1000), "duration_ms": round(wait, 1),
+                              "is_error": False, "estimated": False})
             spans.append({"kind": "tool", "label": p.get("name") or "tool", "turn": turn, "seq": e["seq"],
                           "start_ms": ms(start), "duration_ms": round(dur if dur is not None
                                                                       else max(0.0, (t - start) * 1000), 1),
@@ -379,6 +392,7 @@ def build_timeline(run: dict, events: list[dict]) -> dict:
     total = ms(end)
     model_ms = round(sum(s["duration_ms"] for s in spans if s["kind"] == "model"), 1)
     tool_ms = round(sum(s["duration_ms"] for s in spans if s["kind"] == "tool"), 1)
+    approval_ms = round(sum(s["duration_ms"] for s in spans if s["kind"] == "approval"), 1)
     created, run_start = run.get("created_at"), run.get("started_at")
     return {
         "run_id": run.get("id"),
@@ -387,7 +401,8 @@ def build_timeline(run: dict, events: list[dict]) -> dict:
         "total_ms": max(total, max((s["start_ms"] + s["duration_ms"] for s in spans), default=0.0)),
         "model_ms": model_ms,
         "tool_ms": tool_ms,
-        "other_ms": round(max(0.0, total - model_ms - tool_ms), 1),
+        "approval_ms": approval_ms,  # time paused on human approvals, not counted as tool time
+        "other_ms": round(max(0.0, total - model_ms - tool_ms - approval_ms), 1),
         "queue_ms": round(max(0.0, (run_start - created) * 1000), 1) if created and run_start else None,
         "turns": len([s for s in spans if s["kind"] == "model"]),
         "tool_calls": len([s for s in spans if s["kind"] == "tool"]),

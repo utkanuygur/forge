@@ -55,7 +55,7 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
         pytest.skip(why)
     root = tmp_path_factory.mktemp("forge-e2e")
     data_dir, log = root / "data", root / "server.log"
-    port = _free_port()
+    port = int(os.environ.get("FORGE_PYTEST_E2E_PORT") or 0) or _free_port()  # pin with FORGE_PYTEST_E2E_PORT
     keep = {"FORGE_SANDBOX_IMAGE"}
     env = {k: v for k, v in os.environ.items()
            if (not k.startswith("FORGE_") or k in keep) and k != "ANTHROPIC_API_KEY"}

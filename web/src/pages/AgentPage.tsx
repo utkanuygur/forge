@@ -9,6 +9,7 @@ import RunsTab from "./agent/RunsTab";
 import MonitoringTab from "./agent/MonitoringTab";
 import EvalsTab from "./agent/EvalsTab";
 import DeployTab from "./agent/DeployTab";
+import { BudgetBanner, BudgetMeter, PendingApprovalsBadge, useGovernance } from "../components/Governance";
 
 const TABS = [
   { key: "configure", label: "Configure" },
@@ -23,6 +24,8 @@ export default function AgentPage() {
   const navigate = useNavigate();
   const [agent, setAgent] = useState<Agent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const gov = useGovernance(slug, agent?.monthly_budget_usd);
+  const tabs = TABS.map((t) => (t.key === "runs" ? { ...t, badge: gov?.pending_approvals || 0 } : t));
 
   const reload = useCallback(async () => {
     try {
@@ -52,10 +55,13 @@ export default function AgentPage() {
           <span className="font-mono text-sm text-neutral-500">{agent.slug}</span>
           <Badge tone="green">prod v{agent.prod_version}</Badge>
           {agent.auto_promote && <Badge tone="violet">auto promote</Badge>}
+          {gov && <PendingApprovalsBadge gov={gov} slug={slug} />}
+          {gov && <BudgetMeter gov={gov} />}
         </div>
         {agent.description && <p className="mt-1 text-neutral-600 dark:text-neutral-400">{agent.description}</p>}
       </div>
-      <Tabs tabs={TABS} active={tab} onChange={(k) => navigate(`/agents/${slug}/${k}`)} />
+      {gov && <BudgetBanner gov={gov} />}
+      <Tabs tabs={tabs} active={tab} onChange={(k) => navigate(`/agents/${slug}/${k}`)} />
       {tab === "configure" && <ConfigureTab agent={agent} onChanged={reload} />}
       {tab === "runs" && <RunsTab agent={agent} />}
       {tab === "monitoring" && <MonitoringTab agent={agent} />}

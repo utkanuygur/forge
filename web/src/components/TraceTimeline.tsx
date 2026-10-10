@@ -1,6 +1,17 @@
 import { useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Play, Terminal, Wrench } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Play,
+  ShieldAlert,
+  Terminal,
+  Wrench,
+} from "lucide-react";
 import type { ForgeEvent } from "../api";
+import ApprovalCard from "./ApprovalCard";
 
 interface ToolPair {
   call: ForgeEvent;
@@ -33,6 +44,15 @@ export function group(events: ForgeEvent[]): Item[] {
     }
   }
   return items;
+}
+
+export function budgetWarningText(p: Record<string, unknown>): string {
+  const pct = Math.round(Number(p.fraction || 0) * 100);
+  const spent = `$${Number(p.spent_usd || 0).toFixed(2)}`;
+  const limit = `$${Number(p.limit_usd || 0).toFixed(2)}`;
+  return p.scope === "month"
+    ? `This agent has used ${pct}% of its monthly budget (${spent} of ${limit}).`
+    : `This run has used ${pct}% of its spending cap (${spent} of ${limit}).`;
 }
 
 /** The bash tool's argument is `cmd` (forge/loop.py); accept `command` too for older traces. */
@@ -120,12 +140,19 @@ export default function TraceTimeline({
   events,
   live,
   simple,
+  runId,
+  canApprove,
 }: {
   events: ForgeEvent[];
   live?: boolean;
   simple?: boolean;
+  runId?: string;
+  canApprove?: boolean;
 }) {
   const items = group(events);
+  const resolutions = new Map(events.filter((e) => e.type === "approval_resolved").map((e) => [str(e.payload.id), e]));
+  const requested = new Set(events.filter((e) => e.type === "approval_requested").map((e) => str(e.payload.id)));
+  const ended = events.some((e) => e.type === "run_finished");
   if (items.length === 0) {
     return (
       <div className="py-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
@@ -170,6 +197,39 @@ export default function TraceTimeline({
                 <pre className={`mono-block ${p.is_error ? "bg-red-50 text-red-800 dark:bg-red-950/50 dark:text-red-300" : ""}`}>
                   {str(p.output)}
                 </pre>
+              </Row>
+            );
+          case "approval_requested":
+            return (
+              <Row key={ev.seq} icon={<ShieldAlert className="h-3.5 w-3.5 text-violet-500" />}>
+                <ApprovalCard
+                  request={ev}
+                  resolved={resolutions.get(str(p.id))}
+                  runId={runId || ev.run_id}
+                  canApprove={canApprove && !simple}
+                  ended={ended}
+                />
+              </Row>
+            );
+          case "approval_resolved":
+            if (requested.has(str(p.id))) return null; // shown on the approval card
+            return (
+              <Row key={ev.seq} icon={<ShieldAlert className="h-3.5 w-3.5 text-violet-500" />}>
+                <div className="text-sm text-neutral-600 dark:text-neutral-400">
+                  Approval {p.decision === "approve" ? "granted" : "denied"}
+                  {p.note ? `: ${str(p.note)}` : ""}
+                </div>
+              </Row>
+            );
+          case "budget_warning":
+            return (
+              <Row key={ev.seq} icon={<AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}>
+                <div
+                  data-testid="budget-warning"
+                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
+                >
+                  {budgetWarningText(p)}
+                </div>
               </Row>
             );
           case "error":

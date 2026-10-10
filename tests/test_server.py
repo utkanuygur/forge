@@ -54,7 +54,7 @@ class FakeExecutor:
 
 
 async def fake_run_agent(version, input, *, run_id, provider, executor, emit, secrets=None, temperature=None,
-                         max_turns=30, max_seconds=600) -> RunResult:
+                         max_turns=30, max_seconds=600, hooks=None, **_) -> RunResult:
     output = f"done {input} | " + ";".join(version.lessons)
     await emit(Event(run_id=run_id, seq=0, ts=time.time(), type="run_started",
                      payload={"version_id": version.id, "model": version.model, "input": input}))

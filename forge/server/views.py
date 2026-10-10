@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forge import db, pricing
+from forge import db, governance, pricing
 
 VERSION_KEYS = ("id", "agent_id", "n", "system_prompt", "lessons", "model", "tools", "http_tools", "network",
-                "seed_files", "parent_id", "created_by", "rationale", "created_at")
+                "seed_files", "parent_id", "created_by", "rationale", "created_at",
+                "approval_policy", "max_run_cost_usd")  # governance
 
 
 def version_view(v: dict) -> dict:
@@ -20,6 +21,7 @@ def agent_view(a: dict, *, versions: bool = False) -> dict:
         "id": a["id"], "slug": a["slug"], "name": a["name"], "description": a["description"],
         "prod_version": prod["n"] if prod else None, "auto_promote": a["auto_promote"],
         "share_token": a["share_token"], "created_at": a["created_at"],
+        **governance.agent_extras(a),
     }
     from forge.server.evals import eval_repeats  # lazy: evals -> runs -> views
 
@@ -46,7 +48,8 @@ def run_view(r: dict, *, version_n: int | None = None, model: str | None = None)
         "feedback": [feedback_view(f) for f in db.list_feedback(r["id"])],
         # Additive observability fields (CONTRACT.md "Observability").
         "duration_ms": round((r["ended_at"] - r["started_at"]) * 1000, 1) if r["ended_at"] and r["started_at"] else None,
-        "cost_usd": pricing.cost(model, r["tokens_in"], r["tokens_out"]),
+        # The stored run cost (forge.pricing.cost, written per model turn by the governor); null = unknown price.
+        "cost_usd": r.get("cost_usd"),
         "cost_note": price.note,
     }
 

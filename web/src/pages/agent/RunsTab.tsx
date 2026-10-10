@@ -29,7 +29,7 @@ function Rating({ run }: { run: Run }) {
   );
 }
 
-const STATUS_OPTIONS = ["succeeded", "failed", "timeout", "running", "queued"];
+const STATUS_OPTIONS = ["succeeded", "failed", "timeout", "budget_exceeded", "awaiting_approval", "running", "queued"];
 const SOURCE_OPTIONS = ["ui", "api", "share", "eval", "local"];
 
 function filtersFromParams(p: URLSearchParams): RunFilters {

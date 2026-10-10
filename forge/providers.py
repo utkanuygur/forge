@@ -357,10 +357,11 @@ class ScenarioProvider:
                keyed by a hash of (system, input) advances when a run makes its first call, so k concurrent
                runs of one case always yield ceil(k/2) passes of `test -f FLAKY.txt` in any interleaving
                (k=3 -> 2/3 passes the majority, k=2 -> 1/2 fails it). Restarting the server resets it.
+      risky    runs `rm -rf build` with bash, then finishes saying whether it was allowed (approval policies)
     """
 
     def __init__(self, scenario: str):
-        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "flaky"}:
+        if scenario not in {"hello", "echo", "lessons", "grader", "loop", "error", "flaky", "risky"}:
             raise ValueError(f"unknown fake scenario {scenario!r}")
         self.scenario = scenario
 
@@ -392,6 +393,14 @@ class ScenarioProvider:
                     if n % 2 == 0:
                         return _call("write_file", {"path": "FLAKY.txt", "content": f"run {n}\n"}, step)
                 return ModelResponse(text="Done.", tokens_in=10, tokens_out=5)
+            case "risky":
+                if step == 0:
+                    return _call("bash", {"cmd": "rm -rf build"}, step)
+                last = next((m for m in reversed(messages) if m.role == "tool"), None)
+                if last is not None and last.is_error:
+                    return ModelResponse(text=f"Cleanup was not allowed, so build/ is unchanged. ({last.text})",
+                                         tokens_in=10, tokens_out=5)
+                return ModelResponse(text="Removed the build directory.", tokens_in=10, tokens_out=5)
             case "lessons":
                 if step == 0 and "MARKER.txt" in system:
                     return _call("write_file", {"path": "MARKER.txt", "content": "ok\n"}, step)

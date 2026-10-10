@@ -36,6 +36,7 @@ separately by the live layer.
 | `fake:loop` | Calls bash forever | Turn limit and `timeout` status |
 | `fake:error` | Raises like a failed API | `failed` status and error events |
 | `fake:flaky` | Alternates per run: the 1st, 3rd, 5th, ... run with a given (system prompt, input) writes `FLAKY.txt`, the others do not. A process-wide counter keyed by sha256(system, input) advances on each run's first model call, so k concurrent runs of one case yield ceil(k/2) passes of `test -f FLAKY.txt` in any order (k=3: 2/3 majority pass; k=2: 1/2 tie fails). Server restart resets it; give each test its own system prompt or input | Repeated evals and the majority rule end to end |
+| `fake:risky` | Runs `rm -rf build` with bash, then finishes saying whether it was allowed | Approval prompts: approve, deny, timeout and deny rules |
 
 Cost assertions are deterministic because the end-to-end server (`tests/e2e/conftest.py`) and the browser test
 server (`web/playwright.config.ts`) set `FORGE_PRICES` to give the fake models a price; scripted grader responses
@@ -113,6 +114,19 @@ Requirement IDs are defined in the technical design document. Each row names the
 | PRUNE11 Pruning on majority of k | 1: `train_passes` counts majority verdicts, fewer than k runs is incomplete; 3: `fake:flaky` k=3 prune: every version runs 3 per case, ablations train only, all runs linked to the job in cost |
 | PRUNE12 Reuse copies per-run rows | 1: `_reuse_results` copies eval_run_results and passes/runs, leaves cases with own runs alone |
 | PRUNE13 Prune keeps the feedback window | 1: prune jobs do not move `_last_improvement_time`; auto-improve still fires; improve jobs do move it |
+| GOV1 Approval policy rules | 1: bash regex presets, file globs, deny precedence, validation (`tests/test_governance.py`); 1: invalid policy is a 400 |
+| GOV2 Approve executes the paused call | 1: loop pause and approve; 3: `test_approve_executes_the_paused_call_and_notifies_the_webhook` (status `awaiting_approval`, share token 403, 409 after decision); 4: GOV10 approve |
+| GOV3 Deny returns `Denied by reviewer: <note>`, run continues | 1: loop deny; 3: `test_deny_with_note_returns_error_and_the_run_continues`; 4: GOV10 deny |
+| GOV4 Timeout auto-denies | 1: `test_timeout_auto_denies_and_the_run_continues` (1 s timeout); 3: `test_timeout_auto_denies` |
+| GOV5 Deny rules never execute | 1 and 3: deny rule tests, no approval events |
+| GOV6 Pricing and per-run cap | 1: budgets, run cost and metrics share `forge.pricing.cost` (FORGE_PRICES respected, cache tokens not priced), stored `runs.cost_usd` read by views and metrics; 1 and 3: priced `fake:loop` ends `budget_exceeded` with the cap and spend in the error |
+| GOV7 Monthly budget | 1: month-to-date math and 402 on runs, evals, improve; 3: `test_monthly_budget_refuses_new_runs_with_402`, `test_improvement_stops_when_the_budget_runs_out`; 4: GOV11 banner and refused run |
+| GOV8 80% warnings | 1 and 3: `budget_warning` for `run` and `month` scopes; 4: banner (GOV11) and trace row (Vitest) |
+| GOV9 Restart and auth | 1: restart marks `awaiting_approval` runs failed (interrupted) and approvals expired; share token cannot approve; 3: approval webhook |
+| GOV10 Approval card UI | 4: Vitest `Governance.test.tsx`; Playwright `governance.spec.ts` (live card, header and Runs tab badges, approve, deny with note) |
+| GOV11 Policy editor and caps UI | 4: Vitest presets, edits, timeout; Playwright saves presets, mode, run cap and monthly budget, meter and banner |
+| GOV12 Ask rules in eval runs | 1: an `ask` rule in an eval run is an immediate deny (`Denied by policy during evaluation: <rule>`), no approval row, no pause |
+| GOV13 Approval wait timing | 1: `approval_wait_ms` on the tool_result, `duration_ms` excludes it, the timeline has an `approval` span and `approval_ms` outside `tool_ms`; metrics count `budget_exceeded` as finished and failing and `awaiting_approval` as in progress |
 
 ## Adding a test
 
