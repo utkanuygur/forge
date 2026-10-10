@@ -47,7 +47,10 @@ def _free_port() -> int:
 
 
 def sandbox_containers() -> set[str]:
-    out = subprocess.run(["docker", "ps", "-q", *SANDBOX_FILTER], capture_output=True, text=True, timeout=30)
+    """Running sandbox containers started by this pytest process (xdist worker), per FORGE_SANDBOX_LABEL."""
+    label = os.environ.get("FORGE_SANDBOX_LABEL")
+    mine = ["--filter", f"label={label}"] if label else []
+    out = subprocess.run(["docker", "ps", "-q", *SANDBOX_FILTER, *mine], capture_output=True, text=True, timeout=30)
     return set(out.stdout.split())
 
 
@@ -67,7 +70,7 @@ def start_server(root: Path, extra_env: dict[str, str] | None = None) -> Iterato
     """A real Forge server subprocess on a free port with its own data dir under `root`."""
     data_dir, log = root / "data", root / "server.log"
     port = _free_port()
-    keep = {"FORGE_SANDBOX_IMAGE"}
+    keep = {"FORGE_SANDBOX_IMAGE", "FORGE_SANDBOX_LABEL"}
     env = {k: v for k, v in os.environ.items()
            if (not k.startswith("FORGE_") or k in keep) and k != "ANTHROPIC_API_KEY"}
     env.update({

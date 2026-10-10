@@ -141,6 +141,8 @@ class DockerExecutor:
     async def start(self, seed_files: dict[str, bytes], env: dict[str, str]) -> None:
         argv = ["docker", "run", "-d", "--network", "bridge" if self.network else "none"]
         argv += ["--cpus", self.cpus, "--memory", self.memory, "--pids-limit", "256", "--user", "agent", "-w", "/workspace"]
+        if label := os.environ.get("FORGE_SANDBOX_LABEL"):  # optional `key=value` tag, e.g. per test worker
+            argv += ["--label", label]
         for k, v in env.items():
             argv += ["-e", f"{k}={v}"]
         argv += [self.image, "sleep", "infinity"]
@@ -297,7 +299,10 @@ class LocalExecutor:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_idx = Path(tmp) / "index"
             if idx_path.exists():
-                shutil.copy2(idx_path, tmp_idx)  # keep the mtime: git trusts it to spot same-second edits
+                # copy2 keeps the index mtime: git treats entries written in the same tick as the index as
+                # "racily clean" and rehashes them. A fresh mtime would hide a same-size edit made right after
+                # the baseline commit (stat data unchanged), dropping it from the diff.
+                shutil.copy2(idx_path, tmp_idx)
             env = {**os.environ, "GIT_INDEX_FILE": str(tmp_idx)}
             _check(await self._git("add", "-A", ".", env=env), "git add")
             res = _check(await self._git("diff", "--cached", "--binary", self.baseline, "--", ".", env=env), "git diff")

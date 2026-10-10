@@ -2,9 +2,16 @@
 SHELL := /bin/bash
 PY    := uv run
 PTH   := .venv/lib/python3.12/site-packages
+# pytest-xdist workers: min(cpu count, 6) so Docker-heavy tests do not overload the machine.
+# Override with `make test PYTEST_WORKERS=2`; PYTEST_WORKERS=0 runs serially (for debugging).
+PYTEST_WORKERS ?= $(shell python3 -c 'import os; print(min(os.cpu_count() or 1, 6))' 2>/dev/null || echo 4)
+XDIST := -n $(PYTEST_WORKERS) --dist loadgroup
+# Playwright workers for the browser suite (CI may pass its own).
+PW_WORKERS ?= 4
+export PW_WORKERS
 
 .PHONY: help setup image fix-pth test test-unit test-docker test-e2e test-web test-web-unit test-web-e2e \
-        test-demo test-live test-all lint preflight rehearse serve web dev clean examples test-examples
+        test-demo test-live test-all test-fast test-changed lint preflight rehearse serve web dev clean examples test-examples
 
 help:  ## Show targets
 	@grep -E '^[a-z0-9-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -24,13 +31,13 @@ image: ## Build the forge-sandbox Docker image
 # ---------------------------------------------------------------- test layers (fast to slow)
 
 test-unit: fix-pth ## Layer 1: unit tests, no Docker, no network (seconds)
-	$(PY) pytest -q -m "not docker and not e2e and not live"
+	$(PY) pytest -q -m "not docker and not e2e and not live" $(XDIST)
 
 test-docker: fix-pth ## Layer 2: real sandbox containers (isolation, limits, export)
-	$(PY) pytest -q -m docker
+	$(PY) pytest -q -m docker $(XDIST)
 
 test-e2e: fix-pth ## Layer 3: real server + Docker + deterministic fake models, incl. full improvement loop
-	$(PY) pytest -q -m e2e
+	$(PY) pytest -q -m e2e $(XDIST)
 
 test-web-unit: ## Layer 4a: web component and hook tests (Vitest)
 	cd web && npm test
@@ -46,10 +53,16 @@ test-demo: ## Layer 5: demo eval checkers fail on seed and naive fixes, pass on 
 test-live: fix-pth ## Layer 6: real model APIs (needs ANTHROPIC_API_KEY; optional local/GPU endpoints)
 	FORGE_LIVE=1 $(PY) pytest -q -m live
 
-test: fix-pth ## Default gate: layers 1 to 3 (everything that needs no API key or browser)
-	$(PY) pytest -q -m "not live"
+test: fix-pth ## Default gate: layers 1 to 3 (everything that needs no API key or browser), in parallel
+	$(PY) pytest -q -m "not live" $(XDIST)
 
-test-all: test test-web test-demo ## Deterministic layers 1 to 5 (5b is test-examples); run before merging
+test-fast: fix-pth ## Every deterministic layer (1 to 5b) concurrently, with a pass/fail and timing summary
+	PYTEST_WORKERS=$(PYTEST_WORKERS) $(PY) python scripts/test_fast.py
+
+test-changed: fix-pth ## Only the tests affected by changes since BASE (default master), in parallel; prints why
+	PYTEST_WORKERS=$(PYTEST_WORKERS) $(PY) python scripts/test_changed.py --base $(or $(BASE),master)
+
+test-all: test-fast ## Every deterministic layer; run before each commit to main
 
 lint: ## Static checks: byte-compile forge/, type check web/
 	$(PY) python -m compileall -q forge
