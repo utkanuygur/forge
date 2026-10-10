@@ -40,6 +40,8 @@ EXAMPLES = HERE / "examples"
 IMAGE = os.environ.get("FORGE_SANDBOX_IMAGE", "forge-sandbox")
 IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", ".ruff_cache", ".venv", ".DS_Store")
 EXPECT = {"seed": False, "naive": False, "reference": True}
+sys.path.insert(0, str(HERE))
+from load_examples import resolve  # noqa: E402
 
 
 def slugify(text: str) -> str:
@@ -47,27 +49,26 @@ def slugify(text: str) -> str:
 
 
 def examples(only: list[str] | None = None) -> list[Path]:
-    out = []
-    for spec in sorted(EXAMPLES.glob("*/agent.json")):
-        d = spec.parent
-        if (d / "seed").is_dir() and (only is None or d.name in only):
-            out.append(d)
-    return out
+    return [d for d in (p.parent for p in sorted(EXAMPLES.glob("*/agent.json"))) if only is None or d.name in only]
 
 
 def items(example: Path) -> list[dict]:
-    """Every checker of an example: eval cases plus suggested prompt checks."""
+    """Every checker of an example: its own eval cases plus suggested prompt checks."""
+    ex = resolve(example)
+    seed = str(ex["seed_dir"])
     out = []
-    for c in json.loads((example / "evals.json").read_text()):
-        out.append({**c, "kind": "eval", "solution": c["name"]})
+    if ex["own_evals"]:  # repo-maintainer reuses demo/evals.json, which demo/verify.py covers
+        for c in ex["cases"]:
+            out.append({**c, "kind": "eval", "solution": c["name"], "seed_dir": seed})
     checks_file = example / "prompt_checks.json"
-    titles = [p["title"] for p in json.loads((example / "agent.json").read_text()).get("suggested_prompts", [])]
+    titles = [p["title"] for p in ex["spec"].get("suggested_prompts", [])]
     if checks_file.exists():
         for title, checker in json.loads(checks_file.read_text()).items():
             if title not in titles:
                 raise SystemExit(f"{example.name}: prompt_checks.json has {title!r}, not a suggested prompt")
             out.append({"name": f"prompt: {title}", "split": "-", "checker_type": "shell", "checker": checker,
-                        "seed_files": {}, "kind": "prompt", "solution": "prompt-" + slugify(title)})
+                        "seed_files": {}, "kind": "prompt", "solution": "prompt-" + slugify(title),
+                        "seed_dir": seed})
     return out
 
 
@@ -101,7 +102,7 @@ def apply_solution(example: Path, name: str, ws: Path) -> None:
 
 def prepare(example: Path, item: dict, variant: str, root: Path) -> Path:
     ws = root / f"{example.name}-{slugify(item['name'])}-{variant}"
-    shutil.copytree(example / "seed", ws, ignore=IGNORE)
+    shutil.copytree(item["seed_dir"], ws, ignore=IGNORE)
     for rel, content in item.get("seed_files", {}).items():
         (ws / rel).parent.mkdir(parents=True, exist_ok=True)
         (ws / rel).write_text(content)
@@ -134,6 +135,8 @@ def run_checker(ws: Path, checker: str) -> tuple[bool, str, float]:
 def reason(output: str) -> str:
     lines = [line for line in output.splitlines() if line.strip()]
     fails = [line for line in lines if "FAIL" in line]
+    if not fails and "PASS" in lines:
+        return "PASS"
     return (fails or lines or [""])[-1][:100]
 
 

@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import argparse
 import random
-import zlib
 import sys
+import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 

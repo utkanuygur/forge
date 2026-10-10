@@ -1,5 +1,4 @@
 import pytest
-
 from shelfcache import CacheStats, TTLCache, cached, dump, load
 
 
