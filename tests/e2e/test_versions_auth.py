@@ -68,6 +68,8 @@ def test_share_token_can_run_and_give_feedback_but_not_read_config_or_evals(api,
     assert set(public) == {"id", "slug", "name", "description", "suggested_prompts"}
     listed = {x["id"] for x in api.get(f"/agents/{slug}/runs", headers=share).json()}
     assert shared["id"] in listed and api_run["id"] not in listed
+    for path in ("", "/events.json", "/diff", "/artifacts", "/files"):  # nor by id: 404, the id is not confirmed
+        assert api.get(f"/runs/{api_run['id']}{path}", headers=share).status_code == 404, path
 
     for method, path in [("GET", f"/agents/{slug}/versions/prod"), ("GET", f"/agents/{slug}/versions/1"),
                          ("POST", f"/agents/{slug}/versions"), ("GET", f"/agents/{slug}/evals"),

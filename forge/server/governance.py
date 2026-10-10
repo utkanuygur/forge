@@ -31,8 +31,9 @@ def _run_agent(run_id: str) -> tuple[dict, dict]:
 
 @router.get("/runs/{run_id}/approvals")
 async def list_run_approvals(run_id: str, request: Request) -> list[dict]:
-    _, agent = _run_agent(run_id)
-    authorize(request, agent)
+    r, agent = _run_agent(run_id)
+    if authorize(request, agent) == "share" and r["source"] != "share":
+        raise HTTPException(404, "run not found")  # share tokens see share runs only
     return [governance.approval_view(a) for a in governance.list_approvals(run_id)]
 
 

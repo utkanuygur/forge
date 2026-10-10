@@ -258,7 +258,56 @@ def test_files_auth(server):
     share = {"share": agent["share_token"]}
     assert far.get(f"/v1/runs/{share_run}/files", params=share).status_code == 200
     assert far.get(f"/v1/runs/{share_run}/files/hello.py", params=share).text.startswith("print")
-    # A share token cannot browse runs that were not started from the share page.
-    assert far.get(f"/v1/runs/{api_run}/files", params=share).status_code == 401
-    assert far.get(f"/v1/runs/{api_run}/files/hello.py", params=share).status_code == 401
+    # A share token cannot browse runs that were not started from the share page (404: ids are not confirmed).
+    assert far.get(f"/v1/runs/{api_run}/files", params=share).status_code == 404
+    assert far.get(f"/v1/runs/{api_run}/files/hello.py", params=share).status_code == 404
     assert far.get(f"/v1/runs/{share_run}/files", params={"share": "wrong"}).status_code == 401
+
+
+SHARE_ONLY_ENDPOINTS = [  # every run-scoped endpoint a share token may call, by family
+    ("get", "/v1/runs/{id}", None),                         # run
+    ("get", "/v1/runs/{id}/events.json", None),             # events (JSON)
+    ("get", "/v1/runs/{id}/events", None),                  # events (SSE)
+    ("get", "/v1/runs/{id}/artifacts", None),               # artifacts
+    ("get", "/v1/runs/{id}/diff", None),                    # diff
+    ("get", "/v1/runs/{id}/files", None),                   # files
+    ("get", "/v1/runs/{id}/files/hello.py", None),          # file content
+    ("post", "/v1/runs/{id}/feedback", {"rating": 1}),      # feedback
+    ("get", "/v1/runs/{id}/approvals", None),               # approvals (governance)
+]
+
+
+@pytest.mark.parametrize("method,path,body", SHARE_ONLY_ENDPOINTS, ids=[p for _, p, _ in SHARE_ONLY_ENDPOINTS])
+def test_share_token_reaches_only_share_runs(server, method, path, body):
+    """Security: a share token works on runs started from the share page and gets a 404 (not 401) for every
+    other run of the same agent, so run ids are not confirmed."""
+    c, agent, make_run = server
+    from forge.server.app import app
+
+    api_run, share_run = make_run("api"), make_run("share")
+    for rid in (api_run, share_run):
+        db.append_event(rid, 0, 0.0, "run_finished", {"status": "succeeded"})
+    far = TestClient(app, client=REMOTE)
+    share = {"share": agent["share_token"]}
+    kw = {"json": body} if body is not None else {}
+    denied = getattr(far, method)(path.format(id=api_run), params=share, **kw)
+    assert denied.status_code == 404, (path, denied.status_code, denied.text[:200])
+    allowed = getattr(far, method)(path.format(id=share_run), params=share, **kw)
+    assert allowed.status_code == 200, (path, allowed.status_code, allowed.text[:200])
+    missing = getattr(far, method)(path.format(id="r_000000000000"), params=share, **kw)
+    assert missing.status_code == 404  # indistinguishable from a run that exists but is not a share run
+
+
+def test_builder_only_run_endpoints_refuse_share_tokens(server):
+    """Timeline, cancel and save-as-eval never accept a share token (Playground sessions are builder only too)."""
+    c, agent, make_run = server
+    from forge.server.app import app
+
+    share_run = make_run("share")
+    far = TestClient(app, client=REMOTE)
+    share = {"share": agent["share_token"]}
+    assert far.get(f"/v1/runs/{share_run}/timeline", params=share).status_code == 401
+    assert far.post(f"/v1/runs/{share_run}/cancel", params=share).status_code == 401
+    assert far.post(f"/v1/runs/{share_run}/save-as-eval", params=share, json={}).status_code == 401
+    assert far.get("/v1/agents/bot/sessions", params=share).status_code == 401
+    assert far.post("/v1/agents/bot/sessions", params=share, json={}).status_code == 401

@@ -293,7 +293,7 @@ def test_http_resolve_rules_share_forbidden_and_restart_interrupts(client):
     server restart marks awaiting runs failed (interrupted) and pending approvals expired."""
     a = client.post("/v1/agents", json={"slug": "g2", "name": "g", "system_prompt": "s", "model": "fake:echo"}).json()
     agent = db.get_agent(a["id"])
-    run = db.create_run(a["id"], agent["prod_version_id"], "api", "x", status="awaiting_approval")
+    run = db.create_run(a["id"], agent["prod_version_id"], "share", "x", status="awaiting_approval")
     from forge.types import ToolCall
 
     ap = governance.create_approval(run["id"], ToolCall(id="c1", name="bash", args={"cmd": "rm -rf b"}), {}, {}, 60)
@@ -306,6 +306,9 @@ def test_http_resolve_rules_share_forbidden_and_restart_interrupts(client):
     listed = client.get(f"/v1/runs/{run['id']}/approvals", headers={"X-Share-Token": a["share_token"]}).json()
     assert [x["id"] for x in listed] == [ap["id"]] and listed[0]["status"] == "pending"
     assert client.get("/v1/agents/g2").json()["pending_approvals"] == 1
+    other = db.create_run(a["id"], agent["prod_version_id"], "api", "y")
+    r = client.get(f"/v1/runs/{other['id']}/approvals", headers={"X-Share-Token": a["share_token"]})
+    assert r.status_code == 404  # a share token only sees share runs
 
     assert db.fail_interrupted_runs() >= 1
     r2 = db.get_run(run["id"])

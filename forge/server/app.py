@@ -76,12 +76,17 @@ def version_or_404(agent: dict, n: int | str) -> dict:
 
 
 def run_and_agent(run_id: str, request: Request, *, allow_share: bool = True) -> tuple[dict, dict, str]:
+    """The run, its agent and the caller source. A share token reaches only runs started through the share
+    page (source "share"); any other run of the agent is a 404, so its id is not even confirmed."""
     r = db.get_run(run_id)
     if r is None:
         raise HTTPException(404, "run not found")
     agent = db.get_agent(r["agent_id"])
     assert agent is not None
-    return r, agent, authorize(request, agent, allow_share=allow_share)
+    source = authorize(request, agent, allow_share=allow_share)
+    if source == "share" and r["source"] != "share":
+        raise HTTPException(404, "run not found")
+    return r, agent, source
 
 
 # ---------------------------------------------------------------- builder
@@ -517,9 +522,7 @@ async def diff(run_id: str, request: Request) -> PlainTextResponse:
 
 
 def _workspace(run_id: str, request: Request) -> tuple[dict, files.Archive]:
-    r, _, source = run_and_agent(run_id, request)
-    if source == "share" and r["source"] != "share":
-        raise HTTPException(401, "a share token can only browse share runs")
+    r, _, _ = run_and_agent(run_id, request)  # share tokens: share runs only (404 otherwise)
     if not r["artifact_path"] or not Path(r["artifact_path"]).exists():
         raise HTTPException(404, "no workspace for this run")
     try:
