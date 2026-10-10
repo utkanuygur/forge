@@ -32,8 +32,8 @@ amendment or additive extend the objects and endpoints above; where both describ
   fires), `s_` (sessions) + 12 hex chars.
 - Times: unix seconds as float.
 - Agent API keys: `fk_` + random URL-safe characters, stored hashed and shown once.
-- Model strings: `anthropic:<model-id>` or `openai_compat:<base_url>|<model>`, e.g. `openai_compat:http://localhost:11434/v1|qwen3:8b`
-  (after `ollama pull qwen3:8b`); `fake:<scenario>` selects a deterministic test model (TESTING.md).
+- Model strings: `anthropic:<model-id>` or `openai_compat:<base_url>|<model>`, e.g. `openai_compat:http://localhost:11434/v1|qwen3:4b-instruct`
+  (after `ollama pull qwen3:4b-instruct`); `fake:<scenario>` selects a deterministic test model (TESTING.md).
 - Data directory: `$FORGE_DATA_DIR` (default `./data`): `forge.db`, `runs/<run_id>/workspace.tar.gz`, `runs/<run_id>/diff.patch`.
 - Secrets are redacted in event payloads by replacing each secret value with `[REDACTED]` before `emit`.
 - Default models: `$FORGE_DEFAULT_MODEL` for agents (default `anthropic:claude-sonnet-5-5`), `$FORGE_GRADER_MODEL`

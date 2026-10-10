@@ -177,8 +177,8 @@ def test_provider_helpers():
     assert parse_args('{"a": 1}') == {"a": 1}
     assert parse_args("{bad") == {"_raw": "{bad"}
     assert isinstance(make_provider("anthropic:claude-sonnet-5-5"), AnthropicProvider)
-    p = make_provider("openai_compat:http://localhost:11434/v1|qwen3:8b")
-    assert isinstance(p, OpenAICompatProvider) and p.model == "qwen3:8b"
+    p = make_provider("openai_compat:http://localhost:11434/v1|qwen3:4b-instruct")
+    assert isinstance(p, OpenAICompatProvider) and p.model == "qwen3:4b-instruct"
     with pytest.raises(ValueError):
         make_provider("bogus")
 

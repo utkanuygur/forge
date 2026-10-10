@@ -96,7 +96,7 @@ def test_pricing_known_models_cost_per_million_tokens(monkeypatch):
 def test_pricing_self_hosted_models_cost_zero_with_note(monkeypatch):
     """OBS2: OpenAI compatible and fake models are self-hosted and not metered (cost 0)."""
     monkeypatch.delenv("FORGE_PRICES", raising=False)
-    for m in ("openai_compat:http://localhost:11434/v1|qwen3:8b", "fake:hello"):
+    for m in ("openai_compat:http://localhost:11434/v1|qwen3:4b-instruct", "fake:hello"):
         p = pricing.price_for(m)
         assert p.kind == "self_hosted" and p.note == "self-hosted, not metered"
         assert pricing.cost(m, 5000, 5000) == 0

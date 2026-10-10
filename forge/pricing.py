@@ -5,7 +5,7 @@ models cost nothing here: their GPU time is billed by the GPU provider, so they 
 "self-hosted, not metered". Unknown Anthropic models have no price (cost is null).
 
 Override or extend with `FORGE_PRICES`, a JSON object whose keys are either a full model string
-(`"fake:hello"`, `"openai_compat:http://host/v1|qwen3:8b"`) or a bare Anthropic id (`"claude-x"`), and whose
+(`"fake:hello"`, `"openai_compat:http://host/v1|qwen3:4b-instruct"`) or a bare Anthropic id (`"claude-x"`), and whose
 values are `[input, output]` or `{"input": .., "output": ..}`.
 """
 

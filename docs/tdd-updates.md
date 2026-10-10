@@ -27,7 +27,7 @@ agents, suggested prompts, macOS 12 support), both on the code repository's Rele
 | 6.5 Share page row | "/s/{token}" | Actual URL is `/s/{slug}?share=<token>` | "/s/{slug}?share={token}" |
 | 6.5 Inputs and outputs | "Callers may upload files or reference a Git repository." | No `git_url` support exists | "Callers may upload files (multipart, or one .tar.gz that is extracted) or pass `seed_files` as JSON." |
 | 6.5 Run lifecycle | "queued, running and one terminal state: succeeded, failed or timeout" | Correct on master; pending branches add states | Leave; add pending states from sections B and E when those merge. |
-| 6.8 example | `--model ollama/qwen3:8b` | Model strings are `openai_compat:<base_url>\|<model>` | `--model "openai_compat:http://localhost:11434/v1\|qwen3:8b"` |
+| 6.8 example | `--model ollama/qwen3:4b-instruct` | Model strings are `openai_compat:<base_url>\|<model>` | `--model "openai_compat:http://localhost:11434/v1\|qwen3:4b-instruct"` |
 | 6.8 | (no login step) | The CLI needs `forge login <url> <agent-api-key>` first | Add "forge login http://localhost:8000 fk_..." as the first example line. |
 | 7 runs table | columns list | Missing columns added since | Add `cache_read_tokens, cache_write_tokens, error, created_at` to runs; `lesson_meta` to agent_versions; `eval_repeats, suggested_prompts` to agents; `passes, runs` to eval_results; new tables `eval_run_results`, `improvements` (with `kind`), `promotions`, `grader_calls`, `improvement_runs`. |
 | 7 agent_versions note | "Immutable; never updated after insert" | `lesson_meta` is written after insert | "Configuration is immutable; only `lesson_meta` (lesson provenance) is written after insert." |
@@ -146,7 +146,7 @@ agents, suggested prompts, macOS 12 support), both on the code repository's Rele
 ## M. Docker sandbox (not OrbStack) and local Qwen via Ollama **[master]**
 
 - **6.2**: add "The supported container runtime is Docker (Docker Desktop on macOS, Docker Engine on Linux); the desktop app checks for Docker Desktop specifically and the tests run against Docker. Other Docker-compatible runtimes are untested."
-- **6.3 Local models**: make the reference model concrete: "The documented local model is `qwen3:8b` on Ollama (`ollama pull qwen3:8b`), model string `openai_compat:http://localhost:11434/v1|qwen3:8b`, which is one of the web app's model presets and the default of the live local model test."
+- **6.3 Local models**: make the reference model concrete: "The documented local model is `qwen3:4b-instruct` on Ollama (`ollama pull qwen3:4b-instruct`), model string `openai_compat:http://localhost:11434/v1|qwen3:4b-instruct`, which is one of the web app's model presets and the default of the live local model test."
 - **6.3 GPU**: name the deployment: "`gpu/vllm_modal.py` serves Qwen/Qwen3-Coder-30B-A3B-Instruct as `qwen3-coder` with the `qwen3_coder` tool-call parser."
 
 ## N. CI **[master, changes on feat/ci-split]**

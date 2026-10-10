@@ -1,6 +1,6 @@
 """Live local-model test against an OpenAI-compatible server such as Ollama.
 
-FORGE_LOCAL_BASE_URL (default http://localhost:11434/v1) and FORGE_LOCAL_MODEL (default qwen3:8b).
+FORGE_LOCAL_BASE_URL (default http://localhost:11434/v1) and FORGE_LOCAL_MODEL (default qwen3:4b-instruct).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from tests.live.conftest import assert_hello_done, env, openai_compat_models, ru
 pytestmark = pytest.mark.live
 
 BASE_URL = env("FORGE_LOCAL_BASE_URL", "http://localhost:11434/v1")
-MODEL = env("FORGE_LOCAL_MODEL", "qwen3:8b")
+MODEL = env("FORGE_LOCAL_MODEL", "qwen3:4b-instruct")
 
 
 async def test_local_model_emits_valid_bash_tool_call_and_completes_task():

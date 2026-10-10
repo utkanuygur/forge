@@ -841,7 +841,7 @@ export const TOOL_NAMES = ["bash", "read_file", "write_file", "edit_file"] as co
 export const MODEL_PRESETS = [
   "anthropic:claude-sonnet-5-5",
   "anthropic:claude-opus-5-5",
-  "openai_compat:http://localhost:11434/v1|qwen3:8b",
+  "openai_compat:http://localhost:11434/v1|qwen3:4b-instruct",
 ];
 
 export function errMsg(e: unknown): string {

@@ -48,10 +48,11 @@ their signatures) work, the builder UI does not.
 Run an agent on a local model with [Ollama](https://ollama.com):
 
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen3:4b-instruct
 ```
 
-Then set the agent's model to `openai_compat:http://localhost:11434/v1|qwen3:8b` (it is one of the presets in
+Larger Qwen models (for example `qwen3:14b`) do better on multi-step coding tasks if your machine can run them.
+Then set the agent's model to `openai_compat:http://localhost:11434/v1|qwen3:4b-instruct` (it is one of the presets in
 the model picker). Any OpenAI-compatible server works the same way: `openai_compat:<base_url>|<model>`.
 
 ### Command line
