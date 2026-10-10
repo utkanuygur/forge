@@ -97,6 +97,7 @@ class AgentPatch(BaseModel):
     name: str | None = None
     description: str | None = None
     auto_promote: bool | None = None
+    eval_repeats: int | None = Field(None, ge=1, le=evals.MAX_EVAL_REPEATS)
 
 
 class VersionCreate(BaseModel):
@@ -399,7 +400,8 @@ async def upload_events(run_id: str, request: Request, body: list[dict[str, Any]
             status = p.get("status") if p.get("status") in TERMINAL else "failed"
             db.update_run(run_id, status=status, output=str(p.get("output") or ""), turns=int(p.get("turns") or 0),
                           tokens_in=int(p.get("tokens_in") or 0), tokens_out=int(p.get("tokens_out") or 0),
-                          ended_at=e.ts or time.time())
+                          cache_read_tokens=int(p.get("cache_read_tokens") or 0),
+                          cache_write_tokens=int(p.get("cache_write_tokens") or 0), ended_at=e.ts or time.time())
         elif e.type == "error":
             db.update_run(run_id, error=str(e.payload.get("message") or ""))
     return {"ok": True}

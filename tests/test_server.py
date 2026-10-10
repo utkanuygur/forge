@@ -119,8 +119,11 @@ def _compare(cases, base, cand):
 
 @pytest.fixture
 def fake_improve(monkeypatch) -> FakeImprove:
+    from forge.improve import majority, summarize_runs  # the real majority-of-k rule
+
     mod = FakeImprove()
     mod.compare = _compare  # type: ignore[method-assign]
+    mod.majority, mod.summarize_runs = majority, summarize_runs  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "forge.improve", mod)
     monkeypatch.setattr(forge, "improve", mod, raising=False)
     return mod
@@ -293,8 +296,9 @@ def test_eval_run_caching(client):
     res = poll(lambda: (x := client.get("/v1/agents/bot/evals/results").json())["running"] is False
                and len(x["results"]) == 2 and x or None)
     assert res["train"] == {"passed": 1, "total": 1} and res["holdout"] == {"passed": 0, "total": 1}
+    assert res["repeats"] == 3 and sorted((x["passes"], x["runs"]) for x in res["results"]) == [(0, 3), (3, 3)]
     runs_before = len(client.get("/v1/agents/bot/runs").json())
-    assert runs_before == 2
+    assert runs_before == 6  # 2 cases x k=3
     client.post("/v1/agents/bot/evals/run", json={"version": 1})
     time.sleep(0.2)
     assert len(client.get("/v1/agents/bot/runs").json()) == runs_before  # cached
@@ -302,6 +306,27 @@ def test_eval_run_caching(client):
     assert run["source"] == "eval" and run["eval_case_id"] in {c1["id"], res["results"][1]["case_id"]}
     assert client.delete(f"/v1/evals/{c1['id']}").json() == {"ok": True}
     assert len(client.get("/v1/agents/bot/evals").json()) == 1
+
+
+def test_eval_repeats_setting_env_default_and_patch(client, monkeypatch):
+    """FR9: k defaults to 3, $FORGE_EVAL_REPEATS overrides the default, PATCH sets it per agent (1..9);
+    raising k reuses the stored runs and only adds the missing ones."""
+    assert make_agent(client)["eval_repeats"] == 3
+    monkeypatch.setenv("FORGE_EVAL_REPEATS", "1")
+    assert client.get("/v1/agents/bot").json()["eval_repeats"] == 1
+    add_case(client, "bot", "t1", "done")
+    client.post("/v1/agents/bot/evals/run", json={})
+    res = poll(lambda: (x := client.get("/v1/agents/bot/evals/results").json())["running"] is False
+               and x["results"] and x or None)
+    assert (res["results"][0]["passes"], res["results"][0]["runs"]) == (1, 1)
+    assert client.patch("/v1/agents/bot", json={"eval_repeats": 0}).status_code == 422
+    assert client.patch("/v1/agents/bot", json={"eval_repeats": 10}).status_code == 422
+    assert client.patch("/v1/agents/bot", json={"eval_repeats": 4}).json()["eval_repeats"] == 4
+    client.post("/v1/agents/bot/evals/run", json={})
+    res = poll(lambda: (x := client.get("/v1/agents/bot/evals/results").json())["running"] is False
+               and x["results"][0]["runs"] == 4 and x or None)
+    assert res["results"][0]["passes"] == 4 and res["repeats"] == 4
+    assert len(client.get("/v1/agents/bot/runs").json()) == 4  # 1 reused + 3 new
 
 
 def wait_improvement(client, im_id) -> dict:

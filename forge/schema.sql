@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS agents (
   description      TEXT NOT NULL DEFAULT '',
   prod_version_id  TEXT,
   auto_promote     INTEGER NOT NULL DEFAULT 0,
+  eval_repeats     INTEGER,           -- runs per eval case (k); NULL = $FORGE_EVAL_REPEATS or 3
   api_key_hash     TEXT NOT NULL,
   share_token      TEXT NOT NULL UNIQUE,
   created_at       REAL NOT NULL
@@ -53,6 +54,8 @@ CREATE TABLE IF NOT EXISTS runs (
   turns          INTEGER NOT NULL DEFAULT 0,
   tokens_in      INTEGER NOT NULL DEFAULT 0,
   tokens_out     INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens   INTEGER NOT NULL DEFAULT 0,  -- prompt-cache reads (not included in tokens_in)
+  cache_write_tokens  INTEGER NOT NULL DEFAULT 0,  -- prompt-cache writes (not included in tokens_in)
   eval_case_id   TEXT,
   callback_url   TEXT,
   created_at     REAL NOT NULL,
@@ -91,6 +94,8 @@ CREATE TABLE IF NOT EXISTS eval_cases (
   created_at    REAL NOT NULL
 );
 
+-- Per-case verdict for a version: majority of its k repeated runs (see eval_run_results).
+-- run_id/reason are a representative run: a failing one if the case failed, else a passing one.
 CREATE TABLE IF NOT EXISTS eval_results (
   version_id  TEXT NOT NULL REFERENCES agent_versions(id),
   case_id     TEXT NOT NULL REFERENCES eval_cases(id),
@@ -98,7 +103,21 @@ CREATE TABLE IF NOT EXISTS eval_results (
   passed      INTEGER NOT NULL,
   reason      TEXT NOT NULL DEFAULT '',
   created_at  REAL NOT NULL,
+  passes      INTEGER,   -- passing runs among `runs` (NULL only in pre-migration rows)
+  runs        INTEGER,   -- k: runs the verdict is based on
   PRIMARY KEY (version_id, case_id)
+);
+
+-- One row per repeated eval run (idx 0..k-1).
+CREATE TABLE IF NOT EXISTS eval_run_results (
+  version_id  TEXT NOT NULL REFERENCES agent_versions(id),
+  case_id     TEXT NOT NULL REFERENCES eval_cases(id),
+  idx         INTEGER NOT NULL,
+  run_id      TEXT NOT NULL REFERENCES runs(id),
+  passed      INTEGER NOT NULL,
+  reason      TEXT NOT NULL DEFAULT '',
+  created_at  REAL NOT NULL,
+  PRIMARY KEY (version_id, case_id, idx)
 );
 
 CREATE TABLE IF NOT EXISTS improvements (

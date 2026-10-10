@@ -55,11 +55,37 @@ def connect() -> Iterator[sqlite3.Connection]:
     conn.execute("PRAGMA foreign_keys = ON")
     if path not in _initialized:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         _initialized.add(path)
     try:
         yield conn
     finally:
         conn.close()
+
+
+# Columns added after the first schema; CREATE TABLE IF NOT EXISTS does not add them to existing databases.
+ADDED_COLUMNS = {
+    "agents": {"eval_repeats": "INTEGER"},
+    "runs": {"cache_read_tokens": "INTEGER NOT NULL DEFAULT 0", "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0"},
+    "eval_results": {"passes": "INTEGER", "runs": "INTEGER"},
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, cols in ADDED_COLUMNS.items():
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for col, decl in cols.items():
+            if col not in have:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                except sqlite3.OperationalError as exc:  # another process added it first
+                    if "duplicate column" not in str(exc):
+                        raise
+    # Single-run verdicts from before repeated evals become run 0 of their case.
+    conn.execute("INSERT OR IGNORE INTO eval_run_results (version_id, case_id, idx, run_id, passed, reason, created_at) "
+                 "SELECT version_id, case_id, 0, run_id, passed, reason, created_at FROM eval_results "
+                 "WHERE passes IS NULL")
+    conn.execute("UPDATE eval_results SET passes = passed, runs = 1 WHERE passes IS NULL")
 
 
 def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -318,13 +344,29 @@ def list_eval_cases(agent_id: str) -> list[dict]:
 def delete_eval_case(case_id: str) -> None:
     with connect() as c:
         c.execute("DELETE FROM eval_results WHERE case_id = ?", (case_id,))
+        c.execute("DELETE FROM eval_run_results WHERE case_id = ?", (case_id,))
         c.execute("UPDATE runs SET eval_case_id = NULL WHERE eval_case_id = ?", (case_id,))
         c.execute("DELETE FROM eval_cases WHERE id = ?", (case_id,))
 
 
-def upsert_eval_result(version_id: str, case_id: str, run_id: str, passed: bool, reason: str) -> None:
+def upsert_eval_result(version_id: str, case_id: str, run_id: str, passed: bool, reason: str,
+                       passes: int | None = None, runs: int | None = None) -> None:
+    """Per-case summary. `passes`/`runs` default to a single run's verdict."""
     _insert("eval_results", {"version_id": version_id, "case_id": case_id, "run_id": run_id, "passed": passed,
-                             "reason": reason, "created_at": now()}, replace=True)
+                             "reason": reason, "created_at": now(), "passes": int(passed) if passes is None else passes,
+                             "runs": 1 if runs is None else runs}, replace=True)
+
+
+def add_eval_run_result(version_id: str, case_id: str, idx: int, run_id: str, passed: bool, reason: str) -> None:
+    _insert("eval_run_results", {"version_id": version_id, "case_id": case_id, "idx": idx, "run_id": run_id,
+                                 "passed": passed, "reason": reason, "created_at": now()}, replace=True)
+
+
+def list_eval_run_results(version_id: str, case_id: str | None = None) -> list[dict]:
+    if case_id:
+        return _all("SELECT * FROM eval_run_results WHERE version_id = ? AND case_id = ? ORDER BY idx",
+                    version_id, case_id)
+    return _all("SELECT * FROM eval_run_results WHERE version_id = ? ORDER BY case_id, idx", version_id)
 
 
 def get_eval_result(version_id: str, case_id: str) -> dict | None:
