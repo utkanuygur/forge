@@ -400,6 +400,24 @@ FAKE_SHELL = [
                 'not written"\nout=$(python3 hello.py) || fail "hello.py exits non zero"\n'
                 'echo "$out" | grep -q "Hello from Forge" || fail "unexpected output: $out"\necho PASS',
      "rationale": "Checks creating and running a small script."},
+    {"name": "directory-tree-file",
+     "input": "Save the directory tree of the workspace to TREE.txt, one path per line, sorted.",
+     "checker": 'set -euo pipefail\nfail() { echo "FAIL: $*"; exit 1; }\ntest -s TREE.txt || fail "TREE.txt was '
+                'not written"\nsort -c TREE.txt 2>/dev/null || fail "TREE.txt is not sorted"\necho PASS',
+     "rationale": "Checks listing files and sorting output exactly."},
+    {"name": "todo-inventory-json",
+     "input": "Find every TODO or FIXME comment in the workspace and write todos.json as a list of objects with "
+              "file, line and text.",
+     "checker": 'set -euo pipefail\nfail() { echo "FAIL: $*"; exit 1; }\ntest -f todos.json || fail "todos.json was '
+                'not written"\npython3 - <<\'PY\'\nimport json, sys\ndata = json.load(open("todos.json"))\n'
+                'if not isinstance(data, list):\n    sys.exit("FAIL: todos.json is not a list")\nPY\necho PASS',
+     "rationale": "Checks searching code and emitting structured findings."},
+    {"name": "extension-histogram-csv",
+     "input": "Write extensions.csv with columns extension and count for the file types in the workspace.",
+     "checker": 'set -euo pipefail\nfail() { echo "FAIL: $*"; exit 1; }\ntest -f extensions.csv || fail '
+                '"extensions.csv was not written"\nhead -n 1 extensions.csv | grep -qx "extension,count" || fail '
+                '"extensions.csv header is not extension,count"\necho PASS',
+     "rationale": "Checks aggregating data into a CSV with an exact header."},
 ]
 FAKE_JUDGE = [
     {"name": "explain-workspace-layout",

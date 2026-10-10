@@ -49,3 +49,67 @@ def test_share_token_works_hides_builder_fields_and_is_rate_limited(api, make_ag
     r = api.post(f"/assist/task?share={token}", json={"slug": slug}, headers=REMOTE)
     assert r.status_code == 429 and int(r.headers["retry-after"]) > 0
     assert api.post("/assist/task", json={"slug": slug}).status_code == 200  # the builder is not limited
+
+
+def test_eval_case_and_eval_cases_create_nothing_until_added_and_checkers_fail_on_the_seed(api, make_agent):
+    """GEN6: eval_case and eval_cases only return drafts; adding the batch creates exactly those cases, and the
+    generated shell checkers FAIL on the untouched workspace when evaluated in the sandbox."""
+    from tests.e2e.helpers import wait_evals
+
+    agent = make_agent("gencase", model="fake:echo", seed_files={"README.md": "# Demo\n"})
+    slug = agent["slug"]
+    one = api.post("/assist/eval_case", json={"slug": slug, "input": {"split": "holdout", "checker_type": "shell"}})
+    assert one.status_code == 200, one.text
+    assert one.json()["result"]["split"] == "holdout" and one.json()["result"]["checker_type"] == "shell"
+    batch = api.post("/assist/eval_cases", json={"slug": slug, "input": {"n": 3, "holdout": 1,
+                                                                         "checker_type": "shell"}}).json()
+    cases = batch["result"]["cases"]
+    assert [c["split"] for c in cases] == ["train", "train", "holdout"]
+    assert api.get(f"/agents/{slug}/evals").json() == []  # nothing saved by generating
+    for c in cases:
+        body = {k: c[k] for k in ("name", "input", "checker_type", "checker", "split")}
+        assert api.post(f"/agents/{slug}/evals", json=body).status_code == 200
+    assert sorted(c["name"] for c in api.get(f"/agents/{slug}/evals").json()) == sorted(c["name"] for c in cases)
+    nxt = api.post("/assist/eval_case", json={"slug": slug, "input": {"checker_type": "shell"}}).json()["result"]
+    assert nxt["name"] not in {c["name"] for c in cases}  # existing cases are avoided
+    api.post(f"/agents/{slug}/evals/run", json={"version": 1})
+    res = wait_evals(api, slug, 1, 3)
+    assert all(not r["passed"] and "FAIL:" in r["reason"] for r in res["results"]), res["results"]
+
+
+def test_eval_case_from_run_uses_its_input_and_feedback_then_save_as_eval(api, make_agent):
+    """GEN6: from_run_id drafts a case from a run and its feedback (input verbatim); saving it is a separate call."""
+    agent = make_agent("genrun", model="fake:echo")
+    slug = agent["slug"]
+    run = api.post(f"/agents/{slug}/runs", json={"input": "Explain how the workspace is laid out.",
+                                                 "wait": True}).json()
+    api.post(f"/runs/{run['id']}/feedback", json={"rating": -1, "comment": "It skipped the README"})
+    d = api.post("/assist/eval_case", json={"slug": slug, "input": {"from_run_id": run["id"], "split": "holdout",
+                                                                    "checker_type": "judge"}}).json()
+    r = d["result"]
+    assert r["input"] == "Explain how the workspace is laid out." and r["split"] == "holdout"
+    assert "reviewer feedback" in r["checker"] and d["diagnostics"]["from_run_id"] == run["id"]
+    assert api.get(f"/agents/{slug}/evals").json() == []
+    other = make_agent("genother", model="fake:echo")
+    bad = api.post("/assist/eval_case", json={"slug": other["slug"], "input": {"from_run_id": run["id"]}})
+    assert bad.status_code == 400  # a run of another agent
+    saved = api.post(f"/runs/{run['id']}/save-as-eval",
+                     json={k: r[k] for k in ("name", "checker_type", "checker", "split")}).json()
+    assert saved["name"] == r["name"] and saved["checker"] == r["checker"]
+    assert [c["name"] for c in api.get(f"/agents/{slug}/evals").json()] == [r["name"]]
+
+
+def test_cron_from_plain_english_with_next_fire_times(api, make_agent):
+    """GEN7: cron turns plain English into an expression the schedule trigger accepts, with 3 next fire times."""
+    import time
+
+    agent = make_agent("gencron", model="fake:echo")
+    d = api.post("/assist/cron", json={"slug": agent["slug"], "input": {"text": "every monday at 5pm",
+                                                                        "timezone": "Europe/Istanbul"}}).json()
+    r = d["result"]
+    assert r["cron"] == "0 17 * * 1" and r["timezone"] == "Europe/Istanbul" and len(r["next_fire_times"]) == 3
+    assert all(t > time.time() for t in r["next_fire_times"])
+    t = api.post(f"/agents/{agent['slug']}/triggers", json={"kind": "schedule", "config": {
+        "cron": r["cron"], "timezone": r["timezone"], "input_template": "Weekly check"}})
+    assert t.status_code == 200, t.text
+    assert api.post("/assist/cron", json={"input": {"text": "hourly"}}).json()["result"]["cron"] == "0 * * * *"
