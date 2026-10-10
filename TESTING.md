@@ -23,8 +23,58 @@ separately by the live layer.
 | 6 | Live models | `make test-live` | `ANTHROPIC_API_KEY`; optional Ollama, `FORGE_VLLM_URL` | Real Claude completes a task in the sandbox; judge gives sensible verdicts; local and GPU models emit valid tool calls | 1 to 2 min, costs tokens |
 
 `make test` runs layers 1 to 3 (skipping Docker tests automatically if Docker is unavailable).
-`make test-all` runs every deterministic layer (1 to 5). Live tests never run unless asked
+`make test-all` runs every deterministic layer (1 to 5b). Live tests never run unless asked
 (`-m live` or `FORGE_LIVE=1`).
+
+## Parallel runs
+
+| Command | What runs | Parallelism |
+|---|---|---|
+| `make test` (and `test-unit`, `test-docker`, `test-e2e`) | pytest, layers 1 to 3 | pytest-xdist, `PYTEST_WORKERS` workers (default min(CPUs, 6)), `--dist loadgroup` |
+| `make test-web-e2e` | Playwright | `PW_WORKERS` workers (default 4 locally, 2 when `CI` is set) |
+| `make test-fast` (`make test-all` calls it) | Python suite, Vitest, Playwright, demo checks, example checks | all five layers at once as background jobs (`scripts/test_fast.py`): output prefixed `[python]`, `[web-unit]`, `[browser]`, `[demo]`, `[examples]`, logs saved per layer, then a PASS/FAIL and duration table; exits non-zero if any layer fails. `--only`/`--skip` pick layers |
+| `make test-changed BASE=master` | only the tests affected by your changes | see below |
+
+Debugging: run serially with `uv run pytest -n 0 tests/...` (or `make test PYTEST_WORKERS=0`); a plain
+`uv run pytest ...` without `-n` is serial too. Use fewer workers on a busy machine (`PYTEST_WORKERS=2`).
+
+What keeps the suite parallel-safe (keep it that way when adding tests):
+
+- Each xdist worker is its own pytest session: its own `tmp_path` root and its own e2e `server` (session
+  fixture) on a free port with its own `FORGE_DATA_DIR`. Never hardcode a port; use `_free_port()` (or a
+  `start_server(root, extra_env)` helper in `tests/e2e/conftest.py`). Never write into the repo or a fixed `/tmp` path.
+- Environment changes go through `monkeypatch.setenv`, never `os.environ[...] =`.
+- Every pytest process sets `FORGE_SANDBOX_LABEL=forge.test.session=<worker>-<id>`; `DockerExecutor` adds it
+  as `docker run --label`, and the e2e leak check counts only containers with this worker's label, so
+  other workers, the browser suite, the demo checkers or another checkout's tests never look like leaks.
+- Tests that share a module- or class-scoped fixture (for example `observed` in
+  `tests/e2e/test_observability.py`) are put in one `xdist_group` per module automatically
+  (`tests/conftest.py`), so the fixture is built once. Other tests, e2e included, spread across workers.
+  To pin a module to one worker explicitly, add `pytestmark = pytest.mark.xdist_group("name")`.
+- Browser tests create their own agents with `uniqueSlug(...)`; the Playwright server picks a free port
+  (or `FORGE_E2E_PORT`) and a fresh data dir per invocation.
+
+## Iterating: run only what changed
+
+`make test-changed` (default `BASE=master`) lists the changed files (committed on the branch, staged,
+unstaged and untracked), prints which tests it selected and why, then runs them in parallel through the
+same runner as `test-fast`. `uv run python scripts/test_changed.py --files <paths> --dry-run` shows the
+selection for any files without running anything.
+
+| Change | Selected |
+|---|---|
+| A forge module | Python test modules importing it, directly or through other forge or test modules (static `ast` import graph). Core modules (`forge/server/**`, `loop`, `executors`, `db`, `types`, `providers`, `improve`, `schema.sql`) add every e2e module and every browser spec; feature modules (`drafting`, `pruning`, `provenance`, `metrics`, `pricing`, `cli`) add only the e2e modules and specs that exercise them; any other module the server imports adds every e2e module |
+| A test, `conftest.py` or `helpers.py` | that test, every test importing it; a conftest selects its directory |
+| `web/src/**` | `vitest related <files> --run`, plus every browser spec (specs drive pages through the browser, not imports, so they cannot be narrowed by import) |
+| A browser spec | that spec alone; a shared helper or web config selects every spec |
+| `demo/**`, `sandbox/**`, `forge/executors.py`, `forge/loop.py` | `demo/verify.py` and `demo/verify_examples.py`, plus tests that read `demo/` files |
+| `pyproject.toml`, `uv.lock` | the whole Python suite |
+| Markdown, `docs/` | nothing |
+
+Selection is static rather than coverage based (pytest-testmon) because most of the value is in the e2e
+layer, whose code runs in a server subprocess that a coverage tool would not see. It is a speedup for
+iteration, not a gate: **iterate with `make test-changed`, then run the full suite (`make test-fast`, or at
+least `make test`) once before merging.**
 
 ## Fake model scenarios
 
@@ -46,9 +96,9 @@ report fixed token counts.
 
 | When | Run | Gate |
 |---|---|---|
-| While coding | `make test-unit` (or `uv run pytest tests/test_<area>.py`) | Must pass |
+| While coding | `make test-changed` (or `make test-unit`, `uv run pytest tests/test_<area>.py`) | Must pass |
 | Before each commit | `make test` | Must pass |
-| Before merging or demoing | `make test-all` | Must pass |
+| Before merging or demoing | `make test-fast` (same as `make test-all`) | Must pass |
 | After changing prompts, the optimizer or the demo | `make test-demo`, then `make rehearse` | Rehearsal must print `OK: held-out improved` |
 | Before a live demo | `make serve` in one terminal, `make preflight` in another | Every line PASS (WARN only for optional GPU and local model) |
 
