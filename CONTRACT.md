@@ -1173,7 +1173,7 @@ credentials through Forge's HTTP API in process, so an API-key caller can only c
 | `user` | `{text, context}` |
 | `assistant` | `{text, kind: "progress" or "final", tool_calls?: [{id, name, args}]}`; one per model turn (text per turn, not token deltas); model progress notes are `kind: "progress"` without `tool_calls` |
 | `tool_call` | `{id, tool, args, risk}` |
-| `tool_result` | `{id, tool, risk, ok, summary (one line for the UI), output (what the model saw, at most 6000 chars), links: [{label, href}] (relative app paths), refresh: ["evals:<slug>", "agent:<slug>", "runs:<slug>", "triggers:<slug>", "run:<id>"]}` |
+| `tool_result` | `{id, tool, risk, ok, summary (one line for the UI), output (what the model saw, at most 6000 chars), links: [{label, href}] (relative app paths), refresh: ["evals:<slug>", "agent:<slug>", "runs:<slug>", "triggers:<slug>", "run:<id>", "agents"]}` (`agents`: the agents list changed) |
 | `confirm_request` | `{id: "cf_..", tool (or "multiple"), args (one call's args, or a list), summary, items: [{call_id, tool, args, summary}]}` |
 | `confirm_resolved` | `{id, approved, by: "user", "timeout" or "stopped"}` |
 | `error` | `{message}` |
@@ -1196,7 +1196,8 @@ system prompt is static (cacheable); the page context goes into each user messag
 Thin wrappers over the HTTP API above (no business logic of their own), each with a JSON schema, a one-line
 description and a risk. `read` tools run as soon as the model calls them; `write` tools change data or spend
 money and run only after the user approves. No tool reads or writes secrets, keys, share tokens or webhook
-secrets; the assistant refuses such requests, and every tool output and argument shown is passed through
+secrets (the one exception: `get_deploy_info` hands the share link, which the Deploy tab also shows, to the UI as a
+link the model never sees); the assistant refuses such requests, and every tool output and argument shown is passed through
 redaction of all stored secret values.
 
 | Tool | Risk | Wraps |
@@ -1224,6 +1225,25 @@ redaction of all stored secret values.
 | `create_trigger` | write | `POST /agents/{slug}/triggers` with kind `schedule` only |
 | `save_run_as_eval` | write | `POST /runs/{id}/save-as-eval` |
 | `add_feedback` | write | `POST /runs/{id}/feedback` |
+| `list_models` | read | `GET /models/available`: the server default plus each reachable provider's models (`\|qwen3:8b` hidden, as in the web presets) |
+| `draft_agent` | read | `POST /agent-drafts`: one grader call that saves nothing; the result ends with a `config: {...}` line (slug, name, description, system_prompt, tools, network, eval_cases) for `create_agent`, and lists suggested secrets by name only |
+| `get_deploy_info` | read | `GET /agents/{slug}`: runs and sessions endpoints and a curl example on `public_url` (else `$FORGE_URL`); the API key is never shown; the share link `/s/{slug}?share=<token>` is only in `links`, never in the text the model sees |
+| `create_agent` | write | `POST /agents` with slug, name, description, system_prompt, model, tools, network, seed_files, suggested_prompts, eval_cases, auto_promote; the returned `api_key` is dropped |
+| `add_example_agents` | write | `POST /examples/{key}/install`, or without a key `POST /examples/install-all`, optional `model`; `api_key`s dropped |
+| `add_http_tool` | write | `POST /agents/{slug}/versions` with prod's `http_tools` plus the new one (not promoted) |
+| `add_mcp_server` | write | `POST /agents/{slug}/versions` with prod's `mcp_servers` plus the new one (not promoted) |
+| `rollback_version` | write | `POST /agents/{slug}/promote` with the version that was prod before the current one (from the promotion log, else the highest lower version number) |
+
+Models: `create_agent`, `create_version` and `add_example_agents` accept a model only when the app can run it now:
+`anthropic:<id>`, `openai_compat:<base_url>|<model>` or `fake:<scenario>`, and `model_warning` (the New agent
+form's warning) must be empty, so a Claude model needs a configured key that offers it and a local model must be
+installed on its reachable endpoint. Omitted, the server default applies.
+
+Credentials: `add_http_tool` headers and `add_mcp_server` headers and env may reference secrets only as
+`{{NAME}}`; a value under a credential-like name (auth, token, key, secret, password, cookie, session) without a
+reference, a value that looks like a pasted key (`sk-`, `ghp_`, `xoxb-`, `AKIA`, `Bearer <long literal>`) or a
+URL with `api_key=` and similar is refused before the user is asked. Secret values are set by the user on the
+Configure tab only.
 
 Settings are not exposed: this base has no settings registry.
 

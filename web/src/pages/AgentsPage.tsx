@@ -8,6 +8,7 @@ import ModelWarning from "../components/settings/ModelWarning";
 import { Badge, Empty, ErrorBox, Loading, Modal } from "../components/ui";
 import { ExamplesEmptyCard, ExamplesModal, installAllMessage, type InstallAllResult } from "../components/Examples";
 import { useToast } from "../components/Toast";
+import { useRefresh } from "../lib/refresh";
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
@@ -35,6 +36,7 @@ export default function AgentsPage() {
   useEffect(() => {
     load();
   }, []);
+  useRefresh(["agents"], load); // the assistant created an agent or added the examples
 
   return (
     <div className="space-y-6">

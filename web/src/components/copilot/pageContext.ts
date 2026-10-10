@@ -43,7 +43,7 @@ export function pageInfo(pathname: string): PageInfo {
       ],
       deploy: [
         { label: "Run it on a schedule", text: `Run ${slug} every weekday at 9am UTC with a daily check task.` },
-        { label: "How do I call it?", text: "How do I start a run of this agent from my own code?" },
+        { label: "How do I call it?", text: `How do I call ${slug} from my own code?` },
       ],
       playground: [{ label: "What is the playground?", text: "How do playground sessions differ from runs?" }],
       configure: [
@@ -71,5 +71,9 @@ export function pageInfo(pathname: string): PageInfo {
     { label: "How do evals work?", text: "How do evaluations and the promotion rule work?" },
   ];
   if (pathname.startsWith("/dashboard")) return { context: { page: pathname }, place: "Dashboard", starters: general };
-  return { context: { page: pathname }, place: "Agents", starters: general };
+  const create = [
+    { label: "Make an agent", text: "Make me an agent that triages new GitHub issues with a label and a priority." },
+    { label: "Add example agents", text: "Add the example agents." },
+  ];
+  return { context: { page: pathname }, place: "Agents", starters: [...create, ...general] };
 }

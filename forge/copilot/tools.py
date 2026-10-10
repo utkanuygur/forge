@@ -515,6 +515,10 @@ VERSION_FIELDS = ("system_prompt", "model", "tools", "network", "lessons")
 
 async def _d_create_version(ctx: ToolContext, a: dict) -> str:
     agent = agent_row(need(a, "slug"))
+    if a.get("model"):
+        from forge.copilot.agent_tools import check_model
+
+        await check_model(a["model"])
     prod = db.get_version(agent["prod_version_id"]) or {}
     changes = []
     for k in VERSION_FIELDS:
@@ -732,7 +736,7 @@ async def promote_version(ctx: ToolContext, a: dict) -> ToolResult:
 @tool("create_version", "Create a new (unpromoted) version from production with some fields changed: system prompt, "
       "model, tools, network or lessons (lessons replaces the whole list).",
       {"slug": SLUG, "system_prompt": {"type": "string"}, "model": {"type": "string", "description":
-       "anthropic:<id> or openai_compat:<base_url>|<model>"},
+       "anthropic:<id> or openai_compat:<base_url>|<model>, one list_models shows"},
        "tools": {"type": "array", "items": {"type": "string", "enum": ["bash", "read_file", "write_file", "edit_file"]}},
        "network": {"type": "boolean"}, "lessons": {"type": "array", "items": {"type": "string"}},
        "rationale": {"type": "string", "description": "Why, shown in the version list."}},
@@ -843,3 +847,8 @@ def validate_args(t: CopilotTool, args: dict[str, Any]) -> str | None:
             return f"argument {k!r} of {t.name} must be one of {props[k]['enum']}"
     return None
 
+
+
+# Agent creation and deployment tools (list_models, draft_agent, create_agent, add_example_agents,
+# get_deploy_info, add_http_tool, add_mcp_server, rollback_version) register themselves on import.
+from forge.copilot import agent_tools  # noqa: E402,F401
