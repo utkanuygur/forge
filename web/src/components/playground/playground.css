@@ -59,3 +59,5 @@
 }
 .pg-stop { @apply bg-neutral-800 hover:bg-neutral-900 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-white; }
 .pg-hints { @apply mt-1 font-mono text-[10.5px] text-neutral-400; }
+.pg-composer-simple .pg-textarea { @apply font-sans text-sm; }
+.pg-composer-simple .pg-hints { @apply font-sans text-[11px]; }

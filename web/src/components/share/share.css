@@ -1,0 +1,55 @@
+/* Share page conversation: a calm chat over the Playground pieces. Light and dark follow prefers-color-scheme. */
+
+.sc {
+  @apply flex h-[calc(100dvh-12rem)] min-h-[480px] flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white
+    shadow-sm dark:border-neutral-800 dark:bg-neutral-900;
+}
+.sc-bar {
+  @apply flex items-center justify-between gap-2 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800 sm:px-4;
+}
+.sc-btn {
+  @apply inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900
+    disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100;
+}
+.sc-btn-on { @apply bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100; }
+.sc-icon { @apply rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800; }
+.sc-panel {
+  @apply max-h-[60%] overflow-y-auto border-b border-neutral-200 bg-neutral-50/70 px-3 py-2 dark:border-neutral-800
+    dark:bg-neutral-950/40 sm:px-4;
+}
+.sc-files { @apply max-h-none; }
+
+.sc-scroll { @apply min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6; }
+.sc-empty { @apply mx-auto max-w-xl space-y-4 py-8 text-center; }
+.sc-turns { @apply space-y-6; }
+.sc-turn { @apply space-y-3; }
+.sc-user {
+  @apply ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-accent-600 px-3.5 py-2 text-sm text-white
+    dark:bg-accent-700;
+}
+.sc-agent { @apply space-y-2; }
+.sc-steps {
+  @apply rounded-lg border border-neutral-200 px-3 py-1.5 text-sm dark:border-neutral-800;
+}
+.sc-steps > summary {
+  @apply cursor-pointer select-none text-xs text-neutral-500 hover:text-neutral-800 dark:text-neutral-400
+    dark:hover:text-neutral-200;
+}
+.sc-answer {
+  @apply text-[15px] leading-relaxed text-neutral-900 dark:text-neutral-100;
+}
+.sc-note { @apply text-sm text-neutral-500 dark:text-neutral-400; }
+.sc-note-error { @apply text-red-700 dark:text-red-400; }
+.sc-thumbs { @apply flex items-center gap-1 text-neutral-400; }
+.sc-thumbs button {
+  @apply rounded p-1.5 hover:bg-neutral-100 hover:text-neutral-700 aria-pressed:text-accent-600 dark:hover:bg-neutral-800
+    dark:hover:text-neutral-200 dark:aria-pressed:text-accent-400;
+}
+
+.sc-bottom { @apply relative space-y-2 border-t border-neutral-200 p-3 dark:border-neutral-800; }
+.sc-bottom .tx-status { @apply -mx-3 -mt-3 rounded-none border-0 border-b border-neutral-100 bg-transparent px-4 py-2 dark:border-neutral-800/70; }
+.sc-bottom .tx-jump { @apply -top-10; }
+.sc-notice {
+  @apply rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900
+    dark:bg-amber-950/40 dark:text-amber-200;
+}
