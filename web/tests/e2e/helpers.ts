@@ -19,7 +19,14 @@ export interface AgentJson {
 
 export async function createAgent(
   request: APIRequestContext,
-  opts: { slug: string; name?: string; system_prompt?: string; model?: string; description?: string },
+  opts: {
+    slug: string;
+    name?: string;
+    system_prompt?: string;
+    model?: string;
+    description?: string;
+    suggested_prompts?: { title: string; prompt: string }[];
+  },
 ): Promise<AgentJson> {
   const res = await request.post("/v1/agents", {
     data: {
@@ -28,6 +35,7 @@ export async function createAgent(
       description: opts.description ?? "",
       system_prompt: opts.system_prompt ?? "You are a helpful test agent.",
       ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.suggested_prompts ? { suggested_prompts: opts.suggested_prompts } : {}),
     },
   });
   expect(res.ok(), await res.text()).toBeTruthy();

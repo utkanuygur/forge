@@ -32,6 +32,9 @@ uv run python demo/load.py
 make rehearse
 ```
 
+Or load all four example agents (log triage, data analyst, docs writer, repo maintainer) with starter
+prompts and verified eval cases: `make examples`, then see [docs/test-cases.md](docs/test-cases.md).
+
 Expose it to others: `cloudflared tunnel --url http://localhost:8000`.
 
 ## Documentation
@@ -42,6 +45,7 @@ Expose it to others: `cloudflared tunnel --url http://localhost:8000`.
 | [docs/triggers.md](docs/triggers.md) | Schedules, GitHub webhooks and Slack commands that start runs |
 | [TESTING.md](TESTING.md) | Six test layers, commands and requirement traceability |
 | [demo/README.md](demo/README.md) | The reference agent, its conventions and evaluation cases |
+| [docs/test-cases.md](docs/test-cases.md) | What to try first: example agents, suggested prompts, expected results, eval splits |
 
 ## Tests
 

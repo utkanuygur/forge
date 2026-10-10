@@ -4,7 +4,7 @@ PY    := uv run
 PTH   := .venv/lib/python3.12/site-packages
 
 .PHONY: help setup image fix-pth test test-unit test-docker test-e2e test-web test-web-unit test-web-e2e \
-        test-demo test-live test-all lint preflight rehearse serve web dev clean
+        test-demo test-live test-all lint preflight rehearse serve web dev clean examples test-examples
 
 help:  ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -75,3 +75,13 @@ dev: fix-pth ## API with reload on :8000; run `cd web && npm run dev` for the UI
 clean: ## Remove local data and leftover sandbox containers
 	rm -rf data
 	-docker ps -aq --filter ancestor=forge-sandbox | xargs -r docker rm -f
+
+# ---------------------------------------------------------------- example agents
+
+.PHONY: examples test-examples
+
+examples: fix-pth ## Load the example agents, suggested prompts and eval cases (needs a running server; BASE_URL=...)
+	$(PY) python demo/load_examples.py --base-url $(or $(BASE_URL),http://localhost:8000)
+
+test-examples: ## Example eval and suggested prompt checkers fail on the seed and pass on reference solutions
+	$(PY) python demo/verify_examples.py

@@ -1,0 +1,24 @@
+{
+  "slug": "repo-maintainer",
+  "extends": "../../repo-maintainer.json",
+  "seed_dir": "../../acme-orders",
+  "evals": "../../evals.json",
+  "suggested_prompts": [
+    {
+      "title": "Add a receipt endpoint",
+      "prompt": "Add GET /orders/{order_id}/receipt that returns a plain text (text/plain) receipt: a first line with the order id and status, one line per item with the sku, quantity and line total, then Subtotal, Discount and Total lines. Format every amount with the existing acme.pricing.format_cents helper (like $1,234.50). Unknown orders return 404. Add tests and keep `make check` passing."
+    },
+    {
+      "title": "Add order stats",
+      "prompt": "The admin dashboard needs a summary. Add GET /orders/stats returning JSON {\"counts\": {\"pending\": n, \"paid\": n, \"shipped\": n}, \"revenue_cents\": n} where revenue_cents is the sum of total_cents over paid and shipped orders. Every status must appear in counts, even when it is 0. Make sure the route is not shadowed by GET /orders/{order_id}. Add tests and keep `make check` passing."
+    },
+    {
+      "title": "Track status history",
+      "prompt": "Support wants to see when an order changed state. Record every status change: orders returned by the API should include a `status_history` list of {\"status\", \"at\"} entries, starting with pending at creation and appending one entry on pay and on ship. Add tests and keep `make check` passing."
+    },
+    {
+      "title": "Explain the codebase",
+      "prompt": "I'm new to this repo. Read through it and explain in your reply: how the code is organized, the order lifecycle and which transitions are allowed, how pricing and discounts are computed, and the steps I would follow to add a new endpoint the way the team does it. Do not change any files."
+    }
+  ]
+}

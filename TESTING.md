@@ -19,6 +19,7 @@ separately by the live layer.
 | 3 | Full stack | `make test-e2e` | Docker | Real server + Docker + fake models: run lifecycle, SSE, uploads, versions, auth, feedback, secrets, limits, webhook, local CLI, **full improvement loop including regression blocking and auto-promotion**, observability metrics, cost, search, timelines, health and Prometheus endpoints | 1 to 3 min |
 | 4 | Web | `make test-web` | Docker, Chromium (Playwright) | Component and hook logic (Vitest); browser flows against the real backend: create, run, feedback, versions, evaluate, improve, promote, share page hides config, dashboard, monitoring, run filters, step timeline, phone width | 1 to 3 min |
 | 5 | Demo validity | `make test-demo` | Docker | Each demo eval case FAILS on the untouched repo, FAILS on a correct but convention-violating fix, PASSES on the reference fix (21 expectations) | ~1 min |
+| 5b | Example validity | `make test-examples` | Docker | Every example agent's shell checker (eval cases and suggested prompt checks) FAILS on the seed, FAILS on a plausible wrong answer where one exists, PASSES on the reference solution (50 expectations); `--judge` also grades the 4 judge cases with the real grader | ~30 s |
 | 6 | Live models | `make test-live` | `ANTHROPIC_API_KEY`; optional Ollama, `FORGE_VLLM_URL` | Real Claude completes a task in the sandbox; judge gives sensible verdicts; local and GPU models emit valid tool calls | 1 to 2 min, costs tokens |
 
 `make test` runs layers 1 to 3 (skipping Docker tests automatically if Docker is unavailable).
@@ -67,7 +68,7 @@ Requirement IDs are defined in the technical design document. Each row names the
 | FR2 Code and file tools | 1: tool semantics (`edit_file` missing and duplicate matches); 3: run lifecycle writes and runs `hello.py`; 6: Claude task in sandbox |
 | FR3 Network policy and secrets | 2: network none blocks egress, bridge allows; 3: secrets injected as env |
 | FR4 Immutable versions, prod pointer | 1: new version copies prod fields; 3: v1 unchanged after v2, pin, promote, rollback; 4: version history and Promote |
-| FR5 Share page and API | 1 and 3: API key, share-token scope, 401 cases; 4: share page runs and hides configuration |
+| FR5 Share page and API | 1 and 3: API key, share-token scope (share view is exactly id, slug, name, description, suggested_prompts), 401 cases; 4: share page shows suggested prompt chips, runs and hides configuration |
 | FR6 File inputs and artifacts | 3: JSON seed files, multipart file and tarball uploads, diff and archive contents; 4: diff view |
 | FR7 Complete traces | 3: gapless ordered events ending in `run_finished`; SSE resume with `after` |
 | FR8 Feedback from every surface | 3: API and CLI feedback stored against run and version; 4: thumbs down persists |
@@ -148,6 +149,8 @@ Requirement IDs are defined in the technical design document. Each row names the
 | TRG9 API base allowlist | 1: create and update refuse bases off https://api.github.com / https://slack.com (scheme, port, userinfo, look-alike hosts); FORGE_TRIGGER_API_HOSTS widens it; call-time recheck fails delivery |
 | TRG10 Triggers under governance | 1: spent monthly budget records a `402:` fire error and starts nothing; an ask rule pauses a GitHub-triggered run, the comment posts only after approval |
 | ROUTES Router order | 1: one endpoint each of governance, authoring, observability (api and ops), tools and triggers answers before the SPA catch-all; trigger and agent sources count as production, filter and label Prometheus (`tests/test_routes.py`) |
+| EX1 Suggested prompts | 1: stored on the agent, returned by every Agent response including the share view, replaced by PATCH and POST versions (the Version object never carries them), 422 on bad title or more than 12 (`tests/test_server.py`, `tests/test_auth_proxy.py`); 4: chips render, fill the input and run as is (Vitest `SuggestedPrompts.test.tsx`), share page chips (Playwright `deploy.spec.ts`) |
+| EX2 Example agents | 1: definitions well formed, deterministic builds match committed files, splits, planted ground truth, judge rubrics grade references (`tests/test_examples.py`); 3: `load_examples.py` creates everything idempotently and seeds reach the sandbox (`tests/e2e/test_examples_loader.py`); 5b: `demo/verify_examples.py` 50 expectations |
 
 ## Adding a test
 

@@ -28,7 +28,7 @@ def test_tunneled_request_loses_builder_access(client, header):
     assert client.get("/v1/agents/a1/versions/prod", headers=remote).status_code == 401
     # Share visitors see only public fields; API key holders keep full access.
     public = client.get(f"/v1/agents/a1?share={token}", headers=remote).json()
-    assert set(public) == {"id", "slug", "name", "description"}
+    assert set(public) == {"id", "slug", "name", "description", "suggested_prompts"}
     assert client.get("/v1/agents/a1/versions/prod", headers={**remote, "authorization": f"Bearer {key}"}).status_code == 200
 
 

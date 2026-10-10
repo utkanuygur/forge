@@ -1,11 +1,18 @@
 import { expect, test } from "@playwright/test";
 import { createAgent, expectRunSucceeded, uniqueSlug } from "./helpers";
 
-test("FR5: deploy tab shows share link and curl; share page runs without exposing configuration", async ({ page, browser }) => {
+test("FR5: deploy tab shows share link and curl; share page shows suggested prompts and runs without exposing configuration", async ({ page, browser }) => {
   const slug = uniqueSlug("share");
   const secretPrompt = `TOP-SECRET-INSTRUCTIONS-${slug}`;
   const name = `Shared ${slug}`;
-  const agent = await createAgent(page.request, { slug, name, model: "fake:echo", system_prompt: secretPrompt });
+  const input = `hello from a colleague ${slug}`;
+  const agent = await createAgent(page.request, {
+    slug,
+    name,
+    model: "fake:echo",
+    system_prompt: secretPrompt,
+    suggested_prompts: [{ title: "Say hello", prompt: input }],
+  });
 
   await page.goto(`/agents/${slug}/deploy`);
   const shareSection = page.locator("section", { has: page.getByRole("heading", { name: "Share link" }) });
@@ -32,9 +39,11 @@ test("FR5: deploy tab shows share link and curl; share page runs without exposin
   const shared = await colleague.request.get(`/v1/agents/${slug}`, { headers: { "X-Share-Token": agent.share_token } });
   expect(shared.ok()).toBeTruthy();
   expect(await shared.text()).not.toContain(secretPrompt);
+  expect((await shared.json()).suggested_prompts).toEqual([{ title: "Say hello", prompt: input }]);
 
-  const input = `hello from a colleague ${slug}`;
-  await colleague.getByRole("textbox", { name: "Task" }).fill(input);
+  // Suggested prompts are shown to share visitors; clicking one fills the input.
+  await colleague.getByTestId("suggested-prompts").getByRole("button", { name: "Say hello" }).click();
+  await expect(colleague.getByRole("textbox", { name: "Task" })).toHaveValue(input);
   await colleague.getByRole("button", { name: "Run", exact: true }).click();
   await expect(colleague).toHaveURL(/[?&]run=r_[0-9a-f]{12}/);
   await expectRunSucceeded(colleague);

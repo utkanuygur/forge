@@ -159,6 +159,13 @@ export interface Agent {
   month_to_date_usd?: number;
   budget_state?: Governance["state"];
   pending_approvals?: number;
+  /** Starter tasks shown as chips above the run input (CONTRACT.md "Suggested prompts"). */
+  suggested_prompts?: SuggestedPrompt[];
+}
+
+export interface SuggestedPrompt {
+  title: string;
+  prompt: string;
 }
 
 export interface AgentCreated extends Agent {

@@ -119,6 +119,7 @@ export default function RunsTab({ agent }: { agent: Agent }) {
             slug={agent.slug}
             versions={agent.versions}
             prodVersion={agent.prod_version}
+            suggestions={agent.suggested_prompts}
             onCreated={(r) => navigate(`/runs/${r.id}`)}
           />
         </div>

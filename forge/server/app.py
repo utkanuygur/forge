@@ -95,6 +95,14 @@ class EvalCaseIn(BaseModel):
     split: Literal["train", "holdout"] = "train"
 
 
+class SuggestedPrompt(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    prompt: str = Field(min_length=1, max_length=20_000)
+
+
+MAX_SUGGESTED_PROMPTS = 12
+
+
 class AgentCreate(BaseModel):
     slug: str
     name: str
@@ -113,6 +121,7 @@ class AgentCreate(BaseModel):
     approval_policy: dict[str, Any] | None = None  # governance
     max_run_cost_usd: float | None = Field(None, ge=0)  # governance
     monthly_budget_usd: float | None = Field(None, ge=0)  # governance
+    suggested_prompts: list[SuggestedPrompt] | None = Field(default=None, max_length=MAX_SUGGESTED_PROMPTS)
 
 
 class AgentPatch(BaseModel):
@@ -121,6 +130,7 @@ class AgentPatch(BaseModel):
     auto_promote: bool | None = None
     eval_repeats: int | None = Field(None, ge=1, le=evals.MAX_EVAL_REPEATS)
     monthly_budget_usd: float | None = Field(None, ge=0)  # governance; explicit null removes the budget
+    suggested_prompts: list[SuggestedPrompt] | None = Field(default=None, max_length=MAX_SUGGESTED_PROMPTS)
 
 
 def checked_policy(raw: dict[str, Any] | None, http_tools: list | None = None) -> dict[str, Any] | None:
@@ -147,6 +157,8 @@ class VersionCreate(BaseModel):
     rationale: str | None = None
     approval_policy: dict[str, Any] | None = None  # governance
     max_run_cost_usd: float | None = Field(None, ge=0)  # governance; explicit null removes the cap
+    # Agent level, not versioned: when given, replaces the agent's starter prompts.
+    suggested_prompts: list[SuggestedPrompt] | None = Field(default=None, max_length=MAX_SUGGESTED_PROMPTS)
 
 
 class Promote(BaseModel):
@@ -176,7 +188,8 @@ async def create_agent(body: AgentCreate) -> dict:
         raise HTTPException(409, f"agent {body.slug!r} already exists")
     check_tool_config(body.http_tools, body.mcp_servers, body.callable_agents, body.slug)
     policy = checked_policy(body.approval_policy, body.http_tools)
-    agent, key = db.create_agent(body.slug, body.name, body.description, body.auto_promote)
+    prompts = [p.model_dump() for p in body.suggested_prompts] if body.suggested_prompts else None
+    agent, key = db.create_agent(body.slug, body.name, body.description, body.auto_promote, prompts)
     v = db.create_version(
         agent["id"], system_prompt=body.system_prompt, model=body.model or evals.default_model(), tools=body.tools,
         http_tools=[t.model_dump() for t in body.http_tools] if body.http_tools else None, network=body.network,
@@ -203,7 +216,8 @@ async def get_agent(slug: str, request: Request) -> dict:
     agent = agent_or_404(slug)
     if authorize(request, agent) == "share":
         # Share-link visitors see only what the share page displays, never configuration.
-        return {k: agent[k] for k in ("id", "slug", "name", "description")}
+        # Suggested prompts are written for users of the agent, so they are shown there too.
+        return {k: agent[k] for k in ("id", "slug", "name", "description", "suggested_prompts")}
     return agent_view(agent, versions=True)
 
 
@@ -226,11 +240,14 @@ async def create_version(slug: str, body: VersionCreate, request: Request) -> di
     fields = {k: prod.get(k) for k in ("system_prompt", "lessons", "model", "tools", "http_tools", "network",
                                        "seed_files", "approval_policy", "max_run_cost_usd", "mcp_servers",
                                        "callable_agents")}
-    fields.update(body.model_dump(exclude_none=True, exclude={"rationale"}))
+    # suggested_prompts is agent level, never a version field
+    fields.update(body.model_dump(exclude_none=True, exclude={"rationale", "suggested_prompts"}))
     if "max_run_cost_usd" in body.model_fields_set and body.max_run_cost_usd is None:
         fields["max_run_cost_usd"] = None
     check_tool_config(fields.get("http_tools"), fields.get("mcp_servers"), fields.get("callable_agents"), slug)
     fields["approval_policy"] = checked_policy(fields.get("approval_policy"), fields.get("http_tools")) or {}
+    if body.suggested_prompts is not None:
+        db.update_agent(agent["id"], suggested_prompts=[p.model_dump() for p in body.suggested_prompts])
     v = db.create_version(agent["id"], **fields, parent_id=prod["id"], created_by="human",
                           rationale=body.rationale or "")
     meta = lesson_provenance(prod["lessons"], prod.get("lesson_meta"), v["lessons"], [], v["n"], origin="human")

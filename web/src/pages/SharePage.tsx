@@ -57,7 +57,13 @@ export default function SharePage() {
         ) : (
           (agent || error) && (
             <div className="card p-5">
-              <RunForm slug={slug} share={share} onCreated={(r) => setRun(r.id)} placeholder="What would you like the agent to do?" />
+              <RunForm
+                slug={slug}
+                share={share}
+                onCreated={(r) => setRun(r.id)}
+                placeholder="What would you like the agent to do?"
+                suggestions={agent?.suggested_prompts}
+              />
             </div>
           )
         )}

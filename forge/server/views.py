@@ -25,6 +25,7 @@ def agent_view(a: dict, *, versions: bool = False) -> dict:
         "prod_version": prod["n"] if prod else None, "auto_promote": a["auto_promote"],
         "share_token": a["share_token"], "created_at": a["created_at"],
         **governance.agent_extras(a),
+        "suggested_prompts": a.get("suggested_prompts") or [],
     }
     from forge.server.evals import eval_repeats  # lazy: evals -> runs -> views
 

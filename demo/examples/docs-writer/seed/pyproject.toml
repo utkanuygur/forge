@@ -1,0 +1,19 @@
+[project]
+name = "shelfcache"
+version = "0.5.0.dev0"
+description = "Small in-process caches with least recently used eviction and per entry expiry"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

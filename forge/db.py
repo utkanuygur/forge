@@ -16,7 +16,7 @@ SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 _initialized: set[str] = set()
 
 JSON_COLUMNS = {"lessons", "lesson_meta", "tools", "http_tools", "seed_files", "payload", "summary", "approval_policy",
-                "args", "rule", "mcp_servers", "callable_agents"}
+                "args", "rule", "mcp_servers", "callable_agents", "suggested_prompts"}
 BOOL_COLUMNS = {"auto_promote", "network", "passed"}
 
 # ---------------------------------------------------------------- basics
@@ -69,7 +69,8 @@ def connect() -> Iterator[sqlite3.Connection]:
 # schema.sql runs).
 ADDED_COLUMNS = {
     "agents": {"eval_repeats": "INTEGER",
-               "monthly_budget_usd": "REAL"},  # governance: null = no monthly budget
+               "monthly_budget_usd": "REAL",  # governance: null = no monthly budget
+               "suggested_prompts": "TEXT NOT NULL DEFAULT '[]'"},  # examples: JSON list[{title, prompt}]
     "runs": {"cache_read_tokens": "INTEGER NOT NULL DEFAULT 0", "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
              # The one stored run cost in USD (NULL = unknown price); written after each model turn by
              # forge.governance.RunGovernor and re-priced whenever token counts are written (update_run).
@@ -171,13 +172,15 @@ def _update(table: str, key: str, key_value: Any, fields: dict[str, Any]) -> Non
 # ---------------------------------------------------------------- agents
 
 
-def create_agent(slug: str, name: str, description: str = "", auto_promote: bool = False) -> tuple[dict, str]:
+def create_agent(slug: str, name: str, description: str = "", auto_promote: bool = False,
+                 suggested_prompts: list[dict] | None = None) -> tuple[dict, str]:
     """Returns (agent row, plaintext api key)."""
     key = new_api_key()
     row = {
         "id": new_id("ag"), "slug": slug, "name": name, "description": description, "prod_version_id": None,
         "auto_promote": auto_promote, "api_key_hash": hash_key(key),
         "share_token": _secrets.token_urlsafe(16), "created_at": now(),
+        "suggested_prompts": suggested_prompts or [],
     }
     _insert("agents", row)
     return get_agent(row["id"]), key  # type: ignore[return-value]
