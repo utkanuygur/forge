@@ -18,6 +18,7 @@ import httpx
 import typer
 from dotenv import load_dotenv
 
+from forge.transcript import TranscriptPrinter
 from forge.types import AgentVersion, Event
 
 app = typer.Typer(add_completion=False, help="Run Forge agents locally.")
@@ -76,19 +77,6 @@ class _Sync:
         self.pending = []
 
 
-def _print_event(e: Event) -> None:
-    p = e.payload
-    if e.type == "assistant" and p.get("text"):
-        typer.secho(p["text"], fg="white")
-    elif e.type == "tool_call":
-        args = json.dumps(p.get("args", {}))
-        typer.secho(f"→ {p.get('name')} {args[:200]}", fg="cyan")
-    elif e.type == "tool_result" and p.get("is_error"):
-        typer.secho(f"  ! {str(p.get('output', ''))[:300]}", fg="red")
-    elif e.type == "error":
-        typer.secho(f"error: {p.get('message')}", fg="red")
-
-
 def _git_dirty(root: Path) -> bool:
     r = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True)
     return r.returncode == 0 and bool(r.stdout.strip())
@@ -136,8 +124,11 @@ def run(
     else:
         executor = make_executor("local", root=str(root), mode="auto" if auto else "ask", confirm=confirm)
 
+    printer = TranscriptPrinter()
+    started = time.monotonic()
+
     async def emit(e: Event) -> None:
-        _print_event(e)
+        printer.event(e)
         sync.add(e)
 
     async def main() -> None:
@@ -155,9 +146,9 @@ def run(
         finally:
             await executor.stop()
         sync.flush()
-        typer.secho(f"\n{result.status} · {result.turns} turns · run {run_id}", bold=True)
-        if result.output:
-            typer.echo(result.output)
+        printer.summary(result.status, time.monotonic() - started, result.turns,
+                        result.tokens_in + result.tokens_out, run_id)
+        printer.final(result.output)
 
     asyncio.run(main())
 
